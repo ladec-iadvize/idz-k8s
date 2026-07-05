@@ -2145,14 +2145,17 @@ func (m Model) pctCell(frac float64) string {
 	}
 }
 
+// truncate shortens a plain string to n display cells. It counts RUNES, not
+// bytes — multi-byte glyphs (—, ✓, →, ●) must not trigger a spurious cut.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
 	if n <= 1 {
-		return s[:n]
+		return string(r[:n])
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 func countRealNodes(nodes []model.TopologyNode) int {

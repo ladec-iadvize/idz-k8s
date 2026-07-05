@@ -531,3 +531,18 @@ func TestDedicatedColumnsPerType(t *testing.T) {
 		t.Errorf("secret cells: %v", got)
 	}
 }
+
+func TestPadToRuneSafe(t *testing.T) {
+	// Multi-byte glyphs must not trigger a spurious "…" (bytes > cells).
+	s := padTo("✓ OK — fine", 20)
+	if strings.Contains(s, "…") {
+		t.Fatalf("no truncation expected, got %q", s)
+	}
+	if got := len([]rune(s)); got != 20 {
+		t.Fatalf("padded width = %d runes, want 20", got)
+	}
+	// Real truncation still works, rune-safe.
+	if got := padTo("éééééééééé", 5); !strings.Contains(got, "…") || len([]rune(got)) != 5 {
+		t.Fatalf("rune-safe truncate broken: %q", got)
+	}
+}
