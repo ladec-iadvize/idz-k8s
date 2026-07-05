@@ -377,3 +377,94 @@ func TestTypePickerShortNames(t *testing.T) {
 		t.Fatalf("selection should switch to services, got %q", m.curType.Key())
 	}
 }
+
+func TestRowHealthThresholds(t *testing.T) {
+	m := deploymentModel(t)
+	mk := func(ready, desired int64) model.ResourceObject {
+		return model.ResourceObject{
+			Type: m.curType, Namespace: "demo", Name: "d",
+			Status: model.StatusSummary{Level: model.HealthOk},
+			Raw: map[string]interface{}{
+				"spec":   map[string]interface{}{"replicas": desired},
+				"status": map[string]interface{}{"readyReplicas": ready},
+			},
+		}
+	}
+	if lvl := m.rowHealth(mk(3, 3)); lvl != model.HealthOk {
+		t.Errorf("3/3 should stay Ok, got %v", lvl)
+	}
+	if lvl := m.rowHealth(mk(2, 3)); lvl != model.HealthWarning {
+		t.Errorf("2/3 (67%%) should be Warning (yellow), got %v", lvl)
+	}
+	if lvl := m.rowHealth(mk(1, 3)); lvl != model.HealthError {
+		t.Errorf("1/3 (33%% ≤60%%) should be Error (red), got %v", lvl)
+	}
+	if lvl := m.rowHealth(mk(3, 5)); lvl != model.HealthError {
+		t.Errorf("3/5 (60%% ≤60%%) should be Error, got %v", lvl)
+	}
+}
+
+func TestNodeAndHPAColumns(t *testing.T) {
+	m := deploymentModel(t)
+	// Nodes: no NAMESPACE column; PODS READY / INSTANCE / NODEPOOL present.
+	m.curType = model.ResourceType{Version: "v1", Kind: "Node", Resource: "nodes", Namespaced: false}
+	titles := []string{}
+	for _, c := range m.columnsForType() {
+		titles = append(titles, c.title)
+	}
+	joined := strings.Join(titles, ",")
+	for _, want := range []string{"PODS READY", "INSTANCE", "NODEPOOL"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("node columns missing %s: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "NAMESPACE") {
+		t.Errorf("cluster-scoped nodes must not show NAMESPACE: %s", joined)
+	}
+	// Node cells resolve karpenter/instance labels + pod readiness.
+	m.nodePods = map[string][2]int{"n1": {12, 14}}
+	node := model.ResourceObject{Name: "n1", Raw: map[string]interface{}{
+		"metadata": map[string]interface{}{"labels": map[string]interface{}{
+			"node.kubernetes.io/instance-type": "m6i.2xlarge",
+			"karpenter.sh/nodepool":            "general-arm",
+		}},
+	}}
+	cols := m.columnsForType()
+	got := map[string]string{}
+	for _, c := range cols {
+		got[c.title] = c.cell(&m, node)
+	}
+	if got["PODS READY"] != "12/14" || got["INSTANCE"] != "m6i.2xlarge" || got["NODEPOOL"] != "general-arm" {
+		t.Errorf("node cells wrong: %v", got)
+	}
+
+	// HPA: targets/min/max/replicas.
+	m.curType = model.ResourceType{Group: "autoscaling", Version: "v2", Kind: "HorizontalPodAutoscaler", Resource: "horizontalpodautoscalers", Namespaced: true}
+	hpa := model.ResourceObject{Namespace: "demo", Name: "web", Raw: map[string]interface{}{
+		"spec": map[string]interface{}{
+			"minReplicas": int64(2), "maxReplicas": int64(10),
+			"metrics": []interface{}{map[string]interface{}{
+				"resource": map[string]interface{}{
+					"name":   "cpu",
+					"target": map[string]interface{}{"averageUtilization": int64(80)},
+				},
+			}},
+		},
+		"status": map[string]interface{}{
+			"currentReplicas": int64(4), "desiredReplicas": int64(6),
+			"currentMetrics": []interface{}{map[string]interface{}{
+				"resource": map[string]interface{}{
+					"name":    "cpu",
+					"current": map[string]interface{}{"averageUtilization": int64(43)},
+				},
+			}},
+		},
+	}}
+	got = map[string]string{}
+	for _, c := range m.columnsForType() {
+		got[c.title] = c.cell(&m, hpa)
+	}
+	if got["TARGETS"] != "cpu 43%/80%" || got["MIN"] != "2" || got["MAX"] != "10" || got["REPLICAS"] != "4→6" {
+		t.Errorf("hpa cells wrong: %v", got)
+	}
+}

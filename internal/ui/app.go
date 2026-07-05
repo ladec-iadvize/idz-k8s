@@ -172,6 +172,11 @@ type Model struct {
 	recentBaseLine int
 	recentShown    int
 
+	// Row health per visible row (whole-row coloring) and per-node pod
+	// readiness (Node view column).
+	rowLevels []model.HealthLevel
+	nodePods  map[string][2]int
+
 	// Marked resources (Space): scope for 'f' and 'v'. Key = ns/name.
 	marked map[string]model.ResourceObject
 
@@ -269,8 +274,9 @@ type typesMsg struct {
 	err   error
 }
 type objectsMsg struct {
-	objects []model.ResourceObject
-	err     error
+	objects  []model.ResourceObject
+	nodePods map[string][2]int // only set when listing nodes
+	err      error
 }
 type logLineMsg kube.LogLine
 type tickMsg struct{}
@@ -358,7 +364,28 @@ func (m Model) listObjects() tea.Cmd {
 				}
 			}
 		}
-		return objectsMsg{objects: objs, err: err}
+		var nodePods map[string][2]int
+		// Nodes: count ready/total pods per node (one extra LIST) for the
+		// PODS READY column.
+		if err == nil && t.Group == "" && t.Resource == "nodes" {
+			podType := model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+			if pods, perr := c.List(ctx, podType, ""); perr == nil {
+				nodePods = map[string][2]int{}
+				for _, p := range pods {
+					node := kube.PodNode(p.Raw)
+					if node == "" {
+						continue
+					}
+					cnt := nodePods[node]
+					cnt[1]++
+					if r, d, ok := kube.ReadyCount("Pod", p.Raw); ok && d > 0 && r == d {
+						cnt[0]++
+					}
+					nodePods[node] = cnt
+				}
+			}
+		}
+		return objectsMsg{objects: objs, nodePods: nodePods, err: err}
 	}
 }
 
@@ -507,6 +534,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.errMsg = ""
 			m.objects = msg.objects
+			if msg.nodePods != nil {
+				m.nodePods = msg.nodePods
+			}
 			m.applyRows()
 			// Broken-link visibility (US9): a workload/service whose selector
 			// matches no pods is the classic "why is nothing routing" case.
@@ -792,25 +822,24 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleMark()
 		return m, nil
 	case hit(msg, m.keys.Sort):
-		// Cycle NAMESPACE → NAME → READY → STATUS → AGE → none.
+		// Cycle through the current type's columns, then back to none.
 		m.sortCol++
-		if m.sortCol > colAge {
+		if m.sortCol > len(m.columnsForType()) {
 			m.sortCol = -1
-		} else if m.sortCol < colNamespace {
-			m.sortCol = colNamespace
+		} else if m.sortCol < 1 {
+			m.sortCol = 1
 		}
 		m.sortAsc = true
 		m.applyRows()
 		return m, nil
 	case hit(msg, m.keys.SortDir):
-		if m.sortCol >= colNamespace {
+		if m.sortCol >= 1 {
 			m.sortAsc = !m.sortAsc
 			m.applyRows()
 		}
 		return m, nil
 	}
 	m.navigate(&m.win, msg)
-	m.win.Sync(&m.table)
 	return m, nil
 }
 
@@ -857,7 +886,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		switch m.screen {
 		case screenList:
 			m.win.Move(delta)
-			m.win.Sync(&m.table)
 			return m, nil
 		case screenHelm:
 			m.helmWin.Move(delta)
@@ -913,7 +941,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case screenList:
 		// Column header (y=2): click sorts by that column, again = reverse.
 		if msg.Y == 2 {
-			if col, ok := m.columnAt(msg.X); ok && col >= colNamespace {
+			if col, ok := m.columnAt(msg.X); ok && col >= 1 {
 				if m.sortCol == col {
 					m.sortAsc = !m.sortAsc
 				} else {
@@ -925,7 +953,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		// y0 header, y1 rule, y2 column header → rows start at y=3.
 		if m.win.ClickVisible(msg.Y - 3) {
-			m.win.Sync(&m.table)
 			if doubleClick(m.win.cursor) {
 				return m.openListSelection()
 			}
@@ -1069,8 +1096,6 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch m.screen {
-	case screenList:
-		m.table, cmd = m.table.Update(msg)
 	case screenDetail:
 		m.detail, cmd = m.detail.Update(msg)
 	case screenLogs:
@@ -2452,7 +2477,6 @@ func (m *Model) layout() {
 	m.table.SetHeight(bodyH)
 	m.table.SetWidth(m.width)
 	m.win.SetHeight(bodyH - 1) // -1: the table's own column header
-	m.win.Sync(&m.table)
 	m.pickerWin.SetHeight(m.modalListRows())
 	m.pickerWin.Sync(&m.picker)
 	m.helmWin.SetHeight(bodyH - 1)
@@ -2510,7 +2534,7 @@ func (m Model) bodyView(sc screen) string {
 	case screenHelmHist:
 		return m.helmHist.View()
 	default:
-		return m.table.View()
+		return m.listView()
 	}
 }
 
@@ -2904,120 +2928,20 @@ func (m Model) screenKeymap() keymapView {
 
 // ---- Helpers ----
 
-// listSortables are the sortable columns of the main list, by visual index
-// (0 is the mark column).
-const (
-	colMark = iota
-	colNamespace
-	colName
-	colReady
-	colStatus
-	colAge
-)
-
-func (m *Model) applyRows() {
-	now := time.Now()
-	q := strings.ToLower(strings.TrimSpace(m.filter.Value()))
-
-	// Optional column sort (s / S / header click). Sorted on a copy so the
-	// original API order remains the "none" state.
-	objs := m.objects
-	if m.sortCol >= colNamespace {
-		objs = make([]model.ResourceObject, len(m.objects))
-		copy(objs, m.objects)
-		less := func(a, b model.ResourceObject) bool {
-			switch m.sortCol {
-			case colName:
-				return a.Name < b.Name
-			case colReady:
-				ra, da, _ := kube.ReadyCount(m.curType.Kind, a.Raw)
-				rb, db, _ := kube.ReadyCount(m.curType.Kind, b.Raw)
-				fa, fb := readyFrac(ra, da), readyFrac(rb, db)
-				if fa != fb {
-					return fa < fb
-				}
-				return a.Name < b.Name
-			case colStatus:
-				if a.Status.Level != b.Status.Level {
-					return a.Status.Level < b.Status.Level
-				}
-				return a.Status.Reason < b.Status.Reason
-			case colAge:
-				return a.CreatedAt.After(b.CreatedAt) // "asc" = youngest first
-			default: // colNamespace
-				if a.Namespace != b.Namespace {
-					return a.Namespace < b.Namespace
-				}
-				return a.Name < b.Name
-			}
-		}
-		sort.SliceStable(objs, func(i, j int) bool {
-			if m.sortAsc {
-				return less(objs[i], objs[j])
-			}
-			return less(objs[j], objs[i])
-		})
-	}
-
-	rows := make([]table.Row, 0, len(objs))
-	for _, o := range objs {
-		if q != "" && !strings.Contains(strings.ToLower(o.Namespace+"/"+o.Name), q) {
-			continue
-		}
-		// READY column: pods ready vs desired for workloads (e.g. "2/3"),
-		// ready containers for pods. "-" when the kind has no ready notion.
-		readyCol := "-"
-		status := o.Status
-		if ready, desired, ok := kube.ReadyCount(m.curType.Kind, o.Raw); ok {
-			readyCol = fmt.Sprintf("%d/%d", ready, desired)
-			if ready < desired && status.Level != model.HealthError {
-				status = model.StatusSummary{Level: model.HealthWarning, Reason: readyCol + " ready"}
-			}
-		}
-		mark := " "
-		if _, ok := m.marked[o.Namespace+"/"+o.Name]; ok {
-			mark = "●"
-		}
-		rows = append(rows, table.Row{
-			mark, o.Namespace, o.Name, readyCol, statusCell(status), kube.Age(o.CreatedAt, now),
-		})
-	}
-
-	titles := []string{" ", "NAMESPACE", "NAME", "READY", "STATUS", "AGE"}
-	if m.sortCol >= colNamespace && m.sortCol < len(titles) {
-		arrow := " ↓"
-		if m.sortAsc {
-			arrow = " ↑"
-		}
-		titles[m.sortCol] += arrow
-	}
-	widths := m.listColumnWidths()
-	cols := make([]table.Column, len(titles))
-	for i := range titles {
-		cols[i] = table.Column{Title: titles[i], Width: widths[i]}
-	}
-	m.table.SetColumns(cols)
-	m.win.SetRows(rows)
-	m.win.Sync(&m.table)
-}
-
-// listColumnWidths returns the fixed widths of the main list columns; NAME
-// absorbs the remaining width.
-func (m Model) listColumnWidths() []int {
-	return []int{2, 28, max(20, m.width-68), 9, 18, 8}
-}
-
-// columnAt maps an x position to a main-list column index.
+// columnAt maps an x position to a visual column index (0 = mark column).
 func (m Model) columnAt(x int) (int, bool) {
+	widths := m.listWidths(m.columnsForType())
 	pos := 0
-	for i, w := range m.listColumnWidths() {
+	for i, w := range widths {
 		if x >= pos && x < pos+w {
 			return i, true
 		}
-		pos += w
+		pos += w + 1 // column gap
 	}
 	return 0, false
 }
+
+func (m Model) now() time.Time { return time.Now() }
 
 func readyFrac(ready, desired int) float64 {
 	if desired <= 0 {
@@ -3028,10 +2952,18 @@ func readyFrac(ready, desired int) float64 {
 
 func (m Model) selectedObject() (model.ResourceObject, bool) {
 	row, _ := m.win.Selected()
-	if len(row) < 3 {
+	if len(row) < 2 {
 		return model.ResourceObject{}, false
 	}
-	ns, name := row[1], row[2]
+	var ns, name string
+	if m.curType.Namespaced {
+		if len(row) < 3 {
+			return model.ResourceObject{}, false
+		}
+		ns, name = row[1], row[2]
+	} else {
+		name = row[1]
+	}
 	for _, o := range m.objects {
 		if o.Namespace == ns && o.Name == name {
 			return o, true

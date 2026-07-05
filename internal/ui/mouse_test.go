@@ -153,11 +153,10 @@ func TestSortCycleAndHeaderClick(t *testing.T) {
 	m = asModel(t, mi)
 	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
 	m = asModel(t, mi)
-	if m.sortCol != colName || !m.sortAsc {
+	if m.sortCol != 2 || !m.sortAsc {
 		t.Fatalf("sort state: col=%d asc=%v", m.sortCol, m.sortAsc)
 	}
 	m.win.Home()
-	m.win.Sync(&m.table)
 	row, _ = m.win.Selected()
 	if row[2] != "pod-a" {
 		t.Fatalf("NAME asc should put pod-a first, got %q", row[2])
@@ -166,16 +165,15 @@ func TestSortCycleAndHeaderClick(t *testing.T) {
 	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}})
 	m = asModel(t, mi)
 	m.win.Home()
-	m.win.Sync(&m.table)
 	row, _ = m.win.Selected()
 	if row[2] != "pod-c" {
 		t.Fatalf("NAME desc should put pod-c first, got %q", row[2])
 	}
 	// Header click on NAME (x within its range) toggles again → asc.
-	x := 2 + 28 + 1 // inside the NAME column
+	x := 2 + 1 + 28 + 1 // inside the NAME column (after the mark and ns columns + gaps)
 	mi, _ = m.Update(click(x, 2))
 	m = asModel(t, mi)
-	if m.sortCol != colName || !m.sortAsc {
+	if m.sortCol != 2 || !m.sortAsc {
 		t.Fatalf("header click should re-sort NAME asc, got col=%d asc=%v", m.sortCol, m.sortAsc)
 	}
 }

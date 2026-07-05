@@ -277,3 +277,93 @@ func ReadyCount(kind string, raw map[string]interface{}) (ready, desired int, ok
 	}
 	return 0, 0, false
 }
+
+// PodRestarts sums container restart counts of a pod.
+func PodRestarts(raw map[string]interface{}) int {
+	statuses, _, _ := unstructured.NestedSlice(raw, "status", "containerStatuses")
+	total := 0
+	for _, cs := range statuses {
+		if cm, ok := cs.(map[string]interface{}); ok {
+			if r, found, _ := unstructured.NestedInt64(cm, "restartCount"); found {
+				total += int(r)
+			}
+		}
+	}
+	return total
+}
+
+// PodNode returns the node a pod is scheduled on ("" if unscheduled).
+func PodNode(raw map[string]interface{}) string {
+	n, _, _ := unstructured.NestedString(raw, "spec", "nodeName")
+	return n
+}
+
+// ObjectLabel returns the first non-empty label among keys.
+func ObjectLabel(raw map[string]interface{}, keys ...string) string {
+	labels, _, _ := unstructured.NestedStringMap(raw, "metadata", "labels")
+	for _, k := range keys {
+		if v := labels[k]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// HPAInfo extracts the useful HorizontalPodAutoscaler columns: min/max
+// replicas, current/desired, and a compact target summary such as
+// "cpu 43%/80%" (current/target utilization for the first metrics).
+func HPAInfo(raw map[string]interface{}) (minR, maxR, current, desired int, targets string) {
+	minR = 1
+	if v, found, _ := unstructured.NestedInt64(raw, "spec", "minReplicas"); found {
+		minR = int(v)
+	}
+	if v, found, _ := unstructured.NestedInt64(raw, "spec", "maxReplicas"); found {
+		maxR = int(v)
+	}
+	if v, found, _ := unstructured.NestedInt64(raw, "status", "currentReplicas"); found {
+		current = int(v)
+	}
+	if v, found, _ := unstructured.NestedInt64(raw, "status", "desiredReplicas"); found {
+		desired = int(v)
+	}
+
+	// Map current utilization by resource name.
+	cur := map[string]int64{}
+	if cms, found, _ := unstructured.NestedSlice(raw, "status", "currentMetrics"); found {
+		for _, cm := range cms {
+			if mm, ok := cm.(map[string]interface{}); ok {
+				name, _, _ := unstructured.NestedString(mm, "resource", "name")
+				if u, found, _ := unstructured.NestedInt64(mm, "resource", "current", "averageUtilization"); found && name != "" {
+					cur[name] = u
+				}
+			}
+		}
+	}
+	var parts []string
+	if specs, found, _ := unstructured.NestedSlice(raw, "spec", "metrics"); found {
+		for _, sm := range specs {
+			mm, ok := sm.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			name, _, _ := unstructured.NestedString(mm, "resource", "name")
+			target, tfound, _ := unstructured.NestedInt64(mm, "resource", "target", "averageUtilization")
+			if name == "" || !tfound {
+				continue
+			}
+			c := "?"
+			if u, ok := cur[name]; ok {
+				c = fmt.Sprintf("%d%%", u)
+			}
+			parts = append(parts, fmt.Sprintf("%s %s/%d%%", name, c, target))
+			if len(parts) == 2 {
+				break
+			}
+		}
+	}
+	targets = strings.Join(parts, " ")
+	if targets == "" {
+		targets = "-"
+	}
+	return
+}
