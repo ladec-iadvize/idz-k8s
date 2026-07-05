@@ -1,0 +1,23 @@
+# Go
+*.exe
+*.test
+*.out
+/idz-k8s
+/dist/
+vendor/
+
+# Env / local
+.env*
+*.log
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Kubernetes / secrets (never commit)
+kubeconfig*
+*.kubeconfig
+*.key
+*.crt
+secrets/
