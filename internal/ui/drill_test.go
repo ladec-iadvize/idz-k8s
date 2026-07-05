@@ -468,3 +468,66 @@ func TestNodeAndHPAColumns(t *testing.T) {
 		t.Errorf("hpa cells wrong: %v", got)
 	}
 }
+
+func TestDedicatedColumnsPerType(t *testing.T) {
+	m := deploymentModel(t)
+	cellsFor := func(kind, resource string, namespaced bool, raw map[string]interface{}) map[string]string {
+		m.curType = model.ResourceType{Version: "v1", Kind: kind, Resource: resource, Namespaced: namespaced}
+		o := model.ResourceObject{Namespace: "demo", Name: "x", Raw: raw}
+		out := map[string]string{}
+		for _, c := range m.columnsForType() {
+			out[c.title] = c.cell(&m, o)
+		}
+		return out
+	}
+
+	got := cellsFor("Ingress", "ingresses", true, map[string]interface{}{
+		"spec": map[string]interface{}{
+			"ingressClassName": "nginx",
+			"rules": []interface{}{
+				map[string]interface{}{"host": "a.iadvize.com"},
+				map[string]interface{}{"host": "b.iadvize.com"},
+				map[string]interface{}{"host": "c.iadvize.com"},
+			},
+		},
+	})
+	if got["CLASS"] != "nginx" || got["HOSTS"] != "a.iadvize.com,b.iadvize.com +1" {
+		t.Errorf("ingress cells: %v", got)
+	}
+
+	got = cellsFor("PersistentVolumeClaim", "persistentvolumeclaims", true, map[string]interface{}{
+		"spec":   map[string]interface{}{"storageClassName": "gp3"},
+		"status": map[string]interface{}{"capacity": map[string]interface{}{"storage": "20Gi"}},
+	})
+	if got["CAPACITY"] != "20Gi" || got["STORAGECLASS"] != "gp3" {
+		t.Errorf("pvc cells: %v", got)
+	}
+
+	got = cellsFor("Job", "jobs", true, map[string]interface{}{
+		"spec": map[string]interface{}{"completions": int64(3)},
+		"status": map[string]interface{}{
+			"succeeded":      int64(2),
+			"startTime":      "2026-07-05T10:00:00Z",
+			"completionTime": "2026-07-05T10:03:30Z",
+		},
+	})
+	if got["COMPLETIONS"] != "2/3" || got["DURATION"] != "3m" {
+		t.Errorf("job cells: %v", got)
+	}
+
+	got = cellsFor("CronJob", "cronjobs", true, map[string]interface{}{
+		"spec":   map[string]interface{}{"schedule": "*/10 * * * *", "suspend": true},
+		"status": map[string]interface{}{},
+	})
+	if got["SCHEDULE"] != "*/10 * * * *" || got["SUSPEND"] != "yes" || got["LAST RUN"] != "-" {
+		t.Errorf("cronjob cells: %v", got)
+	}
+
+	got = cellsFor("Secret", "secrets", true, map[string]interface{}{
+		"type": "kubernetes.io/tls",
+		"data": map[string]interface{}{"tls.crt": "x", "tls.key": "y"},
+	})
+	if got["TYPE"] != "kubernetes.io/tls" || got["DATA"] != "2" {
+		t.Errorf("secret cells: %v", got)
+	}
+}

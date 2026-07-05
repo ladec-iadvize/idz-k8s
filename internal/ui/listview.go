@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/iadvize/idz-k8s/internal/kube"
 	"github.com/iadvize/idz-k8s/internal/model"
@@ -153,6 +155,129 @@ func (m *Model) columnsForType() []listColumn {
 				return fmt.Sprintf("%d", cur)
 			}}
 		return []listColumn{ns, name, targets, minC, maxC, repl, age}
+
+	case strings.EqualFold(kind, "Ingress"):
+		class := listColumn{title: "CLASS", width: 14,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				c, _, _ := unstructured.NestedString(o.Raw, "spec", "ingressClassName")
+				return orDash(c)
+			}}
+		hosts := listColumn{title: "HOSTS", width: 42,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				rules, _, _ := unstructured.NestedSlice(o.Raw, "spec", "rules")
+				var hs []string
+				for _, r := range rules {
+					if rm, ok := r.(map[string]interface{}); ok {
+						if h, _ := rm["host"].(string); h != "" {
+							hs = append(hs, h)
+						}
+					}
+				}
+				if len(hs) == 0 {
+					return "*"
+				}
+				out := strings.Join(hs[:min(2, len(hs))], ",")
+				if len(hs) > 2 {
+					out += fmt.Sprintf(" +%d", len(hs)-2)
+				}
+				return out
+			}}
+		return []listColumn{ns, name, class, hosts, status, age}
+
+	case strings.EqualFold(kind, "PersistentVolumeClaim"):
+		capa := listColumn{title: "CAPACITY", width: 9,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				c, _, _ := unstructured.NestedString(o.Raw, "status", "capacity", "storage")
+				return orDash(c)
+			}}
+		class := listColumn{title: "STORAGECLASS", width: 16,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				c, _, _ := unstructured.NestedString(o.Raw, "spec", "storageClassName")
+				return orDash(c)
+			}}
+		return []listColumn{ns, name, capa, class, status, age}
+
+	case strings.EqualFold(kind, "PersistentVolume"):
+		capa := listColumn{title: "CAPACITY", width: 9,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				c, _, _ := unstructured.NestedString(o.Raw, "spec", "capacity", "storage")
+				return orDash(c)
+			}}
+		claim := listColumn{title: "CLAIM", width: 34,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				cns, _, _ := unstructured.NestedString(o.Raw, "spec", "claimRef", "namespace")
+				cn, _, _ := unstructured.NestedString(o.Raw, "spec", "claimRef", "name")
+				if cn == "" {
+					return "-"
+				}
+				return cns + "/" + cn
+			}}
+		class := listColumn{title: "STORAGECLASS", width: 16,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				c, _, _ := unstructured.NestedString(o.Raw, "spec", "storageClassName")
+				return orDash(c)
+			}}
+		return []listColumn{name, capa, claim, class, status, age}
+
+	case strings.EqualFold(kind, "Job"):
+		compl := listColumn{title: "COMPLETIONS", width: 12,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				want := int64(1)
+				if v, found, _ := unstructured.NestedInt64(o.Raw, "spec", "completions"); found {
+					want = v
+				}
+				done, _, _ := unstructured.NestedInt64(o.Raw, "status", "succeeded")
+				return fmt.Sprintf("%d/%d", done, want)
+			}}
+		dur := listColumn{title: "DURATION", width: 9,
+			cell: func(m *Model, o model.ResourceObject) string {
+				start, _, _ := unstructured.NestedString(o.Raw, "status", "startTime")
+				end, _, _ := unstructured.NestedString(o.Raw, "status", "completionTime")
+				return jobDuration(start, end, m.now())
+			}}
+		return []listColumn{ns, name, compl, dur, status, age}
+
+	case strings.EqualFold(kind, "CronJob"):
+		sched := listColumn{title: "SCHEDULE", width: 14,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				c, _, _ := unstructured.NestedString(o.Raw, "spec", "schedule")
+				return orDash(c)
+			}}
+		susp := listColumn{title: "SUSPEND", width: 8,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				if v, found, _ := unstructured.NestedBool(o.Raw, "spec", "suspend"); found && v {
+					return "yes"
+				}
+				return "no"
+			}}
+		last := listColumn{title: "LAST RUN", width: 9,
+			cell: func(m *Model, o model.ResourceObject) string {
+				ts, _, _ := unstructured.NestedString(o.Raw, "status", "lastScheduleTime")
+				return relTime(ts, m.now())
+			}}
+		return []listColumn{ns, name, sched, susp, last, status, age}
+
+	case strings.EqualFold(kind, "ConfigMap"):
+		data := listColumn{title: "DATA", width: 5,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				d, _ := o.Raw["data"].(map[string]interface{})
+				b, _ := o.Raw["binaryData"].(map[string]interface{})
+				return fmt.Sprintf("%d", len(d)+len(b))
+			}}
+		return []listColumn{ns, name, data, age}
+
+	case strings.EqualFold(kind, "Secret"):
+		typ := listColumn{title: "TYPE", width: 28,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				t, _ := o.Raw["type"].(string)
+				return orDash(t)
+			}}
+		data := listColumn{title: "DATA", width: 5,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				d, _ := o.Raw["data"].(map[string]interface{})
+				return fmt.Sprintf("%d", len(d))
+			}}
+		return []listColumn{ns, name, typ, data, age}
 
 	case strings.EqualFold(kind, "Service"):
 		svcType := listColumn{title: "TYPE", width: 13,
@@ -344,4 +469,34 @@ func unstructuredString(raw map[string]interface{}, fields ...string) (string, b
 		cur = next
 	}
 	return "", false, nil
+}
+
+// jobDuration formats how long a Job ran (or has been running).
+func jobDuration(startRFC, endRFC string, now time.Time) string {
+	start, err := time.Parse(time.RFC3339, startRFC)
+	if err != nil {
+		return "-"
+	}
+	end := now
+	if e, err := time.Parse(time.RFC3339, endRFC); err == nil {
+		end = e
+	}
+	d := end.Sub(start)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
+
+// relTime renders an RFC3339 timestamp as a compact age ("-" when absent).
+func relTime(ts string, now time.Time) string {
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return "-"
+	}
+	return kube.Age(t, now)
 }

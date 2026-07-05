@@ -816,8 +816,6 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openTopology()
 	case hit(msg, m.keys.Events):
 		return m.openEvents()
-	case hit(msg, m.keys.Helm):
-		return m.openHelm()
 	case hit(msg, m.keys.Mark):
 		m.toggleMark()
 		return m, nil
@@ -2885,11 +2883,11 @@ func (m Model) screenKeymap() keymapView {
 	switch m.screen {
 	case screenList:
 		return keymapView{
-			short: []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Top, k.Diag, k.Topology, k.Events, k.Helm, k.Namespace, k.Context, k.Help, k.Quit},
+			short: []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Top, k.Diag, k.Topology, k.Events, k.Namespace, k.Context, k.Help, k.Quit},
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Helm},
+				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}

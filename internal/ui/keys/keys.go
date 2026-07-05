@@ -26,7 +26,6 @@ type KeyMap struct {
 	Diag      key.Binding
 	Topology  key.Binding
 	Events    key.Binding
-	Helm      key.Binding
 	Mark      key.Binding
 	Sort      key.Binding
 	SortDir   key.Binding
@@ -62,7 +61,6 @@ func Default() KeyMap {
 		Diag:      key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "failures")),
 		Topology:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "topology")),
 		Events:    key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "events")),
-		Helm:      key.NewBinding(key.WithKeys("H"), key.WithHelp("H", "helm")),
 		Mark:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "mark")),
 		Sort:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "sort column")),
 		SortDir:   key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sort asc/desc")),

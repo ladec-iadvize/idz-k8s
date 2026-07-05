@@ -37,13 +37,13 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 | `v` | Events **timeline**: a time axis per object, warnings highlighted, selectable details |
 | `f` | Failure diagnostics: CrashLoopBackOff, OOMKilled, evictions, unschedulable pods (with the scheduler's reason) |
 | `u` | Top consumers (CPU/memory, via Prometheus) |
-| `H` | Helm releases (read-only): history, deployed resources with **live state**, values |
+| `:helm` | Helm releases (read-only): history, deployed resources with **live state**, values — reachable from the `:` picker like any resource |
 | `o` | Jump to the owner (pod → ReplicaSet → Deployment) |
 
 ## Interaction
 
 - **Keyboard**: arrows/PgUp/PgDn, `/` filter (centered input, live), `:` resource
-  type, `n` namespace, `c` context, `?` contextual help, `q` quit. `s`/`S` sort
+  type (kubectl short names work: `:svc`, `:deploy`, `:helm`…), `n` namespace, `c` context, `?` contextual help, `q` quit. `s`/`S` sort
   columns, `Space` marks resources (then `f`/`v` scope to the selection),
   `w` warnings-only in the timeline, `Space` pauses log follow.
 - **Mouse**: click to select, double-click to open, wheel to scroll, click

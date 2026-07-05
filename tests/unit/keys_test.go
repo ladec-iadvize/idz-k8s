@@ -24,7 +24,7 @@ func TestEveryBindingHasHelp(t *testing.T) {
 		{"Describe", k.Describe.Keys(), k.Describe.Help().Key}, {"Owner", k.Owner.Keys(), k.Owner.Help().Key},
 		{"Top", k.Top.Keys(), k.Top.Help().Key}, {"Diag", k.Diag.Keys(), k.Diag.Help().Key},
 		{"Topology", k.Topology.Keys(), k.Topology.Help().Key}, {"Events", k.Events.Keys(), k.Events.Help().Key},
-		{"Helm", k.Helm.Keys(), k.Helm.Help().Key}, {"Mark", k.Mark.Keys(), k.Mark.Help().Key},
+		{"Mark", k.Mark.Keys(), k.Mark.Help().Key},
 		{"Sort", k.Sort.Keys(), k.Sort.Help().Key}, {"Values", k.Values.Keys(), k.Values.Help().Key},
 		{"Pause", k.Pause.Keys(), k.Pause.Help().Key}, {"WarnOnly", k.WarnOnly.Keys(), k.WarnOnly.Help().Key},
 		{"Mouse", k.Mouse.Keys(), k.Mouse.Help().Key}, {"Kind", k.Kind.Keys(), k.Kind.Help().Key},
