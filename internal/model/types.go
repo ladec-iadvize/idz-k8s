@@ -60,6 +60,9 @@ type ResourceType struct {
 	Resource   string // plural wire name, e.g. "pods"
 	Namespaced bool
 	IsCRD      bool
+	// ShortNames are the API-advertised aliases (svc, deploy, sts, …) — they
+	// work in the ':' picker exactly like in kubectl, CRDs included.
+	ShortNames []string
 }
 
 // Key returns a stable identifier: <group>/<version>/<resource> (core group empty).

@@ -109,7 +109,7 @@ func NewFakeClient(namespace string, objs ...*unstructured.Unstructured) (*kube.
 	if fd, ok := cs.Discovery().(*fakediscovery.FakeDiscovery); ok {
 		fd.Resources = []*metav1.APIResourceList{
 			{GroupVersion: "v1", APIResources: []metav1.APIResource{
-				{Name: "pods", Kind: "Pod", Namespaced: true, Verbs: []string{"get", "list", "watch"}},
+				{Name: "pods", Kind: "Pod", Namespaced: true, Verbs: []string{"get", "list", "watch"}, ShortNames: []string{"po"}},
 				{Name: "secrets", Kind: "Secret", Namespaced: true, Verbs: []string{"get", "list", "watch"}},
 			}},
 		}

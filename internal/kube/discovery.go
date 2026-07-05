@@ -75,6 +75,7 @@ func ParseResourceTypes(lists []*metav1.APIResourceList) []model.ResourceType {
 				Resource:   r.Name,
 				Namespaced: r.Namespaced,
 				IsCRD:      !builtinGroups[gv.Group],
+				ShortNames: r.ShortNames,
 			})
 		}
 	}

@@ -321,10 +321,11 @@ func TestPickerModalClickAndOutsideClose(t *testing.T) {
 	mi, _ := m.openPicker(pickType)
 	m = asModel(t, mi)
 	_, geom := m.pickerModal()
-	// Double-click the first option (apps/v1/deployments, sorted first).
-	mi, _ = m.Update(click(geom.x+2, geom.optTop))
+	// Double-click the SECOND option (apps/v1/deployments — the helm entry is
+	// pinned first).
+	mi, _ = m.Update(click(geom.x+2, geom.optTop+1))
 	m = asModel(t, mi)
-	mi, _ = m.Update(click(geom.x+2, geom.optTop))
+	mi, _ = m.Update(click(geom.x+2, geom.optTop+1))
 	m = asModel(t, mi)
 	if m.curType.Resource != "deployments" {
 		t.Fatalf("double-click should pick deployments, got %q", m.curType.Key())

@@ -58,6 +58,10 @@ const (
 // allKindsLabel is the sentinel option that clears the event kind filter.
 const allKindsLabel = "◆ all kinds"
 
+// helmReleasesLabel is the virtual entry in the ':' type picker that opens the
+// Helm release view — so ":helm" works like any resource type.
+const helmReleasesLabel = "◆ helm releases"
+
 // logBufMax bounds the in-memory log buffer (keeps the tail).
 const logBufMax = 5000
 
@@ -2259,7 +2263,7 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 	switch kind {
 	case pickType:
 		for _, t := range m.types {
-			opts = append(opts, t.Key())
+			opts = append(opts, typeOptionLabel(t))
 		}
 	case pickContext:
 		ctxs, err := kube.Contexts(m.kubeconfigPath, m.client.Namespace)
@@ -2282,9 +2286,13 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 		opts = nss
 	}
 	sort.Strings(opts)
-	if kind == pickNamespace {
+	switch kind {
+	case pickNamespace:
 		// Offer an "all namespaces" choice at the top (cross-namespace view).
 		opts = append([]string{allNamespacesLabel}, opts...)
+	case pickType:
+		// Helm releases are reachable from ':' too (type "helm"), not only 'H'.
+		opts = append([]string{helmReleasesLabel}, opts...)
 	}
 	m.pickerOpts = opts
 	m.pickerQuery = ""
@@ -2349,6 +2357,11 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 	choice := row[0]
 	switch m.pickerKind {
 	case pickType:
+		if choice == helmReleasesLabel {
+			m.screen = screenList // leave the picker even if helm is unavailable
+			return m.openHelm()
+		}
+		choice = strings.TrimSpace(strings.SplitN(choice, "  (", 2)[0])
 		for _, t := range m.types {
 			if t.Key() == choice {
 				m.curType = t
@@ -3059,6 +3072,15 @@ func (m Model) colorizeYAML(s string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// typeOptionLabel renders a type-picker option with its kubectl-style
+// aliases, e.g. "v1/services  (svc)" — typing "svc" then matches it.
+func typeOptionLabel(t model.ResourceType) string {
+	if len(t.ShortNames) == 0 {
+		return t.Key()
+	}
+	return t.Key() + "  (" + strings.Join(t.ShortNames, ",") + ")"
 }
 
 // statusCell renders the STATUS column: the reason when we have one (more

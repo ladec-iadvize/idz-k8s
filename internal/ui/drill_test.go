@@ -324,3 +324,56 @@ func TestMergedLogPrefixColoredAndStable(t *testing.T) {
 		t.Fatalf("single-pod lines must stay raw, got %q", m.logBuf[1])
 	}
 }
+
+func TestTypePickerOpensHelmViaColon(t *testing.T) {
+	m := deploymentModel(t)
+	m.helm = nil // openHelm guards on nil with a message; give it a client-less path
+	mi, _ := m.openPicker(pickType)
+	m = asModel(t, mi)
+	if len(m.pickerOpts) == 0 || m.pickerOpts[0] != "◆ helm releases" {
+		t.Fatalf("helm entry should be pinned first, got %v", m.pickerOpts[:min(2, len(m.pickerOpts))])
+	}
+	for _, r := range "helm" {
+		mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = asModel(t, mi)
+	}
+	row, _ := m.pickerWin.Selected()
+	if len(row) == 0 || row[0] != "◆ helm releases" {
+		t.Fatalf("typing 'helm' should narrow to the helm entry, got %v", row)
+	}
+	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	// helm==nil → stays put with a message; with a client it opens screenHelm.
+	if m.screen == screenPicker {
+		t.Fatal("Enter on the helm entry should leave the picker")
+	}
+}
+
+func TestTypePickerShortNames(t *testing.T) {
+	m := deploymentModel(t)
+	m.types = []model.ResourceType{
+		{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true, ShortNames: []string{"po"}},
+		{Version: "v1", Kind: "Service", Resource: "services", Namespaced: true, ShortNames: []string{"svc"}},
+		{Group: "apps", Version: "v1", Kind: "Deployment", Resource: "deployments", Namespaced: true, ShortNames: []string{"deploy"}},
+	}
+	mi, _ := m.openPicker(pickType)
+	m = asModel(t, mi)
+	// Typing the kubectl alias narrows to the aliased type.
+	for _, r := range "svc" {
+		mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = asModel(t, mi)
+	}
+	row, ok := m.pickerWin.Selected()
+	if !ok || !strings.Contains(row[0], "v1/services") {
+		t.Fatalf("':svc' should narrow to services, got %v", row)
+	}
+	if !strings.Contains(row[0], "(svc)") {
+		t.Fatalf("option label should advertise the alias, got %q", row[0])
+	}
+	// Enter resolves the label back to the real type.
+	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.curType.Resource != "services" {
+		t.Fatalf("selection should switch to services, got %q", m.curType.Key())
+	}
+}
