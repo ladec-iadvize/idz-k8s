@@ -22,10 +22,36 @@ type listColumn struct {
 	less  func(a, b model.ResourceObject) bool // optional custom sort
 }
 
-// columnsForType returns the columns that make sense for the type being
-// browsed — kubectl-like, instead of a one-size-fits-all layout (the mark
-// column is implicit at index 0).
+// columnsForType returns the columns actually displayed: the type's base set,
+// filtered and reordered by the user's saved arrangement when one exists
+// (US8). Unknown titles in the pref are dropped; a pref that matches nothing
+// falls back to the defaults (FR-025 tolerance).
 func (m *Model) columnsForType() []listColumn {
+	cols := m.columnsBase()
+	pref := m.cfg.ViewPrefs[m.curType.Key()]
+	if len(pref.Columns) == 0 {
+		return cols
+	}
+	byTitle := make(map[string]listColumn, len(cols))
+	for _, c := range cols {
+		byTitle[c.title] = c
+	}
+	out := make([]listColumn, 0, len(pref.Columns))
+	for _, t := range pref.Columns {
+		if c, ok := byTitle[t]; ok {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return cols
+	}
+	return out
+}
+
+// columnsBase returns every column the type offers, in default order —
+// kubectl-like, instead of a one-size-fits-all layout (the mark column is
+// implicit at index 0).
+func (m *Model) columnsBase() []listColumn {
 	name := listColumn{title: "NAME", width: 0,
 		cell: func(_ *Model, o model.ResourceObject) string { return o.Name },
 		less: func(a, b model.ResourceObject) bool { return a.Name < b.Name }}
@@ -381,6 +407,7 @@ func (m *Model) applyRows() {
 
 	rows := make([]table.Row, 0, len(objs))
 	levels := make([]model.HealthLevel, 0, len(objs))
+	kept := make([]model.ResourceObject, 0, len(objs))
 	for _, o := range objs {
 		if q != "" && !strings.Contains(strings.ToLower(o.Namespace+"/"+o.Name), q) {
 			continue
@@ -395,8 +422,10 @@ func (m *Model) applyRows() {
 		}
 		rows = append(rows, row)
 		levels = append(levels, m.rowHealth(o))
+		kept = append(kept, o)
 	}
 	m.rowLevels = levels
+	m.rowObjs = kept
 	m.win.SetRows(rows)
 }
 

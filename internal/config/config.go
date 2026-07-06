@@ -10,15 +10,40 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config holds user preferences. See contracts/config-schema.md (v1).
+// ViewPref is the per-resource-type customization of the list (US8):
+// which columns are shown and in what order, the default sort and filter.
+// Empty fields mean "type default"; unknown column titles are dropped at
+// apply time (FR-025 tolerance).
+type ViewPref struct {
+	Columns []string `yaml:"columns,omitempty"` // titles, display order
+	SortCol string   `yaml:"sortCol,omitempty"` // column title; "" = no sort
+	SortAsc bool     `yaml:"sortAsc,omitempty"`
+	Filter  string   `yaml:"filter,omitempty"`
+}
+
+// SavedView is a named, restorable arrangement (US8): a resource type plus
+// its namespace scope and view customization.
+type SavedView struct {
+	Name      string   `yaml:"name"`
+	Type      string   `yaml:"type"` // resource type key, e.g. apps/v1/deployments
+	Namespace string   `yaml:"namespace,omitempty"`
+	Columns   []string `yaml:"columns,omitempty"`
+	SortCol   string   `yaml:"sortCol,omitempty"`
+	SortAsc   bool     `yaml:"sortAsc,omitempty"`
+	Filter    string   `yaml:"filter,omitempty"`
+}
+
+// Config holds user preferences. See contracts/config-schema.md.
 type Config struct {
-	SchemaVersion          int    `yaml:"schemaVersion"`
-	RefreshIntervalSeconds int    `yaml:"refreshIntervalSeconds"`
-	PrometheusURL          string `yaml:"prometheusURL,omitempty"`
-	Theme                  string `yaml:"theme"`
-	LastContext            string `yaml:"lastContext,omitempty"`
-	LastNamespace          string `yaml:"lastNamespace,omitempty"`
-	LastType               string `yaml:"lastType,omitempty"`
+	SchemaVersion          int                 `yaml:"schemaVersion"`
+	RefreshIntervalSeconds int                 `yaml:"refreshIntervalSeconds"`
+	PrometheusURL          string              `yaml:"prometheusURL,omitempty"`
+	Theme                  string              `yaml:"theme"`
+	LastContext            string              `yaml:"lastContext,omitempty"`
+	LastNamespace          string              `yaml:"lastNamespace,omitempty"`
+	LastType               string              `yaml:"lastType,omitempty"`
+	ViewPrefs              map[string]ViewPref `yaml:"viewPrefs,omitempty"`
+	SavedViews             []SavedView         `yaml:"savedViews,omitempty"`
 }
 
 // Defaults returns the built-in defaults (FR-006: refresh default ~5s).
@@ -77,6 +102,20 @@ func normalize(c Config) Config {
 	case "auto", "dark", "light", "none":
 	default:
 		c.Theme = d.Theme
+	}
+	// Saved views: drop entries without a name or type, dedupe by name
+	// (first wins) — a bad entry must never break startup (FR-025).
+	if len(c.SavedViews) > 0 {
+		seen := map[string]bool{}
+		kept := c.SavedViews[:0]
+		for _, v := range c.SavedViews {
+			if v.Name == "" || v.Type == "" || seen[v.Name] {
+				continue
+			}
+			seen[v.Name] = true
+			kept = append(kept, v)
+		}
+		c.SavedViews = kept
 	}
 	return c
 }

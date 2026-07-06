@@ -119,3 +119,61 @@ func TestConfigFileNeverContainsSecrets(t *testing.T) {
 		}
 	}
 }
+
+// TestViewPrefsAndSavedViewsRoundTrip: the US8 customizations persist and
+// reload identically.
+func TestViewPrefsAndSavedViewsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.Defaults()
+	cfg.ViewPrefs = map[string]config.ViewPref{
+		"v1/pods": {Columns: []string{"NAME", "NODE"}, SortCol: "RESTARTS", SortAsc: false, Filter: "api"},
+	}
+	cfg.SavedViews = []config.SavedView{
+		{Name: "crashwatch", Type: "v1/pods", Namespace: "team-a", Columns: []string{"NAME"}, SortCol: "AGE", Filter: "worker"},
+	}
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := got.ViewPrefs["v1/pods"]
+	if len(p.Columns) != 2 || p.SortCol != "RESTARTS" || p.SortAsc || p.Filter != "api" {
+		t.Fatalf("ViewPrefs round-trip mismatch: %+v", p)
+	}
+	if len(got.SavedViews) != 1 || got.SavedViews[0].Name != "crashwatch" || got.SavedViews[0].Type != "v1/pods" {
+		t.Fatalf("SavedViews round-trip mismatch: %+v", got.SavedViews)
+	}
+}
+
+// TestSavedViewsToleranceOnLoad: nameless/typeless/duplicate saved views are
+// dropped on load instead of breaking startup (FR-025).
+func TestSavedViewsToleranceOnLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	raw := `schemaVersion: 1
+refreshIntervalSeconds: 5
+theme: auto
+savedViews:
+  - name: ""
+    type: v1/pods
+  - name: orphan
+  - name: keep
+    type: v1/pods
+  - name: keep
+    type: apps/v1/deployments
+`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.SavedViews) != 1 {
+		t.Fatalf("expected 1 surviving view, got %+v", got.SavedViews)
+	}
+	if got.SavedViews[0].Name != "keep" || got.SavedViews[0].Type != "v1/pods" {
+		t.Fatalf("wrong survivor (first wins): %+v", got.SavedViews[0])
+	}
+}

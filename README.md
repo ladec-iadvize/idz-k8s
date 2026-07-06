@@ -46,6 +46,11 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
   type (kubectl short names work: `:svc`, `:deploy`, `:helm`…), `n` namespace, `c` context, `?` contextual help, `q` quit. `s`/`S` sort
   columns, `Space` marks resources (then `f`/`v` scope to the selection),
   `w` warnings-only in the timeline, `Space` pauses log follow.
+- **Customizable views**: `C` opens the column chooser (Space shows/hides,
+  `←`/`→` reorders — per resource type), sort and committed filters are
+  remembered per type across launches, `V` saves the whole arrangement (type,
+  namespace, columns, sort, filter) as a **named view** and reopens it later,
+  `R` resets the current type to its defaults.
 - **Mouse**: click to select, double-click to open, wheel to scroll, click
   column headers to sort, click header chips (ctx/ns/type) and footer shortcut
   labels to trigger them. `m` toggles mouse capture to select/copy text.
@@ -71,7 +76,21 @@ theme: auto
 lastContext: dev-main      # restored on startup
 lastNamespace: ""          # "" = all namespaces (the default scope)
 lastType: apps/v1/deployments
+viewPrefs:                 # per-type customization ('C', 's', '/')
+  v1/pods:
+    columns: [NAME, RESTARTS, NODE, STATUS, AGE]
+    sortCol: RESTARTS
+    sortAsc: false
+savedViews:                # named views ('V')
+  - name: crashwatch
+    type: v1/pods
+    namespace: ""
+    sortCol: RESTARTS
+    filter: api
 ```
+
+Invalid or stale entries (an unknown column, a type absent from the cluster)
+are ignored gracefully — they never break startup.
 
 ## Guarantees
 

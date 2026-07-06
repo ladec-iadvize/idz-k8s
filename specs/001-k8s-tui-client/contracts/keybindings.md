@@ -42,8 +42,20 @@ mutating bindings** — the tool is read-only. This is the authoritative list th
 | `g` | Dependency graph for the selection | US9 / FR-026 |
 | `f` | Failure diagnostics (restarts/OOM/evictions) | US10 / FR-027 |
 | `p` | Scheduling & capacity | US11 / FR-028 |
-| `H` | Helm releases (read-only) | US12 / FR-029 |
+| `:helm` | Helm releases (read-only, via the type picker) | US12 / FR-029 |
 | `u` | Top consumers (CPU/memory) | FR-035 |
+
+## Customizable views (US8, FR-024/FR-025)
+
+| Key | Action |
+|-----|--------|
+| `s` / `S` | Sort by next column / flip direction (persisted per type) |
+| `C` | Column chooser: `Space` shows/hides, `←`/`→` reorders, `Enter` applies |
+| `V` | Views: save the current arrangement under a name, open or manage saved views |
+| `R` | Reset the current type's view to its defaults |
+
+The committed `/` filter is also remembered per type. All customizations live
+in the local config file and tolerate invalid entries (FR-025).
 
 ## Rules
 

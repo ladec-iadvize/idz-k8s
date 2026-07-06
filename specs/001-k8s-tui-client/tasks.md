@@ -345,3 +345,50 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 - Read-only is a hard invariant: never wire a mutating K8s verb or Helm action (T011, T064, SC-006).
 - Metrics come only from Prometheus; when unavailable show "unavailable", never estimate (constitution data-integrity).
 - P3 backlog (sizing, customizable views, posture, connectivity, access view, diff) is intentionally excluded from v1.
+
+---
+
+## v2 Phases (kickoff 2026-07-06 — all P3 stories + informers)
+
+### Phase v2.1: User Story 8 — Customizable views (FR-024/FR-025)
+
+- [x] T068 [US8] Config schema: per-type view prefs (columns/order, sort, filter) + named saved views, with invalid-entry tolerance, in `internal/config/config.go`
+- [x] T069 [US8] Apply per-type column prefs (subset/order over the type-aware base set) in `internal/ui/listview.go`
+- [x] T070 [US8] Persist sort and committed filter per type; restore on type switch, in `internal/ui/app.go`
+- [x] T071 [US8] Column chooser modal ('C': Space toggles, ←/→ reorders, Enter applies) in `internal/ui/app.go`
+- [x] T072 [US8] Named views ('V': save current as…, switch, and 'R' reset to defaults) in `internal/ui/app.go`
+- [x] T073 [P] [US8] Tests: prefs round-trip + tolerance, column order applied, sort/filter restored, chooser & saved-view flows
+
+### Phase v2.2: User Story 6 — Sizing recommendations (FR-023)
+
+- [ ] T074 [US6] Sizing derivation from Prometheus history vs requests/limits (advisory, never fabricated) in `internal/metrics/sizing.go`
+- [ ] T075 [US6] Sizing view (per-workload verdicts with the observed data behind them) in `internal/ui/`
+- [ ] T076 [P] [US6] Tests incl. insufficient-data → "no recommendation"
+
+### Phase v2.3: User Story 13 — Posture overview (FR-030)
+
+- [ ] T077 [US13] Posture rules (no requests/limits, privileged, root, no probes, `latest`, no NetworkPolicy, TLS expiry) in `internal/kube/posture.go`
+- [ ] T078 [US13] Posture view (findings by rule, object references) in `internal/ui/`
+- [ ] T079 [P] [US13] Tests per rule
+
+### Phase v2.4: User Story 14 — Connectivity / NetworkPolicy (FR-031)
+
+- [ ] T080 [US14] Per-pod NetworkPolicy matching + allowed peers summary in `internal/kube/netpol.go`
+- [ ] T081 [US14] Connectivity view (policies selecting a pod; unrestricted state) in `internal/ui/`
+- [ ] T082 [P] [US14] Tests
+
+### Phase v2.5: User Story 15 — Access (RBAC) view (FR-032)
+
+- [ ] T083 [US15] SelfSubjectRulesReview summary in `internal/kube/access.go`
+- [ ] T084 [US15] Access view + inaccessible-type reasons in `internal/ui/`
+- [ ] T085 [P] [US15] Tests
+
+### Phase v2.6: User Story 16 — Read-only diff (FR-033)
+
+- [ ] T086 [US16] Live vs last-applied diff derivation in `internal/kube/diff.go`
+- [ ] T087 [US16] Diff view (no apply affordance) in `internal/ui/`
+- [ ] T088 [P] [US16] Tests
+
+### Phase v2.7: Internals
+
+- [ ] T089 Shared informer cache replacing periodic LIST polling (carried ex-T010) in `internal/kube/informers.go`

@@ -22,6 +22,10 @@
 
 - Q: Should the tool perform administrative/mutating actions? → A: No. The tool is strictly read-only — an overview and debugging client. Mutating administration is out of scope and is done in a separate tool (e.g. k9s).
 
+### Session 2026-07-06 (v2 kickoff)
+
+- Q: v2 scope? → A: All six deferred P3 stories — US8 customizable views (first), US6 sizing recommendations, US13 posture, US14 connectivity, US15 access view, US16 read-only diff — plus the shared-informers optimization (ex-T010). Read-only invariant unchanged.
+
 ### Session 2026-07-03
 
 - Q: v1 scope across the 16 user stories? → A: v1 = P1 + P2 (US1–US5, US7, US9–US12); P3 stories (US6 sizing, US8 customizable views, US13 posture, US14 connectivity, US15 access, US16 diff) are deferred to backlog.

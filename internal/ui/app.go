@@ -53,6 +53,14 @@ const (
 	pickNamespace
 	pickContext
 	pickEventKind
+	pickColumns
+	pickView
+)
+
+// Sentinel options of the views picker (US8).
+const (
+	saveViewLabel  = "◆ save current view as…"
+	resetViewLabel = "◆ reset current view to defaults"
 )
 
 // allKindsLabel is the sentinel option that clears the event kind filter.
@@ -180,9 +188,27 @@ type Model struct {
 	// Marked resources (Space): scope for 'f' and 'v'. Key = ns/name.
 	marked map[string]model.ResourceObject
 
-	// Column sorting of the main list (session-only; saved views are US8/v2).
-	sortCol int // visual column index (1=NAMESPACE … 5=AGE); -1 = none
+	// Column sorting of the main list; persisted per type via ViewPrefs (US8).
+	sortCol int // visual column index into columnsForType(); -1 = none
 	sortAsc bool
+
+	// Objects behind the visible rows, same order (selection is index-based,
+	// so it survives any column arrangement).
+	rowObjs []model.ResourceObject
+
+	// Column chooser state ('C', US8): the current type's available columns
+	// with their visibility, in display order.
+	colItems []colItem
+
+	// Save-view naming prompt ('V' → save as…, US8).
+	viewNaming bool
+	viewName   string
+}
+
+// colItem is one entry of the column chooser.
+type colItem struct {
+	title string
+	on    bool
 }
 
 // Option customizes the initial model.
@@ -518,6 +544,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.curType = defaultType(m.types)
 			}
+			m.applyViewPref()
 		}
 		return m, tea.Batch(m.listObjects(), m.tick())
 
@@ -665,6 +692,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// View-name typing mode captures ALL keys (Enter saves, Esc cancels).
+	if m.viewNaming {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.viewNaming = false
+			m.saveCurrentView(strings.TrimSpace(m.viewName))
+			return m, nil
+		case tea.KeyEscape:
+			m.viewNaming = false
+			return m, nil
+		case tea.KeyBackspace:
+			if m.viewName != "" {
+				m.viewName = m.viewName[:len(m.viewName)-1]
+			}
+			return m, nil
+		case tea.KeyRunes, tea.KeySpace:
+			m.viewName += string(msg.Runes)
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// Events filter typing mode captures ALL keys (so 'q', 'n', Esc… are text
 	// or edit actions, never global shortcuts). Enter commits, Esc cancels.
 	if m.screen == screenEvents && m.eventsFiltering {
@@ -708,6 +757,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filtering = false
 			m.filter.Blur()
 			m.applyRows()
+			m.persistViewPref()
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -829,12 +879,21 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.sortAsc = true
 		m.applyRows()
+		m.persistViewPref()
 		return m, nil
 	case hit(msg, m.keys.SortDir):
 		if m.sortCol >= 1 {
 			m.sortAsc = !m.sortAsc
 			m.applyRows()
+			m.persistViewPref()
 		}
+		return m, nil
+	case hit(msg, m.keys.Columns):
+		return m.openColumnChooser()
+	case hit(msg, m.keys.Views):
+		return m.openViewPicker()
+	case hit(msg, m.keys.ResetView):
+		m.resetCurrentView()
 		return m, nil
 	}
 	m.navigate(&m.win, msg)
@@ -946,6 +1005,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 					m.sortCol, m.sortAsc = col, true
 				}
 				m.applyRows()
+				m.persistViewPref()
 			}
 			return m, nil
 		}
@@ -974,6 +1034,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if rel := msg.Y - geom.optTop; rel >= 0 && rel < geom.optRows {
 			if m.pickerWin.ClickVisible(rel) {
 				m.pickerWin.Sync(&m.picker)
+				if m.pickerKind == pickColumns {
+					// Chooser: a single click toggles the column.
+					m.toggleColItem(m.pickerWin.cursor)
+					return m, nil
+				}
 				if doubleClick(m.pickerWin.cursor) {
 					return m.pickerSelect()
 				}
@@ -1067,6 +1132,29 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Enter selects the highlighted option.
 	if hit(msg, m.keys.Open) {
 		return m.pickerSelect()
+	}
+	// Column chooser: Space toggles, ←/→ reorders; no type-to-filter (and no
+	// key may leak to global shortcuts while the chooser is open).
+	if m.pickerKind == pickColumns {
+		switch msg.Type {
+		case tea.KeySpace:
+			m.toggleColItem(m.pickerWin.cursor)
+			return m, nil
+		case tea.KeyLeft, tea.KeyRight:
+			i, j := m.pickerWin.cursor, m.pickerWin.cursor-1
+			if msg.Type == tea.KeyRight {
+				j = i + 1
+			}
+			if i >= 0 && i < len(m.colItems) && j >= 0 && j < len(m.colItems) {
+				m.colItems[i], m.colItems[j] = m.colItems[j], m.colItems[i]
+				m.applyColumnRows()
+				m.pickerWin.Move(j - i)
+				m.pickerWin.Sync(&m.picker)
+			}
+			return m, nil
+		case tea.KeyRunes, tea.KeyBackspace:
+			return m, nil
+		}
 	}
 	// Arrow/page navigation on the windowed table.
 	switch msg.Type {
@@ -2339,6 +2427,10 @@ func (m Model) pickerLabel() string {
 		return "context"
 	case pickEventKind:
 		return "kind"
+	case pickColumns:
+		return "columns — " + m.curType.Key()
+	case pickView:
+		return "views"
 	default:
 		return "select"
 	}
@@ -2393,11 +2485,12 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 				m.curType = t
 			}
 		}
-		// A type switch is a fresh view: leave any drill, clear the text
-		// filter (an invisible leftover filter would empty the new list) and
-		// the marked selection.
+		// A type switch is a fresh view: leave any drill and the marked
+		// selection, then restore the type's own saved customization —
+		// filter, sort — instead of a leftover from the previous type (a
+		// saved filter is always visible as a header chip, never invisible).
 		m.drillSelector, m.drillFor, m.drillNamespace = "", "", ""
-		m.filter.SetValue("")
+		m.applyViewPref()
 		m.marked = map[string]model.ResourceObject{}
 		m.statusMsg = ""
 		m.screen = screenList
@@ -2439,6 +2532,28 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 		m.layout()
 		m.renderEvents()
 		return m, nil
+	case pickColumns:
+		return m.applyColumnChoice()
+	case pickView:
+		switch choice {
+		case saveViewLabel:
+			m.viewNaming, m.viewName = true, ""
+			m.screen = m.pickerReturn
+			m.layout()
+			return m, nil
+		case resetViewLabel:
+			m.resetCurrentView()
+			m.screen = screenList
+			m.layout()
+			return m, m.listObjects()
+		}
+		name := strings.TrimSpace(strings.SplitN(choice, "  (", 2)[0])
+		for _, v := range m.cfg.SavedViews {
+			if v.Name == name {
+				return m.applySavedView(v)
+			}
+		}
+		return m.goBack()
 	case pickContext:
 		nc, err := kube.NewClient(kube.Options{KubeconfigPath: m.kubeconfigPath, Context: choice})
 		if err != nil {
@@ -2564,6 +2679,8 @@ func (m Model) View() string {
 	case m.screen == screenPicker:
 		box, _ := m.pickerModal()
 		out = overlayCenter(out, box, m.width)
+	case m.viewNaming:
+		out = overlayCenter(out, m.inputModal("save view as", m.viewName, "Enter save · Esc cancel"), m.width)
 	case m.filtering:
 		out = overlayCenter(out, m.inputModal("filter "+m.curType.Resource, m.filter.Value(), "Enter save · Esc close"), m.width)
 	case m.screen == screenEvents && m.eventsFiltering:
@@ -2656,7 +2773,12 @@ func (m Model) pickerModal() (string, modalGeom) {
 	}
 	var lines []string
 	lines = append(lines, m.theme.TableHeader.Render(padTo(m.pickerLabel(), inner)))
-	lines = append(lines, padTo("▸ "+m.pickerQuery+"▏", inner))
+	if m.pickerKind == pickColumns {
+		// No type-to-filter here; the line keeps the modal geometry stable.
+		lines = append(lines, m.theme.Faint.Render(padTo("Space show/hide · ←/→ reorder", inner)))
+	} else {
+		lines = append(lines, padTo("▸ "+m.pickerQuery+"▏", inner))
+	}
 	for i := m.pickerWin.win; i < m.pickerWin.win+shown; i++ {
 		txt := padTo(" "+truncate(m.pickerWin.rows[i][0], inner-1), inner)
 		if i == m.pickerWin.cursor {
@@ -2666,6 +2788,9 @@ func (m Model) pickerModal() (string, modalGeom) {
 	}
 	_, _, total := m.pickerWin.Range()
 	hint := fmt.Sprintf("↑↓ · Enter ok · Esc close   %d option(s)", total)
+	if m.pickerKind == pickColumns {
+		hint = "Enter apply · Esc cancel"
+	}
 	lines = append(lines, m.theme.Faint.Render(padTo(hint, inner)))
 	box := modalBorder.Render(strings.Join(lines, "\n"))
 
@@ -2952,25 +3077,12 @@ func readyFrac(ready, desired int) float64 {
 }
 
 func (m Model) selectedObject() (model.ResourceObject, bool) {
-	row, _ := m.win.Selected()
-	if len(row) < 2 {
+	// Index-based: rowObjs mirrors the visible rows (applyRows), so the
+	// selection is correct whatever columns the user chose to display (US8).
+	if m.win.cursor < 0 || m.win.cursor >= len(m.rowObjs) {
 		return model.ResourceObject{}, false
 	}
-	var ns, name string
-	if m.curType.Namespaced {
-		if len(row) < 3 {
-			return model.ResourceObject{}, false
-		}
-		ns, name = row[1], row[2]
-	} else {
-		name = row[1]
-	}
-	for _, o := range m.objects {
-		if o.Namespace == ns && o.Name == name {
-			return o, true
-		}
-	}
-	return model.ResourceObject{}, false
+	return m.rowObjs[m.win.cursor], true
 }
 
 // persist saves the current context/namespace/type as defaults for next launch.
@@ -2983,6 +3095,259 @@ func (m *Model) persist() {
 	m.cfg.LastNamespace = m.client.Namespace
 	m.cfg.LastType = m.curType.Key()
 	_ = config.Save(m.configPath, m.cfg)
+}
+
+// ---- Customizable views (US8, FR-024/FR-025) ----
+
+// applyViewPref restores the current type's saved customization: committed
+// filter and sort (resolved by column title; a title that no longer matches
+// any column is silently ignored — FR-025 tolerance).
+func (m *Model) applyViewPref() {
+	pref := m.cfg.ViewPrefs[m.curType.Key()]
+	m.filter.SetValue(pref.Filter)
+	m.sortCol, m.sortAsc = -1, true
+	if pref.SortCol != "" {
+		for i, c := range m.columnsForType() {
+			if c.title == pref.SortCol {
+				m.sortCol, m.sortAsc = i+1, pref.SortAsc
+				break
+			}
+		}
+	}
+}
+
+// persistViewPref snapshots the current sort and committed filter into the
+// type's pref — what you see (header chip, sort arrow) is what comes back
+// next time. An all-default pref is removed rather than stored.
+func (m *Model) persistViewPref() {
+	key := m.curType.Key()
+	if key == "" || key == "/" {
+		return
+	}
+	pref := m.cfg.ViewPrefs[key]
+	cols := m.columnsForType()
+	pref.SortCol, pref.SortAsc = "", false
+	if m.sortCol >= 1 && m.sortCol <= len(cols) {
+		pref.SortCol, pref.SortAsc = cols[m.sortCol-1].title, m.sortAsc
+	}
+	pref.Filter = strings.TrimSpace(m.filter.Value())
+	if len(pref.Columns) == 0 && pref.SortCol == "" && pref.Filter == "" {
+		delete(m.cfg.ViewPrefs, key)
+	} else {
+		if m.cfg.ViewPrefs == nil {
+			m.cfg.ViewPrefs = map[string]config.ViewPref{}
+		}
+		m.cfg.ViewPrefs[key] = pref
+	}
+	m.persist()
+}
+
+// openColumnChooser opens the 'C' modal: every column the current type offers,
+// visible ones first in display order, then the hidden ones.
+func (m Model) openColumnChooser() (tea.Model, tea.Cmd) {
+	shown := m.columnsForType()
+	on := map[string]bool{}
+	items := make([]colItem, 0, len(shown))
+	for _, c := range shown {
+		on[c.title] = true
+		items = append(items, colItem{title: c.title, on: true})
+	}
+	for _, c := range m.columnsBase() {
+		if !on[c.title] {
+			items = append(items, colItem{title: c.title})
+		}
+	}
+	m.colItems = items
+	m.pickerKind = pickColumns
+	m.pickerReturn = screenList
+	m.pickerQuery = ""
+	// The bubbles table panics on SetRows without columns — always set them.
+	m.picker.SetColumns([]table.Column{{Title: "columns", Width: max(20, m.width-4)}})
+	m.applyColumnRows()
+	m.pickerWin.Home()
+	m.screen = screenPicker
+	m.layout()
+	return m, nil
+}
+
+// applyColumnRows re-renders the chooser rows from colItems.
+func (m *Model) applyColumnRows() {
+	rows := make([]table.Row, 0, len(m.colItems))
+	for _, it := range m.colItems {
+		chk := "· "
+		if it.on {
+			chk = "✓ "
+		}
+		rows = append(rows, table.Row{chk + it.title})
+	}
+	m.pickerWin.SetRows(rows)
+	m.pickerWin.Sync(&m.picker)
+}
+
+// toggleColItem flips a column's visibility (NAME stays — every other action
+// in the list needs a way to identify the row).
+func (m *Model) toggleColItem(i int) {
+	if i < 0 || i >= len(m.colItems) {
+		return
+	}
+	if m.colItems[i].title == "NAME" && m.colItems[i].on {
+		m.statusMsg = "the NAME column cannot be hidden"
+		return
+	}
+	m.colItems[i].on = !m.colItems[i].on
+	m.applyColumnRows()
+}
+
+// applyColumnChoice commits the chooser (Enter): store the arrangement — or
+// clear it when it matches the type's default — re-resolve the sort against
+// the new columns, and persist.
+func (m Model) applyColumnChoice() (tea.Model, tea.Cmd) {
+	var sortTitle string
+	if cols := m.columnsForType(); m.sortCol >= 1 && m.sortCol <= len(cols) {
+		sortTitle = cols[m.sortCol-1].title
+	}
+	titles := make([]string, 0, len(m.colItems))
+	for _, it := range m.colItems {
+		if it.on {
+			titles = append(titles, it.title)
+		}
+	}
+	base := m.columnsBase()
+	def := len(titles) == len(base)
+	if def {
+		for i, c := range base {
+			if titles[i] != c.title {
+				def = false
+				break
+			}
+		}
+	}
+	key := m.curType.Key()
+	if m.cfg.ViewPrefs == nil {
+		m.cfg.ViewPrefs = map[string]config.ViewPref{}
+	}
+	pref := m.cfg.ViewPrefs[key]
+	pref.Columns = titles
+	if def {
+		pref.Columns = nil
+	}
+	m.cfg.ViewPrefs[key] = pref
+	m.screen = screenList
+	m.layout()
+	// The sorted column may have been hidden or moved: follow it by title.
+	m.sortCol = -1
+	if sortTitle != "" {
+		for i, c := range m.columnsForType() {
+			if c.title == sortTitle {
+				m.sortCol = i + 1
+				break
+			}
+		}
+	}
+	m.applyRows()
+	m.persistViewPref()
+	return m, nil
+}
+
+// openViewPicker opens the 'V' modal: saved views plus save/reset actions.
+func (m Model) openViewPicker() (tea.Model, tea.Cmd) {
+	opts := []string{saveViewLabel, resetViewLabel}
+	for _, v := range m.cfg.SavedViews {
+		opts = append(opts, viewOptionLabel(v))
+	}
+	m.pickerKind = pickView
+	m.pickerReturn = m.screen
+	m.pickerOpts = opts
+	m.pickerQuery = ""
+	// The bubbles table panics on SetRows without columns — always set them.
+	m.picker.SetColumns([]table.Column{{Title: "views", Width: max(20, m.width-4)}})
+	m.applyPickerRows()
+	m.pickerWin.Home()
+	m.pickerWin.Sync(&m.picker)
+	m.screen = screenPicker
+	m.layout()
+	return m, nil
+}
+
+// viewOptionLabel renders a saved view as a picker option.
+func viewOptionLabel(v config.SavedView) string {
+	ns := v.Namespace
+	if ns == "" {
+		ns = "all ns"
+	}
+	return v.Name + "  (" + v.Type + ", " + ns + ")"
+}
+
+// saveCurrentView stores the whole current arrangement — type, namespace,
+// columns, sort, filter — under a name (same name = update).
+func (m *Model) saveCurrentView(name string) {
+	if name == "" {
+		m.statusMsg = "view not saved (empty name)"
+		return
+	}
+	v := config.SavedView{
+		Name:      name,
+		Type:      m.curType.Key(),
+		Namespace: m.client.Namespace,
+		Columns:   m.cfg.ViewPrefs[m.curType.Key()].Columns,
+		Filter:    strings.TrimSpace(m.filter.Value()),
+	}
+	if cols := m.columnsForType(); m.sortCol >= 1 && m.sortCol <= len(cols) {
+		v.SortCol, v.SortAsc = cols[m.sortCol-1].title, m.sortAsc
+	}
+	updated := false
+	for i := range m.cfg.SavedViews {
+		if m.cfg.SavedViews[i].Name == name {
+			m.cfg.SavedViews[i] = v
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		m.cfg.SavedViews = append(m.cfg.SavedViews, v)
+	}
+	m.persist()
+	if updated {
+		m.statusMsg = "view “" + name + "” updated"
+	} else {
+		m.statusMsg = "view “" + name + "” saved — 'V' opens it anytime"
+	}
+}
+
+// applySavedView switches to a saved view: type, namespace, columns, sort,
+// filter. The view's arrangement becomes the type's current pref.
+func (m Model) applySavedView(v config.SavedView) (tea.Model, tea.Cmd) {
+	t, ok := findTypeByKey(m.types, v.Type)
+	if !ok {
+		m.errMsg = "view " + v.Name + ": type " + v.Type + " not available on this cluster"
+		m.screen = m.pickerReturn
+		m.layout()
+		return m, nil
+	}
+	m.curType = t
+	m.client.Namespace = v.Namespace
+	if m.cfg.ViewPrefs == nil {
+		m.cfg.ViewPrefs = map[string]config.ViewPref{}
+	}
+	m.cfg.ViewPrefs[v.Type] = config.ViewPref{Columns: v.Columns, SortCol: v.SortCol, SortAsc: v.SortAsc, Filter: v.Filter}
+	m.drillSelector, m.drillFor, m.drillNamespace = "", "", ""
+	m.marked = map[string]model.ResourceObject{}
+	m.applyViewPref()
+	m.statusMsg = "view “" + v.Name + "”"
+	m.screen = screenList
+	m.layout()
+	m.persist()
+	return m, m.listObjects()
+}
+
+// resetCurrentView drops every customization of the current type ('R').
+func (m *Model) resetCurrentView() {
+	delete(m.cfg.ViewPrefs, m.curType.Key())
+	m.filter.SetValue("")
+	m.sortCol, m.sortAsc = -1, true
+	m.applyRows()
+	m.persist()
+	m.statusMsg = "view reset to defaults"
 }
 
 // colorizeYAML tints YAML for readability: keys in blue, comments faint.
