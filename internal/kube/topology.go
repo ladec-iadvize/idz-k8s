@@ -26,14 +26,24 @@ func (c *Client) Topology(ctx context.Context, namespace string) ([]model.Topolo
 	}
 
 	podRI := c.Dynamic.Resource(podsGVR)
+	apiNS, pattern := namespaceScope(namespace)
 	var podList *unstructured.UnstructuredList
-	if namespace != "" {
-		podList, err = podRI.Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if apiNS != "" {
+		podList, err = podRI.Namespace(apiNS).List(ctx, metav1.ListOptions{})
 	} else {
 		podList, err = podRI.List(ctx, metav1.ListOptions{})
 	}
 	if err != nil {
 		return nil, err
+	}
+	if pattern != "" {
+		kept := podList.Items[:0]
+		for i := range podList.Items {
+			if MatchNamespace(pattern, podList.Items[i].GetNamespace()) {
+				kept = append(kept, podList.Items[i])
+			}
+		}
+		podList.Items = kept
 	}
 
 	// Group pods by their spec.nodeName, computing each pod's requests.

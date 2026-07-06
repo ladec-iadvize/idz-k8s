@@ -18,12 +18,13 @@ var podsGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "p
 // and restart counts. Only "interesting" (non-healthy) items are returned.
 func (c *Client) Diagnostics(ctx context.Context, namespace string) ([]model.Diagnostic, error) {
 	ri := c.Dynamic.Resource(podsGVR)
+	apiNS, pattern := namespaceScope(namespace)
 	var (
 		ul  *unstructured.UnstructuredList
 		err error
 	)
-	if namespace != "" {
-		ul, err = ri.Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if apiNS != "" {
+		ul, err = ri.Namespace(apiNS).List(ctx, metav1.ListOptions{})
 	} else {
 		ul, err = ri.List(ctx, metav1.ListOptions{})
 	}
@@ -32,6 +33,9 @@ func (c *Client) Diagnostics(ctx context.Context, namespace string) ([]model.Dia
 	}
 	var out []model.Diagnostic
 	for i := range ul.Items {
+		if pattern != "" && !MatchNamespace(pattern, ul.Items[i].GetNamespace()) {
+			continue
+		}
 		out = append(out, diagnosePod(&ul.Items[i])...)
 	}
 	return out, nil

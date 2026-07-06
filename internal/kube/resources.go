@@ -47,12 +47,13 @@ func (c *Client) List(ctx context.Context, t model.ResourceType, namespace strin
 func (c *Client) ListSelected(ctx context.Context, t model.ResourceType, namespace, labelSelector string) ([]model.ResourceObject, error) {
 	ri := c.Dynamic.Resource(GVR(t))
 	lopts := metav1.ListOptions{LabelSelector: labelSelector}
+	apiNS, pattern := namespaceScope(namespace)
 	var (
 		ul  *unstructured.UnstructuredList
 		err error
 	)
-	if t.Namespaced && namespace != "" {
-		ul, err = ri.Namespace(namespace).List(ctx, lopts)
+	if t.Namespaced && apiNS != "" {
+		ul, err = ri.Namespace(apiNS).List(ctx, lopts)
 	} else {
 		ul, err = ri.List(ctx, lopts)
 	}
@@ -62,6 +63,9 @@ func (c *Client) ListSelected(ctx context.Context, t model.ResourceType, namespa
 	out := make([]model.ResourceObject, 0, len(ul.Items))
 	for i := range ul.Items {
 		item := ul.Items[i]
+		if t.Namespaced && pattern != "" && !MatchNamespace(pattern, item.GetNamespace()) {
+			continue
+		}
 		out = append(out, model.ResourceObject{
 			Type:      t,
 			Namespace: item.GetNamespace(),

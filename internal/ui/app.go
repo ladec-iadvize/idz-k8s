@@ -76,6 +76,11 @@ const logBufMax = 5000
 // allNamespacesLabel is the sentinel option that lists across all namespaces.
 const allNamespacesLabel = "◆ all namespaces"
 
+// nsPatternPrefix marks the synthetic namespace-picker option offered when
+// the typed query is a glob (e.g. "staging-*"): selecting it scopes every
+// view to the namespaces the pattern matches.
+const nsPatternPrefix = "◆ pattern: "
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	cfg            config.Config
@@ -2441,6 +2446,11 @@ func (m Model) pickerLabel() string {
 func (m *Model) applyPickerRows() {
 	q := strings.ToLower(strings.TrimSpace(m.pickerQuery))
 	rows := make([]table.Row, 0, len(m.pickerOpts))
+	// Namespace picker: a glob query ("staging-*") becomes a selectable
+	// pattern scope of its own, on top of the matching literal entries.
+	if m.pickerKind == pickNamespace && kube.IsNamespacePattern(strings.TrimSpace(m.pickerQuery)) {
+		rows = append(rows, table.Row{nsPatternPrefix + strings.TrimSpace(m.pickerQuery)})
+	}
 	for _, o := range m.pickerOpts {
 		if q == "" || strings.Contains(strings.ToLower(o), q) {
 			rows = append(rows, table.Row{o})
@@ -2498,9 +2508,12 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 		m.persist()
 		return m, m.listObjects()
 	case pickNamespace:
-		if choice == allNamespacesLabel {
+		switch {
+		case choice == allNamespacesLabel:
 			m.client.Namespace = "" // empty → list across all namespaces
-		} else {
+		case strings.HasPrefix(choice, nsPatternPrefix):
+			m.client.Namespace = strings.TrimPrefix(choice, nsPatternPrefix)
+		default:
 			m.client.Namespace = choice
 		}
 		m.layout()
@@ -2790,6 +2803,9 @@ func (m Model) pickerModal() (string, modalGeom) {
 	hint := fmt.Sprintf("↑↓ · Enter ok · Esc close   %d option(s)", total)
 	if m.pickerKind == pickColumns {
 		hint = "Enter apply · Esc cancel"
+	}
+	if m.pickerKind == pickNamespace {
+		hint = fmt.Sprintf("↑↓ · Enter ok · Esc close · '*' = pattern   %d option(s)", total)
 	}
 	lines = append(lines, m.theme.Faint.Render(padTo(hint, inner)))
 	box := modalBorder.Render(strings.Join(lines, "\n"))
