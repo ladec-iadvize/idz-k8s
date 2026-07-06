@@ -208,6 +208,30 @@ func PodSelector(raw map[string]interface{}) (string, bool) {
 	return "", false
 }
 
+// PodSelectorLabels returns the selector as a label map for client-side pod
+// matching (controller matchLabels, or a Service's plain selector).
+func PodSelectorLabels(raw map[string]interface{}) (map[string]string, bool) {
+	if ml, found, _ := unstructured.NestedStringMap(raw, "spec", "selector", "matchLabels"); found && len(ml) > 0 {
+		return ml, true
+	}
+	if sel, found, _ := unstructured.NestedStringMap(raw, "spec", "selector"); found && len(sel) > 0 {
+		return sel, true
+	}
+	return nil, false
+}
+
+// LabelsMatch reports whether the object's labels satisfy every key=value of
+// the selector (the label-selector subset used by matchLabels).
+func LabelsMatch(raw map[string]interface{}, sel map[string]string) bool {
+	labels, _, _ := unstructured.NestedStringMap(raw, "metadata", "labels")
+	for k, v := range sel {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return len(sel) > 0
+}
+
 func joinSelector(m map[string]string) string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
