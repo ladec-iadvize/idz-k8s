@@ -19,12 +19,13 @@ var eventsGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: 
 // not a complete history — the view labels it as such.
 func (c *Client) Events(ctx context.Context, namespace string) ([]model.Event, error) {
 	ri := c.Dynamic.Resource(eventsGVR)
+	apiNS, pattern := namespaceScope(namespace)
 	var (
 		ul  *unstructured.UnstructuredList
 		err error
 	)
-	if namespace != "" {
-		ul, err = ri.Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if apiNS != "" {
+		ul, err = ri.Namespace(apiNS).List(ctx, metav1.ListOptions{})
 	} else {
 		ul, err = ri.List(ctx, metav1.ListOptions{})
 	}
@@ -33,6 +34,9 @@ func (c *Client) Events(ctx context.Context, namespace string) ([]model.Event, e
 	}
 	out := make([]model.Event, 0, len(ul.Items))
 	for i := range ul.Items {
+		if pattern != "" && !MatchNamespace(pattern, ul.Items[i].GetNamespace()) {
+			continue
+		}
 		out = append(out, parseEvent(&ul.Items[i]))
 	}
 	// Most recent first.

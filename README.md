@@ -43,7 +43,8 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 ## Interaction
 
 - **Keyboard**: arrows/PgUp/PgDn, `/` filter (centered input, live), `:` resource
-  type (kubectl short names work: `:svc`, `:deploy`, `:helm`…), `n` namespace, `c` context, `?` contextual help, `q` quit. `s`/`S` sort
+  type (kubectl short names work: `:svc`, `:deploy`, `:helm`…), `n` namespace (a glob like `staging-*` scopes
+  every view to all matching namespaces), `c` context, `?` contextual help, `q` quit. `s`/`S` sort
   columns, `Space` marks resources (then `f`/`v` scope to the selection),
   `w` warnings-only in the timeline, `Space` pauses log follow.
 - **Customizable views**: `C` opens the column chooser (Space shows/hides,
