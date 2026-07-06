@@ -67,3 +67,21 @@ func TestWorkloadSizingDisabledClient(t *testing.T) {
 		t.Fatal("verdict without data must be SizingNoData")
 	}
 }
+
+// TestScopeQueriesShapes: the overview's four batch queries aggregate by
+// (namespace,pod) and honor the exact-namespace matcher only when given one.
+func TestScopeQueriesShapes(t *testing.T) {
+	q := metrics.ScopeAvgByPod("demo", model.MetricCPU, time.Hour)
+	for _, want := range []string{`sum by (namespace,pod)`, `namespace="demo"`, `avg_over_time`, `[60m:1m]`} {
+		if !strings.Contains(q, want) {
+			t.Errorf("scoped avg query missing %q:\n%s", want, q)
+		}
+	}
+	all := metrics.ScopePeakByPod("", model.MetricMemory, time.Hour)
+	if strings.Contains(all, "namespace=") {
+		t.Errorf("cluster-wide query must not pin a namespace:\n%s", all)
+	}
+	if !strings.Contains(all, "max_over_time") || !strings.Contains(all, "container_memory_working_set_bytes") {
+		t.Errorf("peak mem query malformed:\n%s", all)
+	}
+}

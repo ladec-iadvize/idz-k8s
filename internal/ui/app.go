@@ -45,6 +45,7 @@ const (
 	screenHelm
 	screenHelmHist
 	screenSizing
+	screenSizingList
 )
 
 type pickerKind int
@@ -164,9 +165,14 @@ type Model struct {
 	helmRows       []model.HelmRelease
 	helmValuesOnly bool // 'v': show only the values of a release
 
-	// Sizing recommendations (US6, advisory & read-only).
-	sizingVP  viewport.Model
-	sizingFor string // e.g. "Deployment/back"
+	// Sizing recommendations (US6, advisory & read-only): overview table of
+	// every listed workload, Enter → per-workload detail panel.
+	sizingVP   viewport.Model
+	sizingFor  string // e.g. "Deployment/back"
+	sizingRows []model.SizingAdvice
+	sizingObjs []model.ResourceObject // same order as sizingRows
+	sizingWin  winTable
+	sizingFrom screen // where Esc returns from the detail panel
 
 	// Click zones of the events header line (T048); set by renderEvents.
 	eventsKindZone  clickZone
@@ -343,6 +349,11 @@ type metricsMsg struct {
 type sizingMsg struct {
 	advice model.SizingAdvice
 	err    error
+}
+type sizingListMsg struct {
+	rows []model.SizingAdvice
+	objs []model.ResourceObject
+	err  error
 }
 type diagMsg struct {
 	rows []model.Diagnostic
@@ -666,6 +677,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderSizing(msg.advice)
 		return m, nil
 
+	case sizingListMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		m.sizingRows, m.sizingObjs = msg.rows, msg.objs
+		m.sizingWin.SetRows(make([]table.Row, len(msg.rows)))
+		m.sizingWin.Home()
+		return m, nil
+
 	case topologyMsg:
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -862,6 +883,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.sizingVP, cmd = m.sizingVP.Update(msg)
 		return m, cmd
+	case screenSizingList:
+		if hit(msg, m.keys.Open) {
+			return m.openSizingDetail(m.sizingWin.cursor)
+		}
+		m.navigate(&m.sizingWin, msg)
+		return m, nil
 	case screenTopology:
 		var cmd tea.Cmd
 		m.topo, cmd = m.topo.Update(msg)
@@ -1082,6 +1109,13 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case screenSizingList:
+		if m.sizingWin.ClickVisible(msg.Y - 3) {
+			if doubleClick(m.sizingWin.cursor) {
+				return m.openSizingDetail(m.sizingWin.cursor)
+			}
+		}
+		return m, nil
 	case screenHelm:
 		if m.helmWin.ClickVisible(msg.Y - 3) {
 			m.helmWin.Sync(&m.helmTable)
@@ -1292,6 +1326,12 @@ func (m *Model) goBack() (tea.Model, tea.Cmd) {
 		cmd := m.exitDrill()
 		m.layout()
 		return m, cmd
+	}
+	if m.screen == screenSizing && m.sizingFrom == screenSizingList {
+		m.sizingFrom = screenList
+		m.screen = screenSizingList
+		m.layout()
+		return m, nil
 	}
 	if m.screen == screenPicker && m.pickerReturn != screenPicker {
 		// A picker opened from a sub-view (e.g. the timeline) returns there.
@@ -2699,6 +2739,7 @@ func (m *Model) layout() {
 	m.events.Width, m.events.Height = m.width, bodyH
 	m.helmHist.Width, m.helmHist.Height = m.width, bodyH
 	m.sizingVP.Width, m.sizingVP.Height = m.width, bodyH
+	m.sizingWin.SetHeight(bodyH - 1) // -1: the overview's own column header
 	m.helmTable.SetHeight(bodyH)
 	m.helmTable.SetWidth(m.width)
 	m.picker.SetHeight(bodyH)
@@ -2746,6 +2787,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.helmHist.View()
 	case screenSizing:
 		return m.sizingVP.View()
+	case screenSizingList:
+		return m.sizingListView()
 	default:
 		return m.listView()
 	}
@@ -3147,6 +3190,11 @@ func (m Model) screenKeymap() keymapView {
 			short: []key.Binding{k.Up, k.Down, k.Top, k.Back, k.Quit},
 			full:  [][]key.Binding{nav, {k.Top, k.Back, k.Help, k.Quit}},
 		}
+	case screenSizingList:
+		return keymapView{
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Back, k.Help, k.Quit}},
+		}
 	default: // detail, logs, diag, topology
 		return keymapView{
 			short: []key.Binding{k.Up, k.Down, k.Back, k.Help, k.Quit},
@@ -3202,34 +3250,214 @@ func (m *Model) persist() {
 
 // ---- Sizing recommendations (US6, FR-023 — advisory, read-only) ----
 
-// openSizing opens the advisory sizing view for the selected workload or pod.
+// openSizing ('z'): on a pods list, the selected pod's detail panel; on a
+// workload list, the overview TABLE of every visible workload — Enter on a
+// row then opens its detail panel.
 func (m *Model) openSizing() (tea.Model, tea.Cmd) {
-	obj, found := m.selectedObject()
-	if !found {
-		m.statusMsg = "sizing: select a workload or a pod first"
+	if strings.EqualFold(m.curType.Kind, "Pod") {
+		obj, found := m.selectedObject()
+		if !found {
+			m.statusMsg = "sizing: select a pod first"
+			return m, nil
+		}
+		if !m.metrics.Enabled() {
+			return m.openSizingUnavailable()
+		}
+		return m.openSizingFor(obj, "", screenList)
+	}
+	// Workloads with a pod selector, scoped like 'f'/'v': the marked set if
+	// any, otherwise everything currently visible (filter applied).
+	src := m.rowObjs
+	if len(m.marked) > 0 {
+		src = make([]model.ResourceObject, 0, len(m.marked))
+		for _, o := range m.marked {
+			src = append(src, o)
+		}
+	}
+	var workloads []model.ResourceObject
+	for _, o := range src {
+		if _, ok := kube.PodSelectorLabels(o.Raw); ok {
+			workloads = append(workloads, o)
+		}
+	}
+	if len(workloads) == 0 {
+		m.statusMsg = "sizing: no workload with pods here — open it on deployments, statefulsets…"
 		return m, nil
 	}
-	kind := m.curType.Kind
-	sel, hasSel := kube.PodSelector(obj.Raw)
-	if !strings.EqualFold(kind, "Pod") && !hasSel {
-		m.statusMsg = "sizing: " + kind + " has no pods — open it on a workload or a pod"
-		return m, nil
-	}
-	m.screen = screenSizing
-	m.sizingFor = kind + "/" + obj.Name
 	if !m.metrics.Enabled() {
-		// FR-023/SC-013: without observed data there is NO recommendation —
-		// the tool states it instead of estimating.
-		m.sizingVP.SetContent(m.rule("Sizing (advisory) — "+m.sizingFor) + "\n\n" +
-			"No recommendation: metrics are unavailable (no Prometheus reachable\n" +
-			"for this context). Sizing is derived only from observed usage —\n" +
-			"nothing is ever estimated. Use --prometheus-url to force a source.")
-		m.layout()
-		return m, nil
+		return m.openSizingUnavailable()
 	}
+	m.screen = screenSizingList
+	m.sizingRows, m.sizingObjs = nil, nil
+	m.sizingWin.SetRows(nil)
+	m.statusMsg = fmt.Sprintf("observing %d workload(s) over the last hour…", len(workloads))
+	m.layout()
+	return m, m.fetchSizingList(workloads)
+}
+
+// openSizingUnavailable states the explicit no-metrics case (FR-023/SC-013):
+// without observed data there is NO recommendation — never an estimate.
+func (m *Model) openSizingUnavailable() (tea.Model, tea.Cmd) {
+	m.screen = screenSizing
+	m.sizingFrom = screenList
+	m.sizingVP.SetContent(m.rule("Sizing (advisory)") + "\n\n" +
+		"No recommendation: metrics are unavailable (no Prometheus reachable\n" +
+		"for this context). Sizing is derived only from observed usage —\n" +
+		"nothing is ever estimated. Use --prometheus-url to force a source.")
+	m.layout()
+	return m, nil
+}
+
+// openSizingFor opens the detail panel for one workload or pod.
+func (m *Model) openSizingFor(obj model.ResourceObject, selector string, from screen) (tea.Model, tea.Cmd) {
+	m.screen = screenSizing
+	m.sizingFrom = from
+	m.sizingFor = m.curType.Kind + "/" + obj.Name
 	m.sizingVP.SetContent("observing " + m.sizingFor + " over the last hour…")
 	m.layout()
-	return m, m.fetchSizing(obj, sel)
+	return m, m.fetchSizing(obj, selector)
+}
+
+// openSizingDetail opens the detail panel from an overview row.
+func (m Model) openSizingDetail(i int) (tea.Model, tea.Cmd) {
+	if i < 0 || i >= len(m.sizingObjs) {
+		return m, nil
+	}
+	obj := m.sizingObjs[i]
+	sel, _ := kube.PodSelector(obj.Raw)
+	return m.openSizingFor(obj, sel, screenSizingList)
+}
+
+// fetchSizingList feeds the overview: ONE pods list + FOUR Prometheus
+// queries (per-pod avg/peak × cpu/mem over the window), then client-side
+// selector matching and verdicts — the cost does not grow with the number
+// of workloads.
+func (m Model) fetchSizingList(workloads []model.ResourceObject) tea.Cmd {
+	cl, mc, ns, kind := m.client, m.metrics, m.client.Namespace, m.curType.Kind
+	exactNS := ns
+	if kube.IsNamespacePattern(ns) {
+		exactNS = "" // query the cluster; workloads are already scope-filtered
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		podType := model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+		pods, err := cl.List(ctx, podType, ns)
+		if err != nil {
+			return sizingListMsg{err: err}
+		}
+		toMap := func(rows []model.TopConsumer) map[string]float64 {
+			out := make(map[string]float64, len(rows))
+			for _, r := range rows {
+				out[r.Namespace+"/"+r.Name] = r.Value
+			}
+			return out
+		}
+		w := metrics.TrendWindow
+		avgCPU := toMap(mc.TopN(ctx, metrics.ScopeAvgByPod(exactNS, model.MetricCPU, w), model.MetricCPU))
+		peakCPU := toMap(mc.TopN(ctx, metrics.ScopePeakByPod(exactNS, model.MetricCPU, w), model.MetricCPU))
+		avgMem := toMap(mc.TopN(ctx, metrics.ScopeAvgByPod(exactNS, model.MetricMemory, w), model.MetricMemory))
+		peakMem := toMap(mc.TopN(ctx, metrics.ScopePeakByPod(exactNS, model.MetricMemory, w), model.MetricMemory))
+
+		rows := make([]model.SizingAdvice, 0, len(workloads))
+		objs := make([]model.ResourceObject, 0, len(workloads))
+		for _, wl := range workloads {
+			sel, ok := kube.PodSelectorLabels(wl.Raw)
+			if !ok {
+				continue
+			}
+			cpu := model.ResourceSizing{Kind: model.MetricCPU}
+			mem := model.ResourceSizing{Kind: model.MetricMemory}
+			var nPods, nCPU, nMem float64
+			for _, p := range pods {
+				if p.Namespace != wl.Namespace || !kube.LabelsMatch(p.Raw, sel) {
+					continue
+				}
+				nPods++
+				cr, cli, mr, ml := kube.PodResources(p.Raw)
+				cpu.Request += cr
+				cpu.Limit += cli
+				mem.Request += mr
+				mem.Limit += ml
+				key := p.Namespace + "/" + p.Name
+				if a, ok1 := avgCPU[key]; ok1 {
+					if pk, ok2 := peakCPU[key]; ok2 {
+						cpu.Avg += a
+						if pk > cpu.Peak {
+							cpu.Peak = pk
+						}
+						nCPU++
+					}
+				}
+				if a, ok1 := avgMem[key]; ok1 {
+					if pk, ok2 := peakMem[key]; ok2 {
+						mem.Avg += a
+						if pk > mem.Peak {
+							mem.Peak = pk
+						}
+						nMem++
+					}
+				}
+			}
+			if nPods > 0 {
+				cpu.Request, cpu.Limit = cpu.Request/nPods, cpu.Limit/nPods
+				mem.Request, mem.Limit = mem.Request/nPods, mem.Limit/nPods
+			}
+			if nCPU > 0 {
+				cpu.Avg, cpu.HasData = cpu.Avg/nCPU, true
+			}
+			if nMem > 0 {
+				mem.Avg, mem.HasData = mem.Avg/nMem, true
+			}
+			rows = append(rows, model.SizingAdvice{
+				Workload:  kind + "/" + wl.Name,
+				Namespace: wl.Namespace,
+				Pods:      int(nPods),
+				CPU:       model.EvaluateSizing(cpu),
+				Memory:    model.EvaluateSizing(mem),
+			})
+			objs = append(objs, wl)
+		}
+		// Worst first: what needs attention is visible without scrolling.
+		// One permutation applied to both parallel slices.
+		idx := make([]int, len(rows))
+		for i := range idx {
+			idx[i] = i
+		}
+		sort.SliceStable(idx, func(a, b int) bool {
+			return adviceSeverity(rows[idx[a]]) > adviceSeverity(rows[idx[b]])
+		})
+		sortedRows := make([]model.SizingAdvice, len(rows))
+		sortedObjs := make([]model.ResourceObject, len(objs))
+		for to, from := range idx {
+			sortedRows[to], sortedObjs[to] = rows[from], objs[from]
+		}
+		return sizingListMsg{rows: sortedRows, objs: sortedObjs}
+	}
+}
+
+// adviceSeverity ranks a row by its worst verdict (under > over > no-request
+// > ok > no-data).
+func adviceSeverity(a model.SizingAdvice) int {
+	rank := func(v model.SizingVerdict) int {
+		switch v {
+		case model.SizingUnder:
+			return 4
+		case model.SizingOver:
+			return 3
+		case model.SizingNoRequest:
+			return 2
+		case model.SizingOK:
+			return 1
+		default:
+			return 0
+		}
+	}
+	r1, r2 := rank(a.CPU.Verdict), rank(a.Memory.Verdict)
+	if r2 > r1 {
+		return r2
+	}
+	return r1
 }
 
 // fetchSizing resolves the pods, their configured requests/limits (cluster),
@@ -3271,6 +3499,93 @@ func (m Model) fetchSizing(obj model.ResourceObject, selector string) tea.Cmd {
 	}
 }
 
+// verdictBadge renders a compact colored verdict cell for the overview.
+func (m Model) verdictBadge(v model.SizingVerdict) string {
+	switch v {
+	case model.SizingUnder:
+		return m.theme.Error.Render("✗ under")
+	case model.SizingOver:
+		return m.theme.Warning.Render("! over")
+	case model.SizingNoRequest:
+		return m.theme.Warning.Render("! no req")
+	case model.SizingOK:
+		return m.theme.Ok.Render("✓ ok")
+	default:
+		return m.theme.Faint.Render("· no data")
+	}
+}
+
+// sizingGauge shows the observed peak against the request (or the limit when
+// no request is set) — the one-glance "is it sized right" visual.
+func (m Model) sizingGauge(rs model.ResourceSizing, width int) string {
+	den := rs.Request
+	if den <= 0 {
+		den = rs.Limit
+	}
+	if !rs.HasData || den <= 0 {
+		return m.theme.Faint.Render(strings.Repeat("·", width))
+	}
+	return m.coloredGauge(rs.Peak/den, width)
+}
+
+// sizingListView renders the overview: one row per workload, worst first,
+// with usage-vs-request gauges and verdicts for CPU and memory.
+func (m Model) sizingListView() string {
+	var b strings.Builder
+	head := fmt.Sprintf(" %-*s %4s  %-10s %-14s %-9s  %-10s %-14s %-9s",
+		max(10, m.width-84), "WORKLOAD", "PODS",
+		"CPU", "avg/req", "", "MEMORY", "avg/req", "")
+	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)))
+	b.WriteString("\n")
+	if len(m.sizingRows) == 0 {
+		b.WriteString(m.theme.Faint.Render(" observing… (advisory, read-only — nothing is applied)"))
+		b.WriteString("\n")
+	}
+	from := m.sizingWin.win
+	to := from + m.sizingWin.height
+	if to > len(m.sizingRows) {
+		to = len(m.sizingRows)
+	}
+	fmtPair := func(rs model.ResourceSizing, format func(float64) string) string {
+		if !rs.HasData {
+			return "—"
+		}
+		req := "∅"
+		if rs.Request > 0 {
+			req = format(rs.Request)
+		}
+		return format(rs.Avg) + "/" + req
+	}
+	for i := from; i < to; i++ {
+		r := m.sizingRows[i]
+		name := r.Workload
+		if m.client != nil && (m.client.Namespace == "" || kube.IsNamespacePattern(m.client.Namespace)) {
+			name = r.Namespace + "/" + strings.TrimPrefix(r.Workload, m.curType.Kind+"/")
+		}
+		line := fmt.Sprintf(" %s %4d  %s %s %s  %s %s %s",
+			padTo(name, max(10, m.width-84)), r.Pods,
+			m.sizingGauge(r.CPU, 10), padTo(fmtPair(r.CPU, components.FormatCPU), 14), padTo2(m.verdictBadge(r.CPU.Verdict), 9),
+			m.sizingGauge(r.Memory, 10), padTo(fmtPair(r.Memory, components.FormatMemory), 14), padTo2(m.verdictBadge(r.Memory.Verdict), 9))
+		if i == m.sizingWin.cursor {
+			line = m.theme.TableSelected.Render(padTo2(line, m.width))
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	for i := to - from; i < m.sizingWin.height; i++ {
+		b.WriteString("\n")
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// padTo2 pads a styled (ANSI) string to a display width without truncating.
+func padTo2(s string, w int) string {
+	if pad := w - lipgloss.Width(s); pad > 0 {
+		return s + strings.Repeat(" ", pad)
+	}
+	return s
+}
+
 // renderSizing renders the advisory view: observed data first, verdict after —
 // a recommendation is never shown without the numbers behind it (FR-023).
 func (m *Model) renderSizing(a model.SizingAdvice) {
@@ -3292,12 +3607,22 @@ func (m *Model) renderResourceSizing(b *strings.Builder, label string, rs model.
 		}
 		return format(v)
 	}
-	if rs.HasData {
-		fmt.Fprintf(b, "  observed    avg %s   peak %s   (per pod)\n", format(rs.Avg), format(rs.Peak))
-	} else {
-		b.WriteString("  observed    no data for this window\n")
+	fmt.Fprintf(b, "  configured  request %s   limit %s   (per pod)\n", orUnset(rs.Request), orUnset(rs.Limit))
+	// Reference for the gauges: the request (what sizing is about), else the
+	// limit. Colored bars make over/under readable at a glance (FR-036).
+	den, ref := rs.Request, "request"
+	if den <= 0 {
+		den, ref = rs.Limit, "limit"
 	}
-	fmt.Fprintf(b, "  configured  request %s   limit %s\n", orUnset(rs.Request), orUnset(rs.Limit))
+	switch {
+	case !rs.HasData:
+		b.WriteString("  observed    no data for this window\n")
+	case den > 0:
+		fmt.Fprintf(b, "  avg   %s %s   %.0f%% of %s\n", m.coloredGauge(rs.Avg/den, 16), padTo(format(rs.Avg), 9), rs.Avg/den*100, ref)
+		fmt.Fprintf(b, "  peak  %s %s   %.0f%% of %s\n", m.coloredGauge(rs.Peak/den, 16), padTo(format(rs.Peak), 9), rs.Peak/den*100, ref)
+	default:
+		fmt.Fprintf(b, "  observed    avg %s   peak %s   (nothing configured to compare against)\n", format(rs.Avg), format(rs.Peak))
+	}
 	pct := func(v, of float64) string { return fmt.Sprintf("%.0f%%", v/of*100) }
 	var verdict string
 	switch rs.Verdict {

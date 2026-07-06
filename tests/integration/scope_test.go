@@ -86,3 +86,31 @@ func TestPodsOnNode(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectorLabelHelpers: client-side pod↔workload matching used by the
+// sizing overview.
+func TestSelectorLabelHelpers(t *testing.T) {
+	dep := map[string]interface{}{
+		"spec": map[string]interface{}{
+			"selector": map[string]interface{}{
+				"matchLabels": map[string]interface{}{"app": "back"},
+			},
+		},
+	}
+	sel, ok := kube.PodSelectorLabels(dep)
+	if !ok || sel["app"] != "back" {
+		t.Fatalf("PodSelectorLabels=%v ok=%v", sel, ok)
+	}
+	pod := NewPod("demo", "back-1", "Running").Object
+	meta := pod["metadata"].(map[string]interface{})
+	meta["labels"] = map[string]interface{}{"app": "back", "extra": "x"}
+	if !kube.LabelsMatch(pod, sel) {
+		t.Fatal("pod with superset labels must match")
+	}
+	if kube.LabelsMatch(pod, map[string]string{"app": "front"}) {
+		t.Fatal("mismatched value must not match")
+	}
+	if kube.LabelsMatch(pod, map[string]string{}) {
+		t.Fatal("empty selector must not match everything")
+	}
+}

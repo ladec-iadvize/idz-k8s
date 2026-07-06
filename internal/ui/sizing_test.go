@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/table"
+
 	"github.com/iadvize/idz-k8s/internal/config"
 	"github.com/iadvize/idz-k8s/internal/kube"
 	"github.com/iadvize/idz-k8s/internal/model"
@@ -82,5 +84,68 @@ func TestSizingOnKindWithoutPods(t *testing.T) {
 	}
 	if m.statusMsg == "" {
 		t.Fatal("expected a status hint")
+	}
+}
+
+// TestSizingOverviewRenderAndDrill: the overview table renders verdicts and
+// gauges per workload; Enter opens the detail panel and Esc returns.
+func TestSizingOverviewRenderAndDrill(t *testing.T) {
+	m := sizingModel(t)
+	m.screen = screenSizingList
+	m.sizingRows = []model.SizingAdvice{
+		{
+			Workload: "Deployment/back", Namespace: "demo", Pods: 3,
+			CPU:    model.EvaluateSizing(model.ResourceSizing{Kind: model.MetricCPU, HasData: true, Avg: 1.2, Peak: 1.5, Request: 1, Limit: 4}),
+			Memory: model.EvaluateSizing(model.ResourceSizing{Kind: model.MetricMemory, HasData: true, Avg: 4e8, Peak: 6e8, Request: 1e9}),
+		},
+		{
+			Workload: "Deployment/front", Namespace: "demo", Pods: 2,
+			CPU:    model.EvaluateSizing(model.ResourceSizing{Kind: model.MetricCPU}),
+			Memory: model.EvaluateSizing(model.ResourceSizing{Kind: model.MetricMemory, HasData: true, Avg: 1e8, Peak: 2e8, Request: 1e9}),
+		},
+	}
+	m.sizingObjs = m.objects[:1]
+	m.sizingWin.SetRows(make([]table.Row, len(m.sizingRows)))
+	m.layout()
+
+	view := m.sizingListView()
+	for _, want := range []string{"WORKLOAD", "back", "front", "under", "ok", "no data", "over"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("overview missing %q:\n%s", want, view)
+		}
+	}
+
+	// Enter on the first row → detail; Esc → back to the overview.
+	mi, cmd := m.openSizingDetail(0)
+	m = asModel(t, mi)
+	if m.screen != screenSizing || cmd == nil {
+		t.Fatalf("detail did not open (screen=%d cmd=%v)", m.screen, cmd)
+	}
+	mi, _ = m.goBack()
+	m = asModel(t, mi)
+	if m.screen != screenSizingList {
+		t.Fatalf("Esc from detail should return to the overview, screen=%d", m.screen)
+	}
+}
+
+// TestAdviceSeverityOrdering: worst verdicts rank first (under > over >
+// no-request > ok > no-data).
+func TestAdviceSeverityOrdering(t *testing.T) {
+	mk := func(v model.SizingVerdict) model.SizingAdvice {
+		return model.SizingAdvice{CPU: model.ResourceSizing{Verdict: v}}
+	}
+	order := []model.SizingVerdict{model.SizingUnder, model.SizingOver, model.SizingNoRequest, model.SizingOK, model.SizingNoData}
+	for i := 0; i < len(order)-1; i++ {
+		if adviceSeverity(mk(order[i])) <= adviceSeverity(mk(order[i+1])) {
+			t.Fatalf("severity(%d) must outrank severity(%d)", order[i], order[i+1])
+		}
+	}
+	// The row severity is the WORST of both resources.
+	mixed := model.SizingAdvice{
+		CPU:    model.ResourceSizing{Verdict: model.SizingOK},
+		Memory: model.ResourceSizing{Verdict: model.SizingUnder},
+	}
+	if adviceSeverity(mixed) != adviceSeverity(mk(model.SizingUnder)) {
+		t.Fatal("row severity must take the worst resource")
 	}
 }
