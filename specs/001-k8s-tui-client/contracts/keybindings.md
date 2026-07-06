@@ -51,7 +51,7 @@ mutating bindings** — the tool is read-only. This is the authoritative list th
 | Key | Action |
 |-----|--------|
 | `s` / `S` | Sort by next column / flip direction (persisted per type) |
-| `C` | Column chooser: `Space` shows/hides, `←`/`→` reorders, `Enter` applies |
+| `C` | Column chooser: `Space` shows/hides, `←`/`→` reorders, `Enter` applies; "add custom field…" accepts a label key or a `.dot.path` object field |
 | `V` | Views: save the current arrangement under a name, open or manage saved views |
 | `R` | Reset the current type's view to its defaults |
 
