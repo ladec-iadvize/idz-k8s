@@ -19,6 +19,24 @@ const unscheduledNode = "(unscheduled)"
 // read-only). Pods are scoped to `namespace` (empty → all namespaces). Node
 // health is derived from Ready + pressure conditions. Pods with no assigned
 // node are grouped under a synthetic "(unscheduled)" node.
+// PodsOnNode lists the pods scheduled on a node, across all namespaces
+// (read-only). The match is client-side on spec.nodeName so fake clusters in
+// tests behave exactly like live ones.
+func (c *Client) PodsOnNode(ctx context.Context, node string) ([]model.ResourceObject, error) {
+	podType := model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+	pods, err := c.List(ctx, podType, "")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.ResourceObject, 0, len(pods))
+	for _, p := range pods {
+		if PodNode(p.Raw) == node {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) Topology(ctx context.Context, namespace string) ([]model.TopologyNode, error) {
 	nodeList, err := c.Dynamic.Resource(nodesGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {

@@ -548,3 +548,47 @@ func TestPadToRuneSafe(t *testing.T) {
 		t.Fatalf("rune-safe truncate broken: %q", got)
 	}
 }
+
+// TestEnterOnNodeDrillsToItsPods: Enter on the nodes list opens the pods
+// scheduled on that node (list twin of the topology view).
+func TestEnterOnNodeDrillsToItsPods(t *testing.T) {
+	nodeType := model.ResourceType{Version: "v1", Resource: "nodes", Kind: "Node", Namespaced: false}
+	m := New(&kube.Client{Namespace: ""}, config.Defaults(), "", WithInitialType(nodeType))
+	m.types = []model.ResourceType{
+		nodeType,
+		{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true},
+	}
+	m.objects = []model.ResourceObject{{
+		Type: nodeType, Name: "ip-10-0-1-2",
+		Status: model.StatusSummary{Level: model.HealthOk},
+		Raw: map[string]interface{}{
+			"apiVersion": "v1", "kind": "Node",
+			"metadata": map[string]interface{}{"name": "ip-10-0-1-2"},
+		},
+	}}
+	m.width, m.height = 120, 30
+	m.layout()
+	m.applyRows()
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if cmd == nil {
+		t.Fatal("node drill should issue a list command")
+	}
+	if m.curType.Resource != "pods" {
+		t.Fatalf("Enter on a Node should switch to pods, got %q", m.curType.Key())
+	}
+	if m.drillNode != "ip-10-0-1-2" || m.drillFor != "Node/ip-10-0-1-2" {
+		t.Fatalf("drillNode=%q drillFor=%q", m.drillNode, m.drillFor)
+	}
+	if m.drillSelector != "" {
+		t.Fatalf("node drill must not set a label selector, got %q", m.drillSelector)
+	}
+
+	// Esc restores the nodes list.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	if m.curType.Resource != "nodes" || m.drillNode != "" {
+		t.Fatalf("Esc should restore nodes, got type=%q drillNode=%q", m.curType.Key(), m.drillNode)
+	}
+}

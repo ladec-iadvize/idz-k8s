@@ -30,7 +30,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 | Key | View |
 |-----|------|
 | (list) | Browse any resource type — built-ins and CRDs — with READY/STATUS/AGE |
-| `Enter` | Drill down: a workload/Service opens **its pods**; a pod opens its YAML |
+| `Enter` | Drill down: a workload/Service opens **its pods**, a node opens **the pods it hosts**; a pod opens its YAML |
 | `y` / `d` | YAML view / describe (conditions + the object's events; Services show their backends) |
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod |
 | `t` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |

@@ -143,9 +143,11 @@ type Model struct {
 	eventsScopeFor  string          // label, e.g. "Deployment/back"
 	pickerReturn    screen          // screen to return to when the picker closes
 
-	// Drill-down: viewing the pods owned by a workload (US9 ownership).
+	// Drill-down: viewing the pods owned by a workload (US9 ownership) or
+	// running on a node (Enter on the nodes list).
 	drillSelector  string             // label selector; "" = not drilling
-	drillFor       string             // e.g. "Deployment/back"
+	drillNode      string             // node name; "" = not drilling by node
+	drillFor       string             // e.g. "Deployment/back", "Node/ip-10-0-1-2"
 	drillNamespace string             // workload namespace (query scope only — the user's namespace filter is untouched)
 	drillPrevType  model.ResourceType // type to restore on Esc
 
@@ -377,7 +379,7 @@ func (m Model) loadTypes() tea.Cmd {
 }
 
 func (m Model) listObjects() tea.Cmd {
-	c, t, ns, sel := m.client, m.curType, m.client.Namespace, m.drillSelector
+	c, t, ns, sel, node := m.client, m.curType, m.client.Namespace, m.drillSelector, m.drillNode
 	if sel != "" && m.drillNamespace != "" {
 		// Drilling: query in the workload's namespace so its selector cannot
 		// match same-labelled pods elsewhere. The user's ns filter is untouched.
@@ -386,6 +388,11 @@ func (m Model) listObjects() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
+		if node != "" {
+			// Node drill: every pod scheduled on the node, all namespaces.
+			objs, err := c.PodsOnNode(ctx, node)
+			return objectsMsg{objects: objs, err: err}
+		}
 		objs, err := c.ListSelected(ctx, t, ns, sel)
 		// Services get a real status from their backends (one extra LIST).
 		if err == nil && t.Group == "" && t.Resource == "services" {
@@ -1224,7 +1231,7 @@ func (m *Model) goBack() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	// Esc on a drilled pod list returns to the workload list it came from.
-	if m.screen == screenList && m.drillSelector != "" {
+	if m.screen == screenList && (m.drillSelector != "" || m.drillNode != "") {
 		cmd := m.exitDrill()
 		m.layout()
 		return m, cmd
@@ -1327,16 +1334,28 @@ func writeSortedMap(b *strings.Builder, m map[string]string) {
 // selector. ok=false when the selection has no pod selector (e.g. a Pod).
 func (m *Model) drillIntoPods() (tea.Cmd, bool) {
 	obj, found := m.selectedObject()
-	if !found || strings.EqualFold(m.curType.Kind, "Pod") || m.drillSelector != "" {
+	if !found || strings.EqualFold(m.curType.Kind, "Pod") || m.drillSelector != "" || m.drillNode != "" {
 		return nil, false
+	}
+	pods, okType := findTypeByKey(m.types, "v1/pods")
+	if !okType {
+		pods = model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+	}
+	// A node has no selector: drilling shows the pods scheduled on it —
+	// the list twin of the topology view (complementary, not redundant:
+	// topology is capacity-oriented, this is a full pod list with filter,
+	// sort, marks, logs…).
+	if strings.EqualFold(m.curType.Kind, "Node") {
+		m.drillPrevType = m.curType
+		m.drillNode = obj.Name
+		m.drillFor = "Node/" + obj.Name
+		m.curType = pods
+		m.statusMsg = "pods on " + m.drillFor + " — Esc to go back"
+		return m.listObjects(), true
 	}
 	sel, ok := kube.PodSelector(obj.Raw)
 	if !ok {
 		return nil, false
-	}
-	pods, ok := findTypeByKey(m.types, "v1/pods")
-	if !ok {
-		pods = model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
 	}
 	m.drillPrevType = m.curType
 	m.drillSelector = sel
@@ -1374,7 +1393,7 @@ func (m *Model) gotoOwner() tea.Cmd {
 		return nil
 	}
 	// Leave any drill; land on the owner's list, filtered to its name.
-	m.drillSelector, m.drillFor, m.drillNamespace = "", "", ""
+	m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 	m.curType = ownerType
 	m.filter.SetValue(ref.Name)
 	m.statusMsg = "owner of " + obj.Name + ": " + ref.Kind + "/" + ref.Name
@@ -1385,6 +1404,7 @@ func (m *Model) gotoOwner() tea.Cmd {
 func (m *Model) exitDrill() tea.Cmd {
 	m.curType = m.drillPrevType
 	m.drillSelector = ""
+	m.drillNode = ""
 	m.drillFor = ""
 	m.drillNamespace = ""
 	m.statusMsg = ""
@@ -1525,7 +1545,7 @@ func (m *Model) openEvents() (tea.Model, tea.Cmd) {
 		}
 		m.eventsScope = scope
 		m.eventsScopeFor = fmt.Sprintf("%d marked", len(m.marked))
-	} else if m.drillSelector != "" && len(m.objects) > 0 {
+	} else if (m.drillSelector != "" || m.drillNode != "") && len(m.objects) > 0 {
 		scope := make(map[string]bool, len(m.objects))
 		for _, o := range m.objects {
 			scope[o.Namespace+"/"+o.Name] = true
@@ -2499,7 +2519,7 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 		// selection, then restore the type's own saved customization —
 		// filter, sort — instead of a leftover from the previous type (a
 		// saved filter is always visible as a header chip, never invisible).
-		m.drillSelector, m.drillFor, m.drillNamespace = "", "", ""
+		m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 		m.applyViewPref()
 		m.marked = map[string]model.ResourceObject{}
 		m.statusMsg = ""
@@ -2523,14 +2543,14 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			// A drill scope no longer applies to the new namespace.
 			m.eventsScope = nil
 			m.eventsScopeFor = ""
-			m.drillSelector, m.drillFor, m.drillNamespace = "", "", ""
+			m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 			m.screen = screenEvents
 			m.events.SetContent("loading events…")
 			return m, m.fetchEvents()
 		}
 		// Changing namespace from the list leaves any drill (its workload
 		// belonged to the previous scope) and the marked selection.
-		m.drillSelector, m.drillFor, m.drillNamespace = "", "", ""
+		m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 		m.marked = map[string]model.ResourceObject{}
 		m.statusMsg = ""
 		m.screen = screenList
@@ -2869,7 +2889,7 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 		}
 	}
 	typeLabel := m.curType.Key()
-	if m.drillSelector != "" {
+	if m.drillSelector != "" || m.drillNode != "" {
 		typeLabel = "pods ⊂ " + m.drillFor
 	}
 	// Identity chips: app badge + read-only + colored ctx/ns/type values —
@@ -3346,7 +3366,7 @@ func (m Model) applySavedView(v config.SavedView) (tea.Model, tea.Cmd) {
 		m.cfg.ViewPrefs = map[string]config.ViewPref{}
 	}
 	m.cfg.ViewPrefs[v.Type] = config.ViewPref{Columns: v.Columns, SortCol: v.SortCol, SortAsc: v.SortAsc, Filter: v.Filter}
-	m.drillSelector, m.drillFor, m.drillNamespace = "", "", ""
+	m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 	m.marked = map[string]model.ResourceObject{}
 	m.applyViewPref()
 	m.statusMsg = "view “" + v.Name + "”"

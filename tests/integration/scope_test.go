@@ -64,3 +64,25 @@ func TestNamespacePatternHelpers(t *testing.T) {
 		}
 	}
 }
+
+// TestPodsOnNode: the node drill lists exactly the pods scheduled on the node,
+// across all namespaces.
+func TestPodsOnNode(t *testing.T) {
+	client, _ := NewFakeClient("",
+		NewPodOnNode("front", "web-1", "node-a", "Running"),
+		NewPodOnNode("back", "api-1", "node-a", "Running"),
+		NewPodOnNode("front", "web-2", "node-b", "Running"),
+	)
+	pods, err := client.PodsOnNode(context.Background(), "node-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods) != 2 {
+		t.Fatalf("expected 2 pods on node-a, got %d", len(pods))
+	}
+	for _, p := range pods {
+		if kube.PodNode(p.Raw) != "node-a" {
+			t.Errorf("pod %s/%s is not on node-a", p.Namespace, p.Name)
+		}
+	}
+}
