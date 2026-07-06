@@ -149,3 +149,51 @@ func TestAdviceSeverityOrdering(t *testing.T) {
 		t.Fatal("row severity must take the worst resource")
 	}
 }
+
+// TestSizingOverviewColumnsAndSort: separate right-aligned AVG/REQ columns,
+// titled STATUS columns, and working column sort (regression for the
+// 2026-07-06 UX feedback).
+func TestSizingOverviewColumnsAndSort(t *testing.T) {
+	m := sizingModel(t)
+	m.screen = screenSizingList
+	m.sizingRows = []model.SizingAdvice{
+		{Workload: "Deployment/zeta", Namespace: "demo", Pods: 1,
+			CPU: model.EvaluateSizing(model.ResourceSizing{Kind: model.MetricCPU, HasData: true, Avg: 1.2, Peak: 1.5, Request: 1, Limit: 4})},
+		{Workload: "Deployment/alpha", Namespace: "demo", Pods: 5,
+			CPU: model.EvaluateSizing(model.ResourceSizing{Kind: model.MetricCPU, HasData: true, Avg: 0.1, Peak: 0.2, Request: 1, Limit: 2})},
+	}
+	m.sizingObjs = []model.ResourceObject{{Name: "zeta"}, {Name: "alpha"}}
+	m.sizingWin.SetRows(make([]table.Row, 2))
+	m.layout()
+
+	view := m.sizingListView()
+	header := strings.SplitN(view, "\n", 2)[0]
+	for _, want := range []string{"WORKLOAD", "PODS", "CPU", "AVG", "REQ", "STATUS", "MEMORY"} {
+		if !strings.Contains(header, want) {
+			t.Fatalf("header missing %q:\n%s", want, header)
+		}
+	}
+	if strings.Count(header, "STATUS") != 2 || strings.Count(header, "AVG") != 2 {
+		t.Fatalf("both resources need titled AVG and STATUS columns:\n%s", header)
+	}
+
+	// Sort by WORKLOAD (column 0) ascending: alpha before zeta.
+	m.sizingSortCol, m.sizingSortAsc = 0, true
+	m.applySizingSort()
+	if m.sizingRows[0].Workload != "Deployment/alpha" || m.sizingObjs[0].Name != "alpha" {
+		t.Fatalf("name sort broken (rows and objs must move together): %+v / %+v",
+			m.sizingRows[0].Workload, m.sizingObjs[0].Name)
+	}
+	// Flip direction.
+	m.sizingSortAsc = false
+	m.applySizingSort()
+	if m.sizingRows[0].Workload != "Deployment/zeta" {
+		t.Fatalf("descending sort broken: %+v", m.sizingRows[0].Workload)
+	}
+	// -1 = severity default: the under-provisioned zeta row first.
+	m.sizingSortCol = -1
+	m.applySizingSort()
+	if m.sizingRows[0].CPU.Verdict != model.SizingUnder {
+		t.Fatalf("severity default should put the worst first, got %+v", m.sizingRows[0].CPU.Verdict)
+	}
+}

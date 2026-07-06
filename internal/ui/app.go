@@ -173,6 +173,9 @@ type Model struct {
 	sizingObjs []model.ResourceObject // same order as sizingRows
 	sizingWin  winTable
 	sizingFrom screen // where Esc returns from the detail panel
+	// Overview sort: -1 = severity (worst first, the default).
+	sizingSortCol int
+	sizingSortAsc bool
 
 	// Click zones of the events header line (T048); set by renderEvents.
 	eventsKindZone  clickZone
@@ -302,6 +305,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		screen:         screenList,
 		marked:         map[string]model.ResourceObject{},
 		sortCol:        -1,
+		sizingSortCol:  -1,
 		sortAsc:        true,
 	}
 	// Table look & feel: colored headers, background-highlighted selection.
@@ -684,7 +688,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.sizingRows, m.sizingObjs = msg.rows, msg.objs
 		m.sizingWin.SetRows(make([]table.Row, len(msg.rows)))
-		m.sizingWin.Home()
+		m.applySizingSort() // keep the user's column sort across refreshes
 		return m, nil
 
 	case topologyMsg:
@@ -884,8 +888,21 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sizingVP, cmd = m.sizingVP.Update(msg)
 		return m, cmd
 	case screenSizingList:
-		if hit(msg, m.keys.Open) {
+		switch {
+		case hit(msg, m.keys.Open):
 			return m.openSizingDetail(m.sizingWin.cursor)
+		case hit(msg, m.keys.Sort):
+			m.sizingSortCol++
+			if m.sizingSortCol >= len(m.sizingColumns()) {
+				m.sizingSortCol = -1 // back to severity (worst first)
+			}
+			m.sizingSortAsc = true
+			m.applySizingSort()
+			return m, nil
+		case hit(msg, m.keys.SortDir):
+			m.sizingSortAsc = !m.sizingSortAsc
+			m.applySizingSort()
+			return m, nil
 		}
 		m.navigate(&m.sizingWin, msg)
 		return m, nil
@@ -1037,6 +1054,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		case screenList:
 			m.win.Move(delta)
 			return m, nil
+		case screenSizingList:
+			m.sizingWin.Move(delta)
+			return m, nil
 		case screenHelm:
 			m.helmWin.Move(delta)
 			m.helmWin.Sync(&m.helmTable)
@@ -1110,6 +1130,17 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case screenSizingList:
+		if msg.Y == 2 {
+			if col, ok := m.sizingColumnAt(msg.X); ok {
+				if m.sizingSortCol == col {
+					m.sizingSortAsc = !m.sizingSortAsc
+				} else {
+					m.sizingSortCol, m.sizingSortAsc = col, true
+				}
+				m.applySizingSort()
+			}
+			return m, nil
+		}
 		if m.sizingWin.ClickVisible(msg.Y - 3) {
 			if doubleClick(m.sizingWin.cursor) {
 				return m.openSizingDetail(m.sizingWin.cursor)
@@ -3192,8 +3223,8 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenSizingList:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Open, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Open, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Sort, k.SortDir, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
 	default: // detail, logs, diag, topology
 		return keymapView{
@@ -3528,13 +3559,171 @@ func (m Model) sizingGauge(rs model.ResourceSizing, width int) string {
 	return m.coloredGauge(rs.Peak/den, width)
 }
 
-// sizingListView renders the overview: one row per workload, worst first,
-// with usage-vs-request gauges and verdicts for CPU and memory.
+// sizingColumn is one column of the sizing overview table.
+type sizingColumn struct {
+	title string
+	width int // 0 = flexible (WORKLOAD)
+	right bool
+	cell  func(m *Model, a model.SizingAdvice) string // may carry ANSI styling
+	less  func(a, b model.SizingAdvice) bool
+}
+
+// sizingColumns defines the overview: separate, aligned AVG/REQ columns and a
+// titled STATUS per resource — every column is sortable ('s'/'S' or a header
+// click; default order is severity, worst first).
+func (m *Model) sizingColumns() []sizingColumn {
+	sevRank := func(v model.SizingVerdict) int {
+		return adviceSeverity(model.SizingAdvice{CPU: model.ResourceSizing{Verdict: v}})
+	}
+	util := func(rs model.ResourceSizing) float64 {
+		den := rs.Request
+		if den <= 0 {
+			den = rs.Limit
+		}
+		if !rs.HasData || den <= 0 {
+			return -1 // unknown sorts last in asc
+		}
+		return rs.Peak / den
+	}
+	avgOrDash := func(rs model.ResourceSizing, format func(float64) string) string {
+		if !rs.HasData {
+			return "—"
+		}
+		return format(rs.Avg)
+	}
+	reqOrDash := func(rs model.ResourceSizing, format func(float64) string) string {
+		if rs.Request <= 0 {
+			return "—"
+		}
+		return format(rs.Request)
+	}
+	return []sizingColumn{
+		{title: "WORKLOAD", width: 0,
+			cell: func(m *Model, a model.SizingAdvice) string {
+				if m.client != nil && (m.client.Namespace == "" || kube.IsNamespacePattern(m.client.Namespace)) {
+					return a.Namespace + "/" + strings.TrimPrefix(a.Workload, m.curType.Kind+"/")
+				}
+				return a.Workload
+			},
+			less: func(a, b model.SizingAdvice) bool {
+				return a.Namespace+a.Workload < b.Namespace+b.Workload
+			}},
+		{title: "PODS", width: 4, right: true,
+			cell: func(_ *Model, a model.SizingAdvice) string { return fmt.Sprintf("%d", a.Pods) },
+			less: func(a, b model.SizingAdvice) bool { return a.Pods < b.Pods }},
+		{title: "CPU", width: 12,
+			cell: func(m *Model, a model.SizingAdvice) string { return m.sizingGauge(a.CPU, 10) },
+			less: func(a, b model.SizingAdvice) bool { return util(a.CPU) < util(b.CPU) }},
+		{title: "AVG", width: 8, right: true,
+			cell: func(_ *Model, a model.SizingAdvice) string { return avgOrDash(a.CPU, components.FormatCPU) },
+			less: func(a, b model.SizingAdvice) bool { return a.CPU.Avg < b.CPU.Avg }},
+		{title: "REQ", width: 8, right: true,
+			cell: func(_ *Model, a model.SizingAdvice) string { return reqOrDash(a.CPU, components.FormatCPU) },
+			less: func(a, b model.SizingAdvice) bool { return a.CPU.Request < b.CPU.Request }},
+		{title: "STATUS", width: 10,
+			cell: func(m *Model, a model.SizingAdvice) string { return m.verdictBadge(a.CPU.Verdict) },
+			less: func(a, b model.SizingAdvice) bool { return sevRank(a.CPU.Verdict) < sevRank(b.CPU.Verdict) }},
+		{title: "MEMORY", width: 12,
+			cell: func(m *Model, a model.SizingAdvice) string { return m.sizingGauge(a.Memory, 10) },
+			less: func(a, b model.SizingAdvice) bool { return util(a.Memory) < util(b.Memory) }},
+		{title: "AVG", width: 8, right: true,
+			cell: func(_ *Model, a model.SizingAdvice) string { return avgOrDash(a.Memory, components.FormatMemory) },
+			less: func(a, b model.SizingAdvice) bool { return a.Memory.Avg < b.Memory.Avg }},
+		{title: "REQ", width: 8, right: true,
+			cell: func(_ *Model, a model.SizingAdvice) string { return reqOrDash(a.Memory, components.FormatMemory) },
+			less: func(a, b model.SizingAdvice) bool { return a.Memory.Request < b.Memory.Request }},
+		{title: "STATUS", width: 10,
+			cell: func(m *Model, a model.SizingAdvice) string { return m.verdictBadge(a.Memory.Verdict) },
+			less: func(a, b model.SizingAdvice) bool { return sevRank(a.Memory.Verdict) < sevRank(b.Memory.Verdict) }},
+	}
+}
+
+// sizingWidths resolves the overview widths (WORKLOAD absorbs the rest).
+func (m *Model) sizingWidths(cols []sizingColumn) []int {
+	widths := make([]int, len(cols))
+	fixed := 0
+	flexIdx := -1
+	for i, c := range cols {
+		w := c.width
+		if w == 0 {
+			flexIdx, w = i, 14
+		}
+		widths[i] = w
+		fixed += w
+	}
+	if flexIdx >= 0 {
+		if extra := m.width - fixed - len(cols); extra > 0 {
+			widths[flexIdx] += extra
+		}
+	}
+	return widths
+}
+
+// sizingColumnAt maps a header click to a column index.
+func (m *Model) sizingColumnAt(x int) (int, bool) {
+	widths := m.sizingWidths(m.sizingColumns())
+	pos := 0
+	for i, w := range widths {
+		if x >= pos && x < pos+w {
+			return i, true
+		}
+		pos += w + 1
+	}
+	return 0, false
+}
+
+// applySizingSort reorders rows and their objects together: the selected
+// column's order, or severity worst-first when no column is selected.
+func (m *Model) applySizingSort() {
+	cols := m.sizingColumns()
+	idx := make([]int, len(m.sizingRows))
+	for i := range idx {
+		idx[i] = i
+	}
+	less := func(a, b int) bool {
+		return adviceSeverity(m.sizingRows[a]) > adviceSeverity(m.sizingRows[b])
+	}
+	if m.sizingSortCol >= 0 && m.sizingSortCol < len(cols) {
+		l := cols[m.sizingSortCol].less
+		less = func(a, b int) bool {
+			if m.sizingSortAsc {
+				return l(m.sizingRows[a], m.sizingRows[b])
+			}
+			return l(m.sizingRows[b], m.sizingRows[a])
+		}
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return less(idx[a], idx[b]) })
+	rows := make([]model.SizingAdvice, len(idx))
+	objs := make([]model.ResourceObject, len(idx))
+	for to, from := range idx {
+		rows[to], objs[to] = m.sizingRows[from], m.sizingObjs[from]
+	}
+	m.sizingRows, m.sizingObjs = rows, objs
+	m.sizingWin.Home()
+}
+
+// sizingListView renders the overview with real, aligned columns.
 func (m Model) sizingListView() string {
+	cols := m.sizingColumns()
+	widths := m.sizingWidths(cols)
+
 	var b strings.Builder
-	head := fmt.Sprintf(" %-*s %4s  %-10s %-14s %-9s  %-10s %-14s %-9s",
-		max(10, m.width-84), "WORKLOAD", "PODS",
-		"CPU", "avg/req", "", "MEMORY", "avg/req", "")
+	head := ""
+	for i, c := range cols {
+		title := c.title
+		if m.sizingSortCol == i {
+			if m.sizingSortAsc {
+				title += " ↑"
+			} else {
+				title += " ↓"
+			}
+		}
+		cell := padTo(title, widths[i])
+		if c.right {
+			cell = padLeft(title, widths[i])
+		}
+		head += cell + " "
+	}
 	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)))
 	b.WriteString("\n")
 	if len(m.sizingRows) == 0 {
@@ -3546,26 +3735,22 @@ func (m Model) sizingListView() string {
 	if to > len(m.sizingRows) {
 		to = len(m.sizingRows)
 	}
-	fmtPair := func(rs model.ResourceSizing, format func(float64) string) string {
-		if !rs.HasData {
-			return "—"
-		}
-		req := "∅"
-		if rs.Request > 0 {
-			req = format(rs.Request)
-		}
-		return format(rs.Avg) + "/" + req
-	}
 	for i := from; i < to; i++ {
 		r := m.sizingRows[i]
-		name := r.Workload
-		if m.client != nil && (m.client.Namespace == "" || kube.IsNamespacePattern(m.client.Namespace)) {
-			name = r.Namespace + "/" + strings.TrimPrefix(r.Workload, m.curType.Kind+"/")
+		line := ""
+		for j, c := range cols {
+			raw := c.cell(&m, r)
+			var cell string
+			switch {
+			case c.right:
+				cell = padLeft(raw, widths[j])
+			case strings.Contains(raw, "\x1b"):
+				cell = padTo2(raw, widths[j]) // styled: pad without truncating
+			default:
+				cell = padTo(raw, widths[j])
+			}
+			line += cell + " "
 		}
-		line := fmt.Sprintf(" %s %4d  %s %s %s  %s %s %s",
-			padTo(name, max(10, m.width-84)), r.Pods,
-			m.sizingGauge(r.CPU, 10), padTo(fmtPair(r.CPU, components.FormatCPU), 14), padTo2(m.verdictBadge(r.CPU.Verdict), 9),
-			m.sizingGauge(r.Memory, 10), padTo(fmtPair(r.Memory, components.FormatMemory), 14), padTo2(m.verdictBadge(r.Memory.Verdict), 9))
 		if i == m.sizingWin.cursor {
 			line = m.theme.TableSelected.Render(padTo2(line, m.width))
 		}
@@ -3576,6 +3761,15 @@ func (m Model) sizingListView() string {
 		b.WriteString("\n")
 	}
 	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// padLeft right-aligns a plain string in a fixed width (rune-counted).
+func padLeft(s string, w int) string {
+	s = truncate(s, w)
+	if pad := w - len([]rune(s)); pad > 0 {
+		return strings.Repeat(" ", pad) + s
+	}
+	return s
 }
 
 // padTo2 pads a styled (ANSI) string to a display width without truncating.
