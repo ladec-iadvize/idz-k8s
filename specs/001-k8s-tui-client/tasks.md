@@ -361,9 +361,9 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 ### Phase v2.2: User Story 6 — Sizing recommendations (FR-023)
 
-- [ ] T074 [US6] Sizing derivation from Prometheus history vs requests/limits (advisory, never fabricated) in `internal/metrics/sizing.go`
-- [ ] T075 [US6] Sizing view (per-workload verdicts with the observed data behind them) in `internal/ui/`
-- [ ] T076 [P] [US6] Tests incl. insufficient-data → "no recommendation"
+- [x] T074 [US6] Sizing derivation from Prometheus history vs requests/limits (advisory, never fabricated) in `internal/metrics/sizing.go`
+- [x] T075 [US6] Sizing view (per-workload verdicts with the observed data behind them) in `internal/ui/`
+- [x] T076 [P] [US6] Tests incl. insufficient-data → "no recommendation"
 
 ### Phase v2.3: User Story 13 — Posture overview (FR-030)
 

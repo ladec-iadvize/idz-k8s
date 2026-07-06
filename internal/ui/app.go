@@ -44,6 +44,7 @@ const (
 	screenEvents
 	screenHelm
 	screenHelmHist
+	screenSizing
 )
 
 type pickerKind int
@@ -158,6 +159,10 @@ type Model struct {
 	helmHist       viewport.Model
 	helmRows       []model.HelmRelease
 	helmValuesOnly bool // 'v': show only the values of a release
+
+	// Sizing recommendations (US6, advisory & read-only).
+	sizingVP  viewport.Model
+	sizingFor string // e.g. "Deployment/back"
 
 	// Click zones of the events header line (T048); set by renderEvents.
 	eventsKindZone  clickZone
@@ -279,6 +284,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		picker:         table.New(table.WithFocused(true)),
 		helmTable:      table.New(table.WithFocused(true)),
 		helmHist:       viewport.New(0, 0),
+		sizingVP:       viewport.New(0, 0),
 		screen:         screenList,
 		marked:         map[string]model.ResourceObject{},
 		sortCol:        -1,
@@ -325,6 +331,10 @@ type usageMsg struct {
 type metricsMsg struct {
 	client *metrics.Client
 	note   string
+}
+type sizingMsg struct {
+	advice model.SizingAdvice
+	err    error
 }
 type diagMsg struct {
 	rows []model.Diagnostic
@@ -640,6 +650,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderDiag(msg.rows)
 		return m, nil
 
+	case sizingMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		m.renderSizing(msg.advice)
+		return m, nil
+
 	case topologyMsg:
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -810,6 +828,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.diag, cmd = m.diag.Update(msg)
 		return m, cmd
+	case screenSizing:
+		var cmd tea.Cmd
+		m.sizingVP, cmd = m.sizingVP.Update(msg)
+		return m, cmd
 	case screenTopology:
 		var cmd tea.Cmd
 		m.topo, cmd = m.topo.Update(msg)
@@ -874,6 +896,8 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openTop()
 	case hit(msg, m.keys.Diag):
 		return m.openDiag()
+	case hit(msg, m.keys.Sizing):
+		return m.openSizing()
 	case hit(msg, m.keys.Topology):
 		return m.openTopology()
 	case hit(msg, m.keys.Events):
@@ -1202,6 +1226,8 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.usage, cmd = m.usage.Update(msg)
 	case screenDiag:
 		m.diag, cmd = m.diag.Update(msg)
+	case screenSizing:
+		m.sizingVP, cmd = m.sizingVP.Update(msg)
 	case screenTopology:
 		m.topo, cmd = m.topo.Update(msg)
 	case screenEvents:
@@ -2637,6 +2663,7 @@ func (m *Model) layout() {
 	m.topo.Width, m.topo.Height = m.width, bodyH
 	m.events.Width, m.events.Height = m.width, bodyH
 	m.helmHist.Width, m.helmHist.Height = m.width, bodyH
+	m.sizingVP.Width, m.sizingVP.Height = m.width, bodyH
 	m.helmTable.SetHeight(bodyH)
 	m.helmTable.SetWidth(m.width)
 	m.picker.SetHeight(bodyH)
@@ -2682,6 +2709,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.helmTable.View()
 	case screenHelmHist:
 		return m.helmHist.View()
+	case screenSizing:
+		return m.sizingVP.View()
 	default:
 		return m.listView()
 	}
@@ -3051,7 +3080,7 @@ func (m Model) screenKeymap() keymapView {
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events},
+				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}
@@ -3131,6 +3160,125 @@ func (m *Model) persist() {
 	m.cfg.LastNamespace = m.client.Namespace
 	m.cfg.LastType = m.curType.Key()
 	_ = config.Save(m.configPath, m.cfg)
+}
+
+// ---- Sizing recommendations (US6, FR-023 — advisory, read-only) ----
+
+// openSizing opens the advisory sizing view for the selected workload or pod.
+func (m *Model) openSizing() (tea.Model, tea.Cmd) {
+	obj, found := m.selectedObject()
+	if !found {
+		m.statusMsg = "sizing: select a workload or a pod first"
+		return m, nil
+	}
+	kind := m.curType.Kind
+	sel, hasSel := kube.PodSelector(obj.Raw)
+	if !strings.EqualFold(kind, "Pod") && !hasSel {
+		m.statusMsg = "sizing: " + kind + " has no pods — open it on a workload or a pod"
+		return m, nil
+	}
+	m.screen = screenSizing
+	m.sizingFor = kind + "/" + obj.Name
+	if !m.metrics.Enabled() {
+		// FR-023/SC-013: without observed data there is NO recommendation —
+		// the tool states it instead of estimating.
+		m.sizingVP.SetContent(m.rule("Sizing (advisory) — "+m.sizingFor) + "\n\n" +
+			"No recommendation: metrics are unavailable (no Prometheus reachable\n" +
+			"for this context). Sizing is derived only from observed usage —\n" +
+			"nothing is ever estimated. Use --prometheus-url to force a source.")
+		m.layout()
+		return m, nil
+	}
+	m.sizingVP.SetContent("observing " + m.sizingFor + " over the last hour…")
+	m.layout()
+	return m, m.fetchSizing(obj, sel)
+}
+
+// fetchSizing resolves the pods, their configured requests/limits (cluster),
+// and their observed usage (Prometheus), then evaluates the verdicts.
+func (m Model) fetchSizing(obj model.ResourceObject, selector string) tea.Cmd {
+	cl, mc, kind := m.client, m.metrics, m.curType.Kind
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		podType := model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+		pods := []model.ResourceObject{obj}
+		if !strings.EqualFold(kind, "Pod") {
+			var err error
+			pods, err = cl.ListSelected(ctx, podType, obj.Namespace, selector)
+			if err != nil {
+				return sizingMsg{err: err}
+			}
+		}
+		adv := model.SizingAdvice{Workload: kind + "/" + obj.Name, Namespace: obj.Namespace, Pods: len(pods)}
+		names := make([]string, 0, len(pods))
+		var cpuReq, cpuLim, memReq, memLim float64
+		for _, p := range pods {
+			names = append(names, p.Name)
+			cr, cli, mr, ml := kube.PodResources(p.Raw)
+			cpuReq += cr
+			cpuLim += cli
+			memReq += mr
+			memLim += ml
+		}
+		if n := float64(len(pods)); n > 0 {
+			// Per-pod configuration (pods of one workload share a template).
+			cpuReq, cpuLim, memReq, memLim = cpuReq/n, cpuLim/n, memReq/n, memLim/n
+		}
+		cpu, mem := mc.WorkloadSizing(ctx, obj.Namespace, names, metrics.TrendWindow)
+		cpu.Request, cpu.Limit = cpuReq, cpuLim
+		mem.Request, mem.Limit = memReq, memLim
+		adv.CPU, adv.Memory = model.EvaluateSizing(cpu), model.EvaluateSizing(mem)
+		return sizingMsg{advice: adv}
+	}
+}
+
+// renderSizing renders the advisory view: observed data first, verdict after —
+// a recommendation is never shown without the numbers behind it (FR-023).
+func (m *Model) renderSizing(a model.SizingAdvice) {
+	var b strings.Builder
+	b.WriteString(m.rule(fmt.Sprintf("Sizing (advisory) — %s in %s, %d pod(s), last 1h", a.Workload, a.Namespace, a.Pods)) + "\n\n")
+	b.WriteString(m.theme.Faint.Render("Advisory only, based on observed usage per pod — this tool never applies changes.") + "\n\n")
+	m.renderResourceSizing(&b, "CPU", a.CPU, components.FormatCPU)
+	b.WriteString("\n")
+	m.renderResourceSizing(&b, "MEMORY", a.Memory, components.FormatMemory)
+	m.sizingVP.SetContent(b.String())
+	m.layout()
+}
+
+func (m *Model) renderResourceSizing(b *strings.Builder, label string, rs model.ResourceSizing, format func(float64) string) {
+	b.WriteString(m.rule(label) + "\n")
+	orUnset := func(v float64) string {
+		if v <= 0 {
+			return "—"
+		}
+		return format(v)
+	}
+	if rs.HasData {
+		fmt.Fprintf(b, "  observed    avg %s   peak %s   (per pod)\n", format(rs.Avg), format(rs.Peak))
+	} else {
+		b.WriteString("  observed    no data for this window\n")
+	}
+	fmt.Fprintf(b, "  configured  request %s   limit %s\n", orUnset(rs.Request), orUnset(rs.Limit))
+	pct := func(v, of float64) string { return fmt.Sprintf("%.0f%%", v/of*100) }
+	var verdict string
+	switch rs.Verdict {
+	case model.SizingNoData:
+		verdict = m.theme.Faint.Render("— no recommendation: not enough observed data (nothing is estimated)")
+	case model.SizingNoRequest:
+		verdict = m.theme.Warning.Render("! no request configured — consider setting one near the observed peak " + format(rs.Peak))
+	case model.SizingUnder:
+		reason := "average " + format(rs.Avg) + " ≥ request " + format(rs.Request)
+		if rs.Limit > 0 && rs.Peak >= model.SizingLimitFrac*rs.Limit {
+			reason = "peak " + format(rs.Peak) + " = " + pct(rs.Peak, rs.Limit) + " of the limit (OOM/throttling risk)"
+		}
+		verdict = m.theme.Error.Render("✗ under-provisioned / at risk: " + reason)
+	case model.SizingOver:
+		verdict = m.theme.Warning.Render("! requests appear oversized: peak " + format(rs.Peak) + " = " + pct(rs.Peak, rs.Request) + " of the request")
+	default:
+		verdict = m.theme.Ok.Render("✓ sized correctly: peak " + format(rs.Peak) + " = " + pct(rs.Peak, rs.Request) + " of the request")
+	}
+	b.WriteString("  " + verdict + "\n")
 }
 
 // ---- Customizable views (US8, FR-024/FR-025) ----
