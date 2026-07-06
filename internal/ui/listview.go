@@ -38,14 +38,63 @@ func (m *Model) columnsForType() []listColumn {
 	}
 	out := make([]listColumn, 0, len(pref.Columns))
 	for _, t := range pref.Columns {
-		if c, ok := byTitle[t]; ok {
-			out = append(out, c)
+		switch {
+		case byTitle[t].cell != nil:
+			out = append(out, byTitle[t])
+		case strings.HasPrefix(t, "label:") || strings.HasPrefix(t, "field:"):
+			// User-defined columns: a label value or a dot-path field.
+			out = append(out, customColumn(t))
 		}
+		// Anything else is a stale title from an old version: dropped (FR-025).
 	}
 	if len(out) == 0 {
 		return cols
 	}
 	return out
+}
+
+// customColumn builds a user-defined column: "label:app" shows that label's
+// value, "field:.spec.nodeName" the object field at that dot path. Both are
+// stored prefixed in the prefs so stale plain titles stay distinguishable.
+func customColumn(spec string) listColumn {
+	if k, ok := strings.CutPrefix(spec, "label:"); ok {
+		return listColumn{title: k, width: 16,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				return orDash(kube.ObjectLabel(o.Raw, k))
+			}}
+	}
+	path := strings.TrimPrefix(spec, "field:")
+	fields := strings.Split(strings.TrimPrefix(path, "."), ".")
+	return listColumn{title: path, width: 20,
+		cell: func(_ *Model, o model.ResourceObject) string {
+			return fieldCell(o.Raw, fields)
+		}}
+}
+
+// fieldCell walks a dot path of map fields and renders the scalar found there
+// ("-" when absent, "…" for a non-scalar like a list or object).
+func fieldCell(raw map[string]interface{}, fields []string) string {
+	var cur interface{} = raw
+	for _, f := range fields {
+		m, ok := cur.(map[string]interface{})
+		if !ok {
+			return "-"
+		}
+		cur, ok = m[f]
+		if !ok {
+			return "-"
+		}
+	}
+	switch v := cur.(type) {
+	case string:
+		return orDash(v)
+	case bool, int64, float64:
+		return fmt.Sprintf("%v", v)
+	case nil:
+		return "-"
+	default:
+		return "…"
+	}
 }
 
 // columnsBase returns every column the type offers, in default order —

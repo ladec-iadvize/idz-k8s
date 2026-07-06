@@ -64,6 +64,10 @@ const (
 	resetViewLabel = "◆ reset current view to defaults"
 )
 
+// addFieldLabel is the column-chooser action row that adds a user-defined
+// column: a label key ("app") or a dot-path field (".status.podIP").
+const addFieldLabel = "◆ add custom field (label or .path)…"
+
 // allKindsLabel is the sentinel option that clears the event kind filter.
 const allKindsLabel = "◆ all kinds"
 
@@ -215,6 +219,10 @@ type Model struct {
 	// Save-view naming prompt ('V' → save as…, US8).
 	viewNaming bool
 	viewName   string
+
+	// Custom-column prompt (chooser → add custom field…).
+	fieldNaming bool
+	fieldInput  string
 }
 
 // colItem is one entry of the column chooser.
@@ -744,6 +752,28 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Custom-column typing mode captures ALL keys (Enter adds, Esc cancels).
+	if m.fieldNaming {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.fieldNaming = false
+			m.addCustomColumn(strings.TrimSpace(m.fieldInput))
+			return m, nil
+		case tea.KeyEscape:
+			m.fieldNaming = false
+			return m, nil
+		case tea.KeyBackspace:
+			if m.fieldInput != "" {
+				m.fieldInput = m.fieldInput[:len(m.fieldInput)-1]
+			}
+			return m, nil
+		case tea.KeyRunes, tea.KeySpace:
+			m.fieldInput += string(msg.Runes)
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// Events filter typing mode captures ALL keys (so 'q', 'n', Esc… are text
 	// or edit actions, never global shortcuts). Enter commits, Esc cancels.
 	if m.screen == screenEvents && m.eventsFiltering {
@@ -1181,7 +1211,8 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if msg.Type == tea.KeyRight {
 				j = i + 1
 			}
-			if i >= 0 && i < len(m.colItems) && j >= 0 && j < len(m.colItems) {
+			if i >= 0 && i < len(m.colItems) && j >= 0 && j < len(m.colItems) &&
+				m.colItems[i].title != addFieldLabel && m.colItems[j].title != addFieldLabel {
 				m.colItems[i], m.colItems[j] = m.colItems[j], m.colItems[i]
 				m.applyColumnRows()
 				m.pickerWin.Move(j - i)
@@ -2592,6 +2623,10 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 		m.renderEvents()
 		return m, nil
 	case pickColumns:
+		if i := m.pickerWin.cursor; i >= 0 && i < len(m.colItems) && m.colItems[i].title == addFieldLabel {
+			m.fieldNaming, m.fieldInput = true, ""
+			return m, nil
+		}
 		return m.applyColumnChoice()
 	case pickView:
 		switch choice {
@@ -2738,6 +2773,9 @@ func (m Model) View() string {
 	out := b.String()
 
 	switch {
+	case m.fieldNaming:
+		out = overlayCenter(out, m.inputModal("add column — label key or .field.path",
+			m.fieldInput, "e.g. app · .status.podIP — Enter add · Esc cancel"), m.width)
 	case m.screen == screenPicker:
 		box, _ := m.pickerModal()
 		out = overlayCenter(out, box, m.width)
@@ -3329,18 +3367,35 @@ func (m *Model) persistViewPref() {
 // openColumnChooser opens the 'C' modal: every column the current type offers,
 // visible ones first in display order, then the hidden ones.
 func (m Model) openColumnChooser() (tea.Model, tea.Cmd) {
-	shown := m.columnsForType()
-	on := map[string]bool{}
-	items := make([]colItem, 0, len(shown))
-	for _, c := range shown {
-		on[c.title] = true
-		items = append(items, colItem{title: c.title, on: true})
+	base := m.columnsBase()
+	baseTitles := map[string]bool{}
+	for _, c := range base {
+		baseTitles[c.title] = true
 	}
-	for _, c := range m.columnsBase() {
+	// Shown columns, in order — custom ones keep their stored "label:"/
+	// "field:" spec so they round-trip through the prefs unchanged.
+	var items []colItem
+	on := map[string]bool{}
+	if pref := m.cfg.ViewPrefs[m.curType.Key()]; len(pref.Columns) > 0 {
+		for _, spec := range pref.Columns {
+			if baseTitles[spec] || strings.HasPrefix(spec, "label:") || strings.HasPrefix(spec, "field:") {
+				items = append(items, colItem{title: spec, on: true})
+				on[spec] = true
+			}
+		}
+	}
+	if len(items) == 0 {
+		for _, c := range base {
+			items = append(items, colItem{title: c.title, on: true})
+			on[c.title] = true
+		}
+	}
+	for _, c := range base {
 		if !on[c.title] {
 			items = append(items, colItem{title: c.title})
 		}
 	}
+	items = append(items, colItem{title: addFieldLabel})
 	m.colItems = items
 	m.pickerKind = pickColumns
 	m.pickerReturn = screenList
@@ -3374,12 +3429,44 @@ func (m *Model) toggleColItem(i int) {
 	if i < 0 || i >= len(m.colItems) {
 		return
 	}
+	if m.colItems[i].title == addFieldLabel {
+		m.fieldNaming, m.fieldInput = true, ""
+		return
+	}
 	if m.colItems[i].title == "NAME" && m.colItems[i].on {
 		m.statusMsg = "the NAME column cannot be hidden"
 		return
 	}
 	m.colItems[i].on = !m.colItems[i].on
 	m.applyColumnRows()
+}
+
+// addCustomColumn inserts a user-defined column into the chooser: a leading
+// '.' means an object field path, anything else a label key.
+func (m *Model) addCustomColumn(spec string) {
+	if spec == "" {
+		return
+	}
+	if strings.HasPrefix(spec, ".") {
+		spec = "field:" + spec
+	} else {
+		spec = "label:" + strings.TrimPrefix(spec, "label:")
+	}
+	for i := range m.colItems {
+		if m.colItems[i].title == spec {
+			m.colItems[i].on = true
+			m.applyColumnRows()
+			return
+		}
+	}
+	// Insert before the trailing "add custom field…" action row.
+	at := len(m.colItems)
+	if at > 0 && m.colItems[at-1].title == addFieldLabel {
+		at--
+	}
+	m.colItems = append(m.colItems[:at], append([]colItem{{title: spec, on: true}}, m.colItems[at:]...)...)
+	m.applyColumnRows()
+	m.statusMsg = "column added — Enter applies the arrangement"
 }
 
 // applyColumnChoice commits the chooser (Enter): store the arrangement — or
