@@ -23,6 +23,14 @@ changing anything.
    (`.specify/memory/constitution.md`) must be recorded in plan.md's
    Complexity Tracking.
 
+## Workflow (v2+, owner decision 2026-07-06)
+
+One branch per user story (`feat/us6-sizing`-style), one PR, **squash-merge
+to main only after the CI run is green** — never merge red, never push a
+story directly to main. Small doc/bookkeeping commits may go straight to
+main. The merge is done by whoever runs the story (including Claude) once
+CI passes.
+
 ## Definition of done (every change)
 
 ```bash
