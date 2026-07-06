@@ -1,0 +1,21 @@
+# Constitution Principle III gate: lint runs locally and in CI.
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - misspell
+  settings:
+    errcheck:
+      exclude-functions:
+        # strings.Builder methods never return an error.
+        - (*strings.Builder).WriteString
+        - (*strings.Builder).WriteRune
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

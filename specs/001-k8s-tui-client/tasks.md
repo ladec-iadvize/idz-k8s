@@ -35,8 +35,8 @@ Single Go project: `cmd/idz-k8s/`, `internal/…`, `tests/…` at repository roo
 
 - [X] T001 Create Go module and directory tree per plan.md (`go.mod`, `cmd/idz-k8s/`, `internal/{config,kube,metrics,helm,model,ui,telemetry}/`, `tests/{unit,integration,tui}/`)
 - [X] T002 [note: custom Unicode charts replaced ntcharts — design deviation recorded in research D5] Add pinned dependencies to `go.mod` (client-go, apimachinery, api, cli-runtime; charmbracelet bubbletea/bubbles/lipgloss; NimbleMarkets/ntcharts; prometheus/client_golang; helm.sh/helm/v3; spf13/cobra) and commit `go.sum`
-- [ ] T003 [P] [DEFERRED post-v1, owner decision 2026-07-04] Configure formatting/linting (`gofmt`, `go vet`, `golangci-lint`) in repo root config files
-- [ ] T004 [P] [DEFERRED post-v1, owner decision 2026-07-04] Add CI workflow running fmt/vet/lint/`go test ./...`/build in `.github/workflows/ci.yml` (Principle III gate)
+- [X] T003 [P] [deferral lifted 2026-07-05 once the git repo existed] Configure formatting/linting (`gofmt`, `go vet`, `golangci-lint`) in repo root config files
+- [X] T004 [P] [deferral lifted 2026-07-05 once the git repo existed] Add CI workflow running fmt/vet/lint/`go test ./...`/build in `.github/workflows/ci.yml` (Principle III gate)
 - [X] T005 [P] Cobra root command + flag wiring per `contracts/cli-interface.md` in `cmd/idz-k8s/main.go`
 
 ---

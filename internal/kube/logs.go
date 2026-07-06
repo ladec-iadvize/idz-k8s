@@ -40,7 +40,7 @@ func (c *Client) StreamPodLogs(ctx context.Context, namespace, pod, container st
 			out <- LogLine{Err: err, Done: true}
 			return
 		}
-		defer stream.Close()
+		defer func() { _ = stream.Close() }()
 		sc := bufio.NewScanner(stream)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {

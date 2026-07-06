@@ -1,0 +1,44 @@
+# Constitution Principle III gate: every change must pass format, lint,
+# build and tests before merge. A red gate blocks merge.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: fmt / vet / lint / test / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt (no diff allowed)
+        run: |
+          out=$(gofmt -l ./cmd ./internal ./tests)
+          if [ -n "$out" ]; then
+            echo "gofmt needed on:"; echo "$out"; exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./...

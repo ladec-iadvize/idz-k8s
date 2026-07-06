@@ -314,7 +314,9 @@ func TestMergedLogPrefixColoredAndStable(t *testing.T) {
 		t.Fatalf("merged line must carry the pod prefix, got %q", m.logBuf)
 	}
 	// Stable color: same pod always maps to the same style.
-	if podPrefixStyle("web-1").Render("x") != podPrefixStyle("web-1").Render("x") {
+	first := podPrefixStyle("web-1")
+	second := podPrefixStyle("web-1")
+	if first.Render("x") != second.Render("x") {
 		t.Fatal("pod prefix color must be deterministic")
 	}
 	// Single-pod stream (Pod == "") keeps raw lines.

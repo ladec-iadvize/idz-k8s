@@ -2230,8 +2230,8 @@ func (m *Model) renderTop(rows []model.TopConsumer) {
 			frac = r.Value / max
 		}
 		label := r.Namespace + "/" + r.Name
-		b.WriteString(fmt.Sprintf("%s %10s  %s\n",
-			components.Gauge(frac, 15), components.FormatValue(r.Kind, r.Value), label))
+		fmt.Fprintf(&b, "%s %10s  %s\n",
+			components.Gauge(frac, 15), components.FormatValue(r.Kind, r.Value), label)
 	}
 	m.usage.SetContent(b.String())
 }

@@ -151,4 +151,4 @@ layer never talks to a data source directly; it consumes `model`.
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| CI gate (lint/test on merge, Principle III) deferred out of v1 (T003/T004) | Owner decision (2026-07-04): v1 ships without automated CI; `go build/vet/test` are run manually on every increment | Adding CI now — deferred by the owner; the repo is not yet a git repository, making a merge gate premature. To be revisited post-v1. |
+| ~~CI gate deferred (T003/T004)~~ **RESOLVED 2026-07-05** | The repo now lives on GitHub (ladec-iadvize/idz-k8s); `.github/workflows/ci.yml` runs gofmt/vet/golangci-lint/build/test on every push and PR | Deviation closed — the constitution's Principle III gate is in force. |
