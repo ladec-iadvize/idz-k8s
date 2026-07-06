@@ -37,6 +37,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 | `v` | Events **timeline**: a time axis per object, warnings highlighted, selectable details |
 | `f` | Failure diagnostics: CrashLoopBackOff, OOMKilled, evictions, unschedulable pods (with the scheduler's reason) |
 | `u` | Top consumers (CPU/memory, via Prometheus) |
+| `z` | Sizing recommendations (advisory): observed usage vs requests/limits, over/under-provisioned flags — never applied, never estimated |
 | `:helm` | Helm releases (read-only): history, deployed resources with **live state**, values — reachable from the `:` picker like any resource |
 | `o` | Jump to the owner (pod → ReplicaSet → Deployment) |
 
