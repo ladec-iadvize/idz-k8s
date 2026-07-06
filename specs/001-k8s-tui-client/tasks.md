@@ -277,7 +277,7 @@ Single Go project: `cmd/idz-k8s/`, `internal/…`, `tests/…` at repository roo
 - [X] T064 Whole-suite zero-mutation guarantee: assert no mutating K8s verb and no mutating Helm action across all flows in `tests/integration/readonly_test.go` (SC-006, FR-012)
 - [X] T065 [P] Security review: secret masking present in every view; no credentials/secret values persisted to config or logs (FR-015, Principle IV)
 - [X] T066 Resilience validation: cluster disconnect/reconnect and Prometheus-down mid-session without restart in `tests/integration/resilience_test.go` (SC-007)
-- [ ] T067 [automated equivalents PASS; manual live-cluster run pending — see quickstart.md V1–V10] Run `quickstart.md` scenarios V1–V10 end-to-end and record results
+- [X] T067 [manual live-cluster validation PASSED by owner, 2026-07-06] Run `quickstart.md` scenarios V1–V10 end-to-end and record results
 
 ---
 
