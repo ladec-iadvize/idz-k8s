@@ -98,3 +98,48 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
+
+// TestChangesSignalOnWatchEvents: cluster changes surface on the coalesced
+// Changes channel (the UI's live-refresh source), and Close ends the stream.
+func TestChangesSignalOnWatchEvents(t *testing.T) {
+	client, dyn := NewFakeClient("demo", NewPod("demo", "web-1", "Running"))
+	ch := client.Changes()
+	ctx := context.Background()
+
+	// Warm the informer, drain the initial sync signals.
+	if _, err := client.List(ctx, PodsType, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "cache sync", func() bool { return client.UsingCache(PodsType) })
+	for drained := false; !drained; {
+		select {
+		case <-ch:
+		case <-time.After(100 * time.Millisecond):
+			drained = true
+		}
+	}
+
+	// A cluster change must produce a signal.
+	if _, err := dyn.Resource(podsGVR).Namespace("demo").Create(ctx, NewPod("demo", "web-2", "Running"), metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case _, ok := <-ch:
+		if !ok {
+			t.Fatal("channel closed unexpectedly")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no change signal after a pod creation")
+	}
+
+	// Close ends the stream (waiters re-arm on the replacement client).
+	client.Close()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("expected a closed channel after Close")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("channel not closed by Close")
+	}
+}

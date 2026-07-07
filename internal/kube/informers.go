@@ -34,6 +34,7 @@ const staleWindow = 15 * time.Second
 type informerCache struct {
 	factory dynamicinformer.DynamicSharedInformerFactory
 	stop    chan struct{}
+	notify  func() // coalesced change signal for the live-refresh loop
 
 	mu      sync.Mutex
 	byGVR   map[schema.GroupVersionResource]informers.GenericInformer
@@ -41,10 +42,11 @@ type informerCache struct {
 	errAt   time.Time
 }
 
-func newInformerCache(f dynamicinformer.DynamicSharedInformerFactory) *informerCache {
+func newInformerCache(f dynamicinformer.DynamicSharedInformerFactory, notify func()) *informerCache {
 	return &informerCache{
 		factory: f,
 		stop:    make(chan struct{}),
+		notify:  notify,
 		byGVR:   map[schema.GroupVersionResource]informers.GenericInformer{},
 	}
 }
@@ -61,6 +63,13 @@ func (ic *informerCache) forGVR(gvr schema.GroupVersionResource) (informers.Gene
 			ic.mu.Lock()
 			ic.lastErr, ic.errAt = err, time.Now()
 			ic.mu.Unlock()
+		})
+		// Live refresh: any add/update/delete signals the UI, which then
+		// re-reads the cache (a rolling update is visible as it happens).
+		_, _ = gi.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+			AddFunc:    func(interface{}) { ic.notify() },
+			UpdateFunc: func(interface{}, interface{}) { ic.notify() },
+			DeleteFunc: func(interface{}) { ic.notify() },
 		})
 		ic.byGVR[gvr] = gi
 		ic.factory.Start(ic.stop)
@@ -85,19 +94,52 @@ func (c *Client) cacheFor() *informerCache {
 	defer c.infMu.Unlock()
 	if c.inf == nil {
 		c.inf = newInformerCache(
-			dynamicinformer.NewFilteredDynamicSharedInformerFactory(c.Dynamic, 0, metav1.NamespaceAll, nil))
+			dynamicinformer.NewFilteredDynamicSharedInformerFactory(c.Dynamic, 0, metav1.NamespaceAll, nil),
+			c.notifyChange)
 	}
 	return c.inf
 }
 
-// Close stops every informer goroutine. Call it when replacing the client
-// (context switch); safe on a client that never started any.
+// Changes returns a coalesced signal channel: one (buffered) tick whenever
+// anything changes in a watched cache. Closed by Close() so waiters can
+// re-arm on the replacement client.
+func (c *Client) Changes() <-chan struct{} {
+	c.infMu.Lock()
+	defer c.infMu.Unlock()
+	if c.changes == nil {
+		c.changes = make(chan struct{}, 1)
+	}
+	return c.changes
+}
+
+// notifyChange signals without ever blocking an informer goroutine (the
+// buffered channel coalesces bursts — a rolling update is one signal).
+func (c *Client) notifyChange() {
+	c.infMu.Lock()
+	ch := c.changes
+	c.infMu.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
+// Close stops every informer goroutine and the change stream. Call it when
+// replacing the client (context switch); safe on a client that never
+// started any.
 func (c *Client) Close() {
 	c.infMu.Lock()
 	defer c.infMu.Unlock()
 	if c.inf != nil {
 		close(c.inf.stop)
 		c.inf = nil
+	}
+	if c.changes != nil {
+		close(c.changes)
+		c.changes = nil
 	}
 }
 

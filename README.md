@@ -68,6 +68,9 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
   (describe/YAML, logs, failures, topology, posture, connectivity, access,
   diff, Helm detail & values) — matches highlighted, `n`/`N` to navigate,
   `Esc` clears first, then goes back.
+- **Live updates**: the list follows the cluster in real time (watch-driven,
+  throttled to ~4 fps) — a rolling update is visible as it happens, no manual
+  refresh; the periodic tick remains only as a safety net.
 
 ## Metrics (Prometheus)
 
