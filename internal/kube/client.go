@@ -6,6 +6,7 @@ package kube
 import (
 	"fmt"
 	"sort"
+	"sync"
 
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -26,6 +27,11 @@ type Client struct {
 	kubeconfigPath string
 	contextName    string
 	Namespace      string
+
+	// Shared informer cache behind the main list flow (T089); lazily built,
+	// stopped via Close() when the client is replaced.
+	infMu sync.Mutex
+	inf   *informerCache
 }
 
 // Options configure how the client connects.

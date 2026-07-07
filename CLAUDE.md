@@ -44,7 +44,8 @@ bug fixes ship with the regression test that would have caught them.
 ## Architecture (layering is load-bearing)
 
 ```
-internal/kube     read-only client-go (discovery incl. CRDs, lists, logs, topology, diagnostics)
+internal/kube     read-only client-go (discovery incl. CRDs, lists via shared-informer cache
+                  with direct-LIST fallback, logs, topology, diagnostics)
 internal/metrics  Prometheus — the ONLY metrics source (instant + 1h range, API-proxy autodiscovery)
 internal/helm     Helm release storage reader (storage access only, no action pkg mutations)
 internal/model    toolkit-agnostic domain types — no client-go, no Bubble Tea imports

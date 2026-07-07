@@ -367,6 +367,7 @@ type objectsMsg struct {
 	objects  []model.ResourceObject
 	nodePods map[string][2]int // only set when listing nodes
 	err      error
+	stale    error // set when data comes from a cache whose watch is failing
 }
 type logLineMsg kube.LogLine
 type tickMsg struct{}
@@ -472,6 +473,7 @@ func (m Model) listObjects() tea.Cmd {
 			return objectsMsg{objects: objs, err: err}
 		}
 		objs, err := c.ListSelected(ctx, t, ns, sel)
+		stale := c.CacheStale()
 		// Services get a real status from their backends (one extra LIST).
 		if err == nil && t.Group == "" && t.Resource == "services" {
 			if eps, eerr := c.EndpointsByService(ctx, ns); eerr == nil {
@@ -501,7 +503,7 @@ func (m Model) listObjects() tea.Cmd {
 				}
 			}
 		}
-		return objectsMsg{objects: objs, nodePods: nodePods, err: err}
+		return objectsMsg{objects: objs, nodePods: nodePods, err: err, stale: stale}
 	}
 }
 
@@ -651,11 +653,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = "cluster unreachable — retrying every " +
 				fmt.Sprintf("%ds", m.cfg.RefreshIntervalSeconds) + " (" + truncate(msg.err.Error(), 60) + ")"
 		} else {
-			if m.disconnected {
+			if msg.stale != nil {
+				// Cached data is still shown, but freshness is never faked:
+				// the watch is failing, announce it (FR-016/FR-021 spirit).
+				m.disconnected = true
+				m.errMsg = "cluster unreachable — showing cached data, watch retrying (" + truncate(msg.stale.Error(), 60) + ")"
+			} else if m.disconnected {
 				m.disconnected = false
 				m.statusMsg = "✓ reconnected"
+				m.errMsg = ""
+			} else {
+				m.errMsg = ""
 			}
-			m.errMsg = ""
 			m.objects = msg.objects
 			if msg.nodePods != nil {
 				m.nodePods = msg.nodePods
@@ -2903,6 +2912,7 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			m.errMsg = err.Error()
 			return m.goBack()
 		}
+		m.client.Close() // stop the old context's informer watches
 		m.client = nc
 		m.helm = helm.New(m.kubeconfigPath, choice) // helm reads the new cluster too
 		m.marked = map[string]model.ResourceObject{}

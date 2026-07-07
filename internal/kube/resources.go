@@ -45,6 +45,11 @@ func (c *Client) List(ctx context.Context, t model.ResourceType, namespace strin
 // ListSelected is List restricted to a label selector (e.g. the pods managed
 // by a Deployment). An empty selector lists everything.
 func (c *Client) ListSelected(ctx context.Context, t model.ResourceType, namespace, labelSelector string) ([]model.ResourceObject, error) {
+	// Served from the shared informer cache once its watch is synced; a
+	// direct LIST otherwise (first call, or watch unavailable) — T089.
+	if objs, ok := c.cachedList(t, namespace, labelSelector); ok {
+		return objs, nil
+	}
 	ri := c.Dynamic.Resource(GVR(t))
 	lopts := metav1.ListOptions{LabelSelector: labelSelector}
 	apiNS, pattern := namespaceScope(namespace)
@@ -66,16 +71,32 @@ func (c *Client) ListSelected(ctx context.Context, t model.ResourceType, namespa
 		if t.Namespaced && pattern != "" && !MatchNamespace(pattern, item.GetNamespace()) {
 			continue
 		}
-		out = append(out, model.ResourceObject{
-			Type:      t,
-			Namespace: item.GetNamespace(),
-			Name:      item.GetName(),
-			Status:    deriveStatus(&item),
-			CreatedAt: item.GetCreationTimestamp().Time,
-			Raw:       item.Object,
-		})
+		out = append(out, toResourceObject(t, &item))
 	}
 	return out, nil
+}
+
+// toResourceObject maps one live object to the toolkit-agnostic model.
+func toResourceObject(t model.ResourceType, item *unstructured.Unstructured) model.ResourceObject {
+	return model.ResourceObject{
+		Type:      t,
+		Namespace: item.GetNamespace(),
+		Name:      item.GetName(),
+		Status:    deriveStatus(item),
+		CreatedAt: item.GetCreationTimestamp().Time,
+		Raw:       item.Object,
+	}
+}
+
+// sortObjects orders by namespace then name — informer caches return items
+// in map order, and the list must be stable between refreshes.
+func sortObjects(objs []model.ResourceObject) {
+	sort.Slice(objs, func(i, j int) bool {
+		if objs[i].Namespace != objs[j].Namespace {
+			return objs[i].Namespace < objs[j].Namespace
+		}
+		return objs[i].Name < objs[j].Name
+	})
 }
 
 // deriveStatus produces a display health from common status shapes. It is a
