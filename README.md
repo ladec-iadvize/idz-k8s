@@ -59,7 +59,9 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 - **Mouse**: click to select, double-click to open, wheel to scroll, click
   column headers to sort, click header chips (ctx/ns/type) and footer shortcut
   labels to trigger them. `m` toggles mouse capture to select/copy text.
-- Pickers and filters open as **centered modals** over the current view.
+- Pickers and filters open as **centered modals** over the current view. In
+  content views (describe/YAML, Helm detail & values), `/` searches vim-style:
+  matches highlighted, `n`/`N` to navigate, `Esc` clears.
 
 ## Metrics (Prometheus)
 
