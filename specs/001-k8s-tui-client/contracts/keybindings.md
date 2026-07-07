@@ -45,6 +45,7 @@ mutating bindings** — the tool is read-only. This is the authoritative list th
 | `:helm` | Helm releases (read-only, via the type picker) | US12 / FR-029 |
 | `u` | Top consumers (CPU/memory) | FR-035 |
 | `z` | Sizing recommendations (advisory) | US6 / FR-023 |
+| `p` | Posture / compliance overview (advisory) | US13 / FR-030 |
 
 ## Customizable views (US8, FR-024/FR-025)
 

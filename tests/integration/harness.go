@@ -75,6 +75,27 @@ func NewPodOnNode(namespace, name, node, phase string) *unstructured.Unstructure
 	return p
 }
 
+// NewNetworkPolicy builds a minimal NetworkPolicy (posture rule fixture).
+func NewNetworkPolicy(namespace, name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "NetworkPolicy",
+		"metadata":   map[string]interface{}{"name": name, "namespace": namespace},
+		"spec":       map[string]interface{}{"podSelector": map[string]interface{}{}},
+	}}
+}
+
+// NewTLSSecret builds a kubernetes.io/tls secret holding the given PEM cert.
+func NewTLSSecret(namespace, name, crtB64 string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "kubernetes.io/tls",
+		"metadata":   map[string]interface{}{"name": name, "namespace": namespace},
+		"data":       map[string]interface{}{"tls.crt": crtB64, "tls.key": ""},
+	}}
+}
+
 // NewNamespace builds an unstructured (cluster-scoped) Namespace object.
 func NewNamespace(name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
@@ -91,12 +112,13 @@ func NewFakeClient(namespace string, objs ...*unstructured.Unstructured) (*kube.
 	scheme := runtime.NewScheme()
 	listKinds := map[schema.GroupVersionResource]string{
 		podsGVR: "PodList",
-		{Group: "", Version: "v1", Resource: "secrets"}:                        "SecretList",
-		{Group: "", Version: "v1", Resource: "namespaces"}:                     "NamespaceList",
-		{Group: "", Version: "v1", Resource: "nodes"}:                          "NodeList",
-		{Group: "", Version: "v1", Resource: "events"}:                         "EventList",
-		{Group: "", Version: "v1", Resource: "endpoints"}:                      "EndpointsList",
-		{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}: "EndpointSliceList",
+		{Group: "", Version: "v1", Resource: "secrets"}:                          "SecretList",
+		{Group: "", Version: "v1", Resource: "namespaces"}:                       "NamespaceList",
+		{Group: "", Version: "v1", Resource: "nodes"}:                            "NodeList",
+		{Group: "", Version: "v1", Resource: "events"}:                           "EventList",
+		{Group: "", Version: "v1", Resource: "endpoints"}:                        "EndpointsList",
+		{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}:   "EndpointSliceList",
+		{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}: "NetworkPolicyList",
 	}
 	runtimeObjs := make([]runtime.Object, 0, len(objs))
 	for _, o := range objs {

@@ -25,6 +25,7 @@ type KeyMap struct {
 	Top       key.Binding
 	Diag      key.Binding
 	Sizing    key.Binding
+	Posture   key.Binding
 	Topology  key.Binding
 	Events    key.Binding
 	Mark      key.Binding
@@ -64,6 +65,7 @@ func Default() KeyMap {
 		Top:       key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "top usage")),
 		Diag:      key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "failures")),
 		Sizing:    key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "sizing (advisory)")),
+		Posture:   key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "posture (advisory)")),
 		Topology:  key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "topology")),
 		Events:    key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "events")),
 		Mark:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "mark")),
@@ -93,7 +95,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End},
-		{k.Open, k.Back, k.Filter, k.Jump, k.Logs, k.Top, k.Diag, k.Topology, k.Sizing},
+		{k.Open, k.Back, k.Filter, k.Jump, k.Logs, k.Top, k.Diag, k.Topology, k.Sizing, k.Posture},
 		{k.Sort, k.Columns, k.Views, k.ResetView},
 		{k.Namespace, k.Context, k.Help, k.Quit},
 	}
