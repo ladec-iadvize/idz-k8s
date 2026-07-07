@@ -52,7 +52,8 @@ func TestCustomColumnPrefResolution(t *testing.T) {
 		"v1/pods": {Columns: []string{"NAME", "label:app", "field:.status.podIP", "BOGUS"}},
 	}
 	got := colTitles(m.columnsForType())
-	want := []string{"NAME", "app", ".status.podIP"}
+	// Custom columns render with built-in-looking headers (owner feedback).
+	want := []string{"NAME", "APP", "POD IP"}
 	if len(got) != len(want) {
 		t.Fatalf("columns=%v want %v", got, want)
 	}
@@ -121,7 +122,68 @@ func TestChooserAddCustomFieldFlow(t *testing.T) {
 	m.layout()
 	m.applyRows()
 	view := m.listView()
-	if !strings.Contains(view, "10.0.0.7") || !strings.Contains(view, ".status.podIP") {
+	if !strings.Contains(view, "10.0.0.7") || !strings.Contains(view, "POD IP") {
 		t.Fatalf("list must show the custom column and its value:\n%s", view)
+	}
+}
+
+// TestChooserRemovesCustomField (owner request 2026-07-07: erase a typo'd
+// field): Backspace deletes a custom entry, never a built-in one.
+func TestChooserRemovesCustomField(t *testing.T) {
+	m := newViewsModel(t)
+	m.cfg.ViewPrefs = map[string]config.ViewPref{
+		"v1/pods": {Columns: []string{"NAME", "field:.status.podIp_typo"}},
+	}
+	mi, _ := m.openColumnChooser()
+	m = asModel(t, mi)
+	// Find the custom row.
+	idx := -1
+	for i, it := range m.colItems {
+		if it.title == "field:.status.podIp_typo" {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("custom entry missing from the chooser: %+v", m.colItems)
+	}
+	m.pickerWin.cursor = idx
+	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = asModel(t, mi)
+	for _, it := range m.colItems {
+		if it.title == "field:.status.podIp_typo" {
+			t.Fatal("custom field not removed")
+		}
+	}
+	// Built-in columns refuse deletion.
+	m.pickerWin.cursor = 0 // NAME
+	before := len(m.colItems)
+	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = asModel(t, mi)
+	if len(m.colItems) != before {
+		t.Fatal("built-in column must not be removable")
+	}
+	// Apply: the pref no longer contains the removed field.
+	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	for _, c := range m.cfg.ViewPrefs["v1/pods"].Columns {
+		if c == "field:.status.podIp_typo" {
+			t.Fatal("removed field persisted")
+		}
+	}
+}
+
+func TestCustomTitleMapping(t *testing.T) {
+	cases := map[string]string{
+		"label:app":                    "APP",
+		"label:karpenter.sh/nodepool":  "KARPENTER.SH/NODEPOOL",
+		"field:.status.podIP":          "POD IP",
+		"field:.spec.nodeName":         "NODE NAME",
+		"field:.spec.storageClassName": "STORAGE CLASS NAME",
+		"field:.spec.schedule":         "SCHEDULE",
+	}
+	for in, want := range cases {
+		if got := customTitle(in); got != want {
+			t.Errorf("customTitle(%q)=%q want %q", in, got, want)
+		}
 	}
 }
