@@ -47,6 +47,7 @@ const (
 	screenSizing
 	screenSizingList
 	screenPosture
+	screenConnectivity
 )
 
 type pickerKind int
@@ -170,6 +171,9 @@ type Model struct {
 
 	// Posture overview (US13, advisory & read-only).
 	posture viewport.Model
+
+	// Per-pod connectivity / NetworkPolicy view (US14, read-only).
+	connectivity viewport.Model
 
 	// Sizing recommendations (US6, advisory & read-only): overview table of
 	// every listed workload, Enter → per-workload detail panel.
@@ -320,6 +324,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		helmHist:       viewport.New(0, 0),
 		sizingVP:       viewport.New(0, 0),
 		posture:        viewport.New(0, 0),
+		connectivity:   viewport.New(0, 0),
 		screen:         screenList,
 		marked:         map[string]model.ResourceObject{},
 		sortCol:        -1,
@@ -370,6 +375,10 @@ type metricsMsg struct {
 }
 type sizingMsg struct {
 	advice model.SizingAdvice
+	err    error
+}
+type connectivityMsg struct {
+	report model.ConnectivityReport
 	err    error
 }
 type postureMsg struct {
@@ -703,6 +712,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderSizing(msg.advice)
 		return m, nil
 
+	case connectivityMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		m.renderConnectivity(msg.report)
+		return m, nil
+
 	case postureMsg:
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -970,6 +987,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.posture, cmd = m.posture.Update(msg)
 		return m, cmd
+	case screenConnectivity:
+		var cmd tea.Cmd
+		m.connectivity, cmd = m.connectivity.Update(msg)
+		return m, cmd
 	case screenSizingList:
 		switch {
 		case hit(msg, m.keys.Open):
@@ -1060,6 +1081,8 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openSizing()
 	case hit(msg, m.keys.Posture):
 		return m.openPosture()
+	case hit(msg, m.keys.Connectivity):
+		return m.openConnectivity()
 	case hit(msg, m.keys.Topology):
 		return m.openTopology()
 	case hit(msg, m.keys.Events):
@@ -1420,6 +1443,8 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sizingVP, cmd = m.sizingVP.Update(msg)
 	case screenPosture:
 		m.posture, cmd = m.posture.Update(msg)
+	case screenConnectivity:
+		m.connectivity, cmd = m.connectivity.Update(msg)
 	case screenTopology:
 		m.topo, cmd = m.topo.Update(msg)
 	case screenEvents:
@@ -2881,6 +2906,7 @@ func (m *Model) layout() {
 	m.sizingVP.Width, m.sizingVP.Height = m.width, bodyH
 	m.sizingWin.SetHeight(bodyH - 1) // -1: the overview's own column header
 	m.posture.Width, m.posture.Height = m.width, bodyH
+	m.connectivity.Width, m.connectivity.Height = m.width, bodyH
 	m.helmTable.SetHeight(bodyH)
 	m.helmTable.SetWidth(m.width)
 	m.picker.SetHeight(bodyH)
@@ -2930,6 +2956,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.sizingVP.View()
 	case screenPosture:
 		return m.posture.View()
+	case screenConnectivity:
+		return m.connectivity.View()
 	case screenSizingList:
 		return m.sizingListView()
 	default:
@@ -3319,7 +3347,7 @@ func (m Model) screenKeymap() keymapView {
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture},
+				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture, k.Connectivity},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}
@@ -3555,6 +3583,79 @@ func highlightMatches(content, query string, mark func(...string) string) (strin
 		lines[i] = b.String()
 	}
 	return strings.Join(lines, "\n"), hits
+}
+
+// ---- Connectivity / NetworkPolicy view (US14, FR-031 — read-only) ----
+
+// openConnectivity shows which NetworkPolicies select the selected pod (or a
+// workload, evaluated on its pod template labels) and what they allow.
+func (m *Model) openConnectivity() (tea.Model, tea.Cmd) {
+	obj, found := m.selectedObject()
+	if !found {
+		m.statusMsg = "connectivity: select a pod or a workload first"
+		return m, nil
+	}
+	var labels map[string]string
+	var subject string
+	if strings.EqualFold(m.curType.Kind, "Pod") {
+		labels, _, _ = unstructured.NestedStringMap(obj.Raw, "metadata", "labels")
+		subject = "pod " + obj.Namespace + "/" + obj.Name
+	} else if tpl, found, _ := unstructured.NestedStringMap(obj.Raw, "spec", "template", "metadata", "labels"); found && len(tpl) > 0 {
+		labels = tpl
+		subject = "pods of " + m.curType.Kind + "/" + obj.Name
+	} else {
+		m.statusMsg = "connectivity: " + m.curType.Kind + " has no pod template — open it on a pod or workload"
+		return m, nil
+	}
+	m.screen = screenConnectivity
+	m.connectivity.SetContent("evaluating NetworkPolicies for " + subject + "…")
+	m.layout()
+	cl, ns := m.client, obj.Namespace
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		rep, err := cl.Connectivity(ctx, ns, subject, labels)
+		return connectivityMsg{report: rep, err: err}
+	}
+}
+
+// renderConnectivity renders the per-direction summary; the unrestricted
+// state is explicit (FR-031), never an empty screen.
+func (m *Model) renderConnectivity(r model.ConnectivityReport) {
+	var b strings.Builder
+	b.WriteString(m.rule(fmt.Sprintf("Connectivity — %s", r.Subject)) + "\n\n")
+	if len(r.Policies) == 0 {
+		b.WriteString(m.theme.Warning.Render("⚠ UNRESTRICTED — no NetworkPolicy selects it: all ingress and egress allowed") + "\n")
+		m.connectivity.SetContent(b.String())
+		m.layout()
+		return
+	}
+	fmt.Fprintf(&b, "selected by %d NetworkPolicy(ies): %s\n\n", len(r.Policies), strings.Join(r.Policies, ", "))
+	m.renderDirection(&b, "INGRESS", r.IngressRestricted, r.Ingress)
+	b.WriteString("\n")
+	m.renderDirection(&b, "EGRESS", r.EgressRestricted, r.Egress)
+	m.connectivity.SetContent(b.String())
+	m.layout()
+}
+
+func (m *Model) renderDirection(b *strings.Builder, label string, restricted bool, rules []model.PolicyRule) {
+	b.WriteString(m.rule(label) + "\n")
+	if !restricted {
+		b.WriteString("  " + m.theme.Warning.Render("unrestricted — no "+strings.ToLower(label)+" policy selects it") + "\n")
+		return
+	}
+	if len(rules) == 0 {
+		b.WriteString("  " + m.theme.Error.Render("✗ default deny — a policy declares "+label+" but allows nothing") + "\n")
+		return
+	}
+	b.WriteString("  " + m.theme.Ok.Render(fmt.Sprintf("restricted — only the following is allowed (%d rule(s)):", len(rules))) + "\n")
+	for _, r := range rules {
+		ports := "all ports"
+		if len(r.Ports) > 0 {
+			ports = strings.Join(r.Ports, ", ")
+		}
+		fmt.Fprintf(b, "    ✓ %-24s %s — %s\n", r.Policy, strings.Join(r.Peers, "; "), ports)
+	}
 }
 
 // ---- Posture overview (US13, FR-030 — advisory, read-only) ----
