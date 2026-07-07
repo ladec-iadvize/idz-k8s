@@ -385,9 +385,9 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 ### Phase v2.6: User Story 16 — Read-only diff (FR-033)
 
-- [ ] T086 [US16] Live vs last-applied diff derivation in `internal/kube/diff.go`
-- [ ] T087 [US16] Diff view (no apply affordance) in `internal/ui/`
-- [ ] T088 [P] [US16] Tests
+- [x] T086 [US16] Live vs last-applied diff derivation in `internal/kube/diff.go`
+- [x] T087 [US16] Diff view (no apply affordance) in `internal/ui/`
+- [x] T088 [P] [US16] Tests
 
 ### Phase v2.7: Internals
 

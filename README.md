@@ -43,6 +43,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 | `z` | Sizing (advisory): a recap **table of every listed workload** — usage-vs-request gauges and ✓/!/✗ verdicts for CPU & memory, worst first; `Enter` opens the detailed panel (avg/peak gauges vs request/limit). Never applied, never estimated |
 | `:helm` | Helm releases (read-only): history, deployed resources with **live state**, values — reachable from the `:` picker like any resource |
 | `o` | Jump to the owner (pod → ReplicaSet → Deployment) |
+| `D` | Diff (read-only): live object vs its `last-applied` configuration — drifted fields with both values; explicit no-baseline / no-drift states; nothing can be applied |
 
 ## Interaction
 

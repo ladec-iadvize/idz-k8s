@@ -28,6 +28,7 @@ type KeyMap struct {
 	Posture      key.Binding
 	Connectivity key.Binding
 	Access       key.Binding
+	Drift        key.Binding
 	SearchNext   key.Binding
 	SearchPrev   key.Binding
 	Topology     key.Binding
@@ -72,6 +73,7 @@ func Default() KeyMap {
 		Posture:      key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "posture (advisory)")),
 		Connectivity: key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "connectivity (netpol)")),
 		Access:       key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "access (rbac)")),
+		Drift:        key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "diff vs applied")),
 		SearchNext:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next match")),
 		SearchPrev:   key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "previous match")),
 		Topology:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "topology")),
