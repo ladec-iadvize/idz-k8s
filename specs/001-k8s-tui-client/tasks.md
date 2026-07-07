@@ -51,7 +51,7 @@ Single Go project: `cmd/idz-k8s/`, `internal/…`, `tests/…` at repository roo
 - [X] T007 [P] Implement preferences load/save (YAML, defaults, safe fallback, atomic write) per `contracts/config-schema.md` in `internal/config/config.go`
 - [X] T008 Implement kubeconfig + REST config loading and single-active-context switching in `internal/kube/client.go` (FR-001, FR-003)
 - [X] T009 Implement dynamic client + discovery of all served resource types incl. CRDs in `internal/kube/discovery.go` (FR-002)
-- [ ] T010 [post-v1 optimization — periodic refresh satisfies FR-006 functionally] Implement shared informer cache with configurable refresh tick (default ~5 s) in `internal/kube/informers.go` (FR-006)
+- [x] T010 (delivered as T089) [post-v1 optimization — periodic refresh satisfies FR-006 functionally] Implement shared informer cache with configurable refresh tick (default ~5 s) in `internal/kube/informers.go` (FR-006)
 - [X] T011 [P] Implement read-only access guard (only read verbs are ever wired) and a reusable "record issued verbs" hook for the zero-mutation assertion in `internal/kube/readonly.go` (FR-012, SC-006)
 - [X] T012 [P] Implement local structured logging (file/stderr, no external calls, no secret values) in `internal/telemetry/log.go`
 - [X] T013 Implement Bubble Tea root model, view routing, global keymap load, and mouse capture toggle in `internal/ui/app.go`
@@ -391,4 +391,4 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 ### Phase v2.7: Internals
 
-- [ ] T089 Shared informer cache replacing periodic LIST polling (carried ex-T010) in `internal/kube/informers.go`
+- [x] T089 Shared informer cache replacing periodic LIST polling (carried ex-T010) in `internal/kube/informers.go`
