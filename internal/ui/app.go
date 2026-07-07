@@ -161,6 +161,8 @@ type Model struct {
 	recentWin int // first visible row of the events detail window
 
 	// Helm release overview (US12, read-only).
+	helmFiltering  bool   // typing a helm filter (Enter commits, Esc cancels)
+	helmQuery      string // committed helm filter (name/namespace/chart)
 	helmTable      table.Model
 	helmHist       viewport.Model
 	helmRows       []model.HelmRelease
@@ -837,6 +839,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyRunes, tea.KeySpace:
 			m.eventsQuery += string(msg.Runes)
 			m.renderEvents()
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Helm filter typing mode captures ALL keys, like the events filter.
+	if m.screen == screenHelm && m.helmFiltering {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.helmFiltering = false // keep the query (visible as a chip)
+			m.renderHelm()
+			return m, nil
+		case tea.KeyEscape:
+			m.helmFiltering = false
+			m.helmQuery = ""
+			m.renderHelm()
+			return m, nil
+		case tea.KeyBackspace:
+			if m.helmQuery != "" {
+				m.helmQuery = m.helmQuery[:len(m.helmQuery)-1]
+				m.renderHelm()
+			}
+			return m, nil
+		case tea.KeyRunes, tea.KeySpace:
+			m.helmQuery += string(msg.Runes)
+			m.renderHelm()
 			return m, nil
 		}
 		return m, nil
@@ -2134,8 +2162,12 @@ func (m *Model) openHelm() (tea.Model, tea.Cmd) {
 
 func (m *Model) renderHelm() {
 	now := time.Now()
+	q := strings.ToLower(strings.TrimSpace(m.helmQuery))
 	rows := make([]table.Row, 0, len(m.helmRows))
 	for _, r := range m.helmRows {
+		if q != "" && !strings.Contains(strings.ToLower(r.Namespace+"/"+r.Name+" "+r.Chart), q) {
+			continue
+		}
 		rows = append(rows, table.Row{
 			r.Namespace, r.Name, r.Chart, r.ChartVersion,
 			fmt.Sprintf("%d", r.Revision),
@@ -2153,6 +2185,9 @@ func (m Model) handleHelmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openHelmDetail(false)
 	case hit(msg, m.keys.Values):
 		return m.openHelmDetail(true) // values only
+	case hit(msg, m.keys.Filter):
+		m.helmFiltering = true
+		return m, nil
 	}
 	m.navigate(&m.helmWin, msg)
 	m.helmWin.Sync(&m.helmTable)
@@ -2886,6 +2921,8 @@ func (m Model) View() string {
 		out = overlayCenter(out, m.inputModal("filter "+m.curType.Resource, m.filter.Value(), "Enter save · Esc close"), m.width)
 	case m.screen == screenEvents && m.eventsFiltering:
 		out = overlayCenter(out, m.inputModal("filter events", m.eventsQuery, "Enter save · Esc cancel"), m.width)
+	case m.screen == screenHelm && m.helmFiltering:
+		out = overlayCenter(out, m.inputModal("filter helm releases", m.helmQuery, "Enter save · Esc cancel"), m.width)
 	}
 	return out
 }
@@ -3060,6 +3097,15 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 	if m.drillSelector != "" || m.drillNode != "" {
 		typeLabel = "pods ⊂ " + m.drillFor
 	}
+	// The chip reflects what is on SCREEN, not the last browsed type — the
+	// helm view is not a kube resource type (owner bug report 2026-07-07).
+	sc := m.screen
+	if sc == screenPicker {
+		sc = m.pickerReturn
+	}
+	if sc == screenHelm || sc == screenHelmHist {
+		typeLabel = "helm releases"
+	}
 	// Identity chips: app badge + read-only + colored ctx/ns/type values —
 	// friendlier and easier to parse at a glance than a flat line (FR-036).
 	// Each chip is clickable (zones tracked by width): ctx→'c' ns→'n' type→':'.
@@ -3080,7 +3126,9 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 	add(sep, "")
 	add(m.theme.Faint.Render("type ")+m.theme.TypeVal.Render(typeLabel), ":")
 	switch {
-	case strings.TrimSpace(m.filter.Value()) != "" || m.filtering:
+	case (sc == screenHelm || sc == screenHelmHist) && (strings.TrimSpace(m.helmQuery) != "" || m.helmFiltering):
+		line += "  " + m.theme.Warning.Render("filter:"+m.helmQuery) + m.theme.Faint.Render(" (/ edit)")
+	case sc != screenHelm && sc != screenHelmHist && (strings.TrimSpace(m.filter.Value()) != "" || m.filtering):
 		// A committed filter stays visible so it can never silently empty a
 		// list (press '/' to edit, then clear it).
 		line += "  " + m.theme.Warning.Render("filter:"+m.filter.Value()) + m.theme.Faint.Render(" (/ edit)")
@@ -3225,8 +3273,8 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenHelm:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Open, k.Values, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Open, k.Values, k.Mouse, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Values, k.Filter, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Values, k.Filter, k.Mouse, k.Back, k.Help, k.Quit}},
 		}
 	case screenEvents:
 		return keymapView{
