@@ -251,16 +251,24 @@ type Model struct {
 	fieldNaming bool
 	fieldInput  string
 
-	// Vim-like '/' search inside content viewports (describe/YAML, helm
-	// detail incl. values): matches highlighted, 'n'/'N' navigate, Esc
-	// clears first, then goes back.
+	// Vim-like '/' search inside EVERY content viewport (describe/YAML,
+	// helm detail, logs, failures, topology, posture, connectivity, access,
+	// drift, sizing, top): matches highlighted, 'n'/'N' navigate, Esc
+	// clears first, then goes back. One consistent behavior across views
+	// (owner request 2026-07-07).
 	searchTyping bool
 	searchInput  string
 	searchQuery  string
-	searchHits   []int // matching line numbers in the raw content
+	searchScreen screen // the screen the committed query belongs to
+	searchHits   []int  // matching line numbers in the raw content
 	searchIdx    int
-	detailRaw    string // unhighlighted content behind m.detail
-	helmHistRaw  string // unhighlighted content behind m.helmHist
+	vpRaw        map[screen]string // unhighlighted content per viewport screen
+
+	// Sizing overview row filter ('/' on the table, helm-list style).
+	sizingFiltering bool
+	sizingQuery     string
+	sizingAllRows   []model.SizingAdvice
+	sizingAllObjs   []model.ResourceObject
 }
 
 // colItem is one entry of the column chooser.
@@ -705,7 +713,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.logBuf) > logBufMax {
 				m.logBuf = m.logBuf[len(m.logBuf)-logBufMax:]
 			}
-			m.logsView.SetContent(strings.Join(m.logBuf, "\n"))
+			m.setContent(screenLogs, strings.Join(m.logBuf, "\n"))
 			if !m.logPaused {
 				m.logsView.GotoBottom()
 			}
@@ -769,9 +777,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = msg.err.Error()
 			return m, nil
 		}
-		m.sizingRows, m.sizingObjs = msg.rows, msg.objs
-		m.sizingWin.SetRows(make([]table.Row, len(msg.rows)))
-		m.applySizingSort() // keep the user's column sort across refreshes
+		m.sizingAllRows, m.sizingAllObjs = msg.rows, msg.objs
+		m.applySizingFilter() // filter + user sort survive refreshes
 		return m, nil
 
 	case topologyMsg:
@@ -888,6 +895,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			m.searchTyping = false
 			m.searchQuery = strings.TrimSpace(m.searchInput)
+			m.searchScreen = m.screen
 			m.applySearch(true)
 			return m, nil
 		case tea.KeyEscape:
@@ -959,6 +967,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Sizing-overview filter typing mode (same behavior as the helm list).
+	if m.screen == screenSizingList && m.sizingFiltering {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.sizingFiltering = false
+			m.applySizingFilter()
+			return m, nil
+		case tea.KeyEscape:
+			m.sizingFiltering = false
+			m.sizingQuery = ""
+			m.applySizingFilter()
+			return m, nil
+		case tea.KeyBackspace:
+			if m.sizingQuery != "" {
+				m.sizingQuery = m.sizingQuery[:len(m.sizingQuery)-1]
+				m.applySizingFilter()
+			}
+			return m, nil
+		case tea.KeyRunes, tea.KeySpace:
+			m.sizingQuery += string(msg.Runes)
+			m.applySizingFilter()
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// Picker type-to-filter captures printable keys BEFORE global shortcuts
 	// (typing "configmaps" must not trigger 'm' mouse-toggle or 'q' quit).
 	if m.screen == screenPicker {
@@ -1005,6 +1039,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.goBack()
 	}
 
+	// Consistent '/' + n/N on every content viewport (owner request).
+	if m.searchableNow() {
+		if mi, cmd, handled := m.handleSearchKey(msg); handled {
+			return mi, cmd
+		}
+	}
+
 	switch m.screen {
 	case screenList:
 		return m.handleListKey(msg)
@@ -1040,6 +1081,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch {
 		case hit(msg, m.keys.Open):
 			return m.openSizingDetail(m.sizingWin.cursor)
+		case hit(msg, m.keys.Filter):
+			m.sizingFiltering = true
+			return m, nil
 		case hit(msg, m.keys.Sort):
 			m.sizingSortCol++
 			if m.sizingSortCol >= len(m.sizingColumns()) {
@@ -1064,9 +1108,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case screenHelm:
 		return m.handleHelmKey(msg)
 	case screenHelmHist:
-		if mi, cmd, ok := m.handleSearchKey(msg); ok {
-			return mi, cmd
-		}
 		var cmd tea.Cmd
 		m.helmHist, cmd = m.helmHist.Update(msg)
 		return m, cmd
@@ -1087,7 +1128,7 @@ func (m Model) handleTopKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.metrics.Enabled() {
 			return m, nil
 		}
-		m.usage.SetContent("loading top consumers…")
+		m.setContent(screenTop, "loading top consumers…")
 		return m, m.fetchTop(m.topKind)
 	}
 	var cmd tea.Cmd
@@ -1381,12 +1422,6 @@ func (m *Model) navigate(w *winTable, msg tea.KeyMsg) {
 }
 
 func (m Model) handleScrollKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Vim-like search on the describe/YAML detail ('/' then n/N).
-	if m.screen == screenDetail {
-		if mi, cmd, ok := m.handleSearchKey(msg); ok {
-			return mi, cmd
-		}
-	}
 	var cmd tea.Cmd
 	if m.screen == screenDetail {
 		// Toggle secret reveal with 'x' on the detail of a Secret.
@@ -1516,7 +1551,7 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) goBack() (tea.Model, tea.Cmd) {
 	// Vim-like: on a searched viewport, the first Esc clears the search.
-	if m.searchQuery != "" && (m.screen == screenDetail || m.screen == screenHelmHist) {
+	if m.searchQuery != "" && m.screen == m.searchScreen {
 		m.clearSearch()
 		return m, nil
 	}
@@ -1823,14 +1858,14 @@ func (m *Model) openTop() (tea.Model, tea.Cmd) {
 	m.screen = screenTop
 	m.topKind = model.MetricCPU
 	if !m.metrics.Enabled() {
-		m.usage.SetContent("Top consumers — metrics unavailable.\n\n" +
-			"No in-cluster Prometheus was auto-discovered for this context, or it is\n" +
-			"not reachable via the API server proxy. You can force one with\n" +
+		m.setContent(screenTop, "Top consumers — metrics unavailable.\n\n"+
+			"No in-cluster Prometheus was auto-discovered for this context, or it is\n"+
+			"not reachable via the API server proxy. You can force one with\n"+
 			"--prometheus-url (Prometheus is the single metrics source).")
 		m.layout()
 		return m, nil
 	}
-	m.usage.SetContent("loading top consumers…")
+	m.setContent(screenTop, "loading top consumers…")
 	m.layout()
 	return m, m.fetchTop(model.MetricCPU)
 }
@@ -2477,7 +2512,7 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 
 func (m *Model) openTopology() (tea.Model, tea.Cmd) {
 	m.screen = screenTopology
-	m.topo.SetContent("loading topology…")
+	m.setContent(screenTopology, "loading topology…")
 	m.layout()
 	return m, m.fetchTopology()
 }
@@ -2531,7 +2566,7 @@ func (m *Model) renderTopology(nodes []model.TopologyNode) {
 		}
 		b.WriteString("\n")
 	}
-	m.topo.SetContent(b.String())
+	m.setContent(screenTopology, b.String())
 }
 
 func (m Model) nodeStyle(l model.HealthLevel) lipgloss.Style {
@@ -2598,7 +2633,7 @@ func countRealNodes(nodes []model.TopologyNode) int {
 
 func (m *Model) openDiag() (tea.Model, tea.Cmd) {
 	m.screen = screenDiag
-	m.diag.SetContent("scanning for failing workloads…")
+	m.setContent(screenDiag, "scanning for failing workloads…")
 	m.layout()
 	return m, m.fetchDiag()
 }
@@ -2612,30 +2647,82 @@ func (m *Model) renderDiag(rows []model.Diagnostic) {
 		scope = fmt.Sprintf("%d marked", len(m.marked))
 	}
 	var b strings.Builder
-	b.WriteString(m.rule("Workload failure diagnostics — "+scope) + "\n\n")
+	b.WriteString(m.rule(fmt.Sprintf("Workload failure diagnostics — %s, %d finding(s)", scope, len(rows))) + "\n\n")
 	if len(rows) == 0 {
 		b.WriteString(m.theme.Ok.Render("✓ no failing workloads detected"))
-		m.diag.SetContent(b.String())
+		m.setContent(screenDiag, b.String())
 		return
 	}
+	// Grouped by failure type (posture-style, owner request 2026-07-07):
+	// error-level groups first, then by size.
+	byCat := map[string][]model.Diagnostic{}
+	var order []string
 	for _, d := range rows {
-		badge := d.Level.Symbol()
-		who := d.Namespace + "/" + d.Pod
-		if d.Container != "" {
-			who += " [" + d.Container + "]"
+		c := diagCategory(d.Reason)
+		if len(byCat[c]) == 0 {
+			order = append(order, c)
 		}
-		line := fmt.Sprintf("%s %-45s %s", badge, who, d.Reason)
-		switch d.Level {
-		case model.HealthError:
-			b.WriteString(m.theme.Error.Render(line))
-		case model.HealthWarning:
-			b.WriteString(m.theme.Warning.Render(line))
-		default:
-			b.WriteString(line)
+		byCat[c] = append(byCat[c], d)
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		wi, wj := diagGroupWeight(byCat[order[i]]), diagGroupWeight(byCat[order[j]])
+		if wi != wj {
+			return wi > wj
+		}
+		return len(byCat[order[i]]) > len(byCat[order[j]])
+	})
+	for _, cat := range order {
+		ds := byCat[cat]
+		b.WriteString(m.rule(fmt.Sprintf("%s (%d)", cat, len(ds))) + "\n")
+		for _, d := range ds {
+			who := d.Namespace + "/" + d.Pod
+			if d.Container != "" {
+				who += " [" + d.Container + "]"
+			}
+			line := fmt.Sprintf("  %s %-45s %s", d.Level.Symbol(), truncate(who, 45), d.Reason)
+			switch d.Level {
+			case model.HealthError:
+				b.WriteString(m.theme.Error.Render(line))
+			case model.HealthWarning:
+				b.WriteString(m.theme.Warning.Render(line))
+			default:
+				b.WriteString(line)
+			}
+			b.WriteString("\n")
 		}
 		b.WriteString("\n")
 	}
-	m.diag.SetContent(b.String())
+	m.setContent(screenDiag, b.String())
+}
+
+// diagCategory folds a diagnostic reason to its failure type: "OOMKilled
+// (x3 restarts)" → "OOMKilled", "Evicted: node pressure" → "Evicted",
+// "restarted x4" → "restarted".
+func diagCategory(reason string) string {
+	if i := strings.IndexAny(reason, ":("); i > 0 {
+		reason = reason[:i]
+	}
+	fields := strings.Fields(reason)
+	for len(fields) > 1 {
+		last := fields[len(fields)-1]
+		if strings.HasPrefix(last, "x") && len(last) > 1 {
+			fields = fields[:len(fields)-1]
+			continue
+		}
+		break
+	}
+	return strings.Join(fields, " ")
+}
+
+// diagGroupWeight ranks a group by its worst severity.
+func diagGroupWeight(ds []model.Diagnostic) int {
+	w := 0
+	for _, d := range ds {
+		if int(d.Level) > w {
+			w = int(d.Level)
+		}
+	}
+	return w
 }
 
 func (m *Model) renderTop(rows []model.TopConsumer) {
@@ -2643,7 +2730,7 @@ func (m *Model) renderTop(rows []model.TopConsumer) {
 	b.WriteString(m.rule(fmt.Sprintf("Top consumers by %s — 'u' switches cpu/mem", m.topKind)) + "\n\n")
 	if len(rows) == 0 {
 		b.WriteString("— no data / metrics unavailable")
-		m.usage.SetContent(b.String())
+		m.setContent(screenTop, b.String())
 		return
 	}
 	max := rows[0].Value
@@ -2661,7 +2748,7 @@ func (m *Model) renderTop(rows []model.TopConsumer) {
 		fmt.Fprintf(&b, "%s %10s  %s\n",
 			components.Gauge(frac, 15), components.FormatValue(r.Kind, r.Value), label)
 	}
-	m.usage.SetContent(b.String())
+	m.setContent(screenTop, b.String())
 }
 
 func (m Model) openLogs() (tea.Model, tea.Cmd) {
@@ -2693,7 +2780,7 @@ func (m Model) openLogs() (tea.Model, tea.Cmd) {
 	m.logCancel = cancel
 	m.logBuf = nil
 	m.logPaused = false
-	m.logsView.SetContent("waiting for logs…")
+	m.setContent(screenLogs, "waiting for logs…")
 	m.screen = screenLogs
 	m.layout()
 	return m, m.nextLogLine()
@@ -3063,6 +3150,8 @@ func (m Model) View() string {
 		out = overlayCenter(out, m.inputModal("filter helm releases", m.helmQuery, "Enter save · Esc cancel"), m.width)
 	case m.searchTyping:
 		out = overlayCenter(out, m.inputModal("search", m.searchInput, "Enter search · 'n'/'N' navigate · Esc clear"), m.width)
+	case m.screen == screenSizingList && m.sizingFiltering:
+		out = overlayCenter(out, m.inputModal("filter workloads", m.sizingQuery, "Enter save · Esc cancel"), m.width)
 	}
 	return out
 }
@@ -3266,6 +3355,8 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 	add(sep, "")
 	add(m.theme.Faint.Render("type ")+m.theme.TypeVal.Render(typeLabel), ":")
 	switch {
+	case sc == screenSizingList && (strings.TrimSpace(m.sizingQuery) != "" || m.sizingFiltering):
+		line += "  " + m.theme.Warning.Render("filter:"+m.sizingQuery) + m.theme.Faint.Render(" (/ edit)")
 	case (sc == screenHelm || sc == screenHelmHist) && (strings.TrimSpace(m.helmQuery) != "" || m.helmFiltering):
 		line += "  " + m.theme.Warning.Render("filter:"+m.helmQuery) + m.theme.Faint.Render(" (/ edit)")
 	case sc != screenHelm && sc != screenHelmHist && (strings.TrimSpace(m.filter.Value()) != "" || m.filtering):
@@ -3423,8 +3514,8 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenLogs:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Pause, k.End, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Pause, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Pause, k.End, k.Filter, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Pause, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
 		}
 	case screenPicker:
 		return keymapView{
@@ -3433,23 +3524,23 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenTop:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Top, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Top, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Top, k.Filter, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Top, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
 		}
 	case screenSizingList:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Open, k.Sort, k.SortDir, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Open, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Filter, k.Sort, k.SortDir, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Filter, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
 	case screenDetail, screenHelmHist:
 		return keymapView{
 			short: []key.Binding{k.Up, k.Down, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Quit},
 			full:  [][]key.Binding{nav, {k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
 		}
-	default: // logs, diag, topology
+	default: // diag, topology, posture, connectivity, access, drift, sizing detail
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Back, k.Help, k.Quit},
-			full:  [][]key.Binding{nav, {k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Filter, k.Back, k.Help, k.Quit},
+			full:  [][]key.Binding{nav, {k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
 		}
 	}
 }
@@ -3517,35 +3608,68 @@ func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 
 // ---- Viewport search ('/', vim-like — describe/YAML and helm detail) ----
 
-// setDetailContent stores the raw detail content and renders it, keeping an
-// active search highlighted when new content arrives (e.g. events landing
-// after a describe).
-func (m *Model) setDetailContent(content string) {
-	m.detailRaw = content
-	if m.screen == screenDetail && m.searchQuery != "" {
-		m.applySearch(false)
-		return
-	}
-	m.detail.SetContent(content)
-}
-
-// setHelmHistContent is setDetailContent for the helm release detail.
-func (m *Model) setHelmHistContent(content string) {
-	m.helmHistRaw = content
-	if m.screen == screenHelmHist && m.searchQuery != "" {
-		m.applySearch(false)
-		return
-	}
-	m.helmHist.SetContent(content)
-}
-
-// searchTarget maps the current screen to its viewport and raw content.
-func (m *Model) searchTarget() (*viewport.Model, string) {
-	switch m.screen {
+// vpFor maps a screen to its content viewport ('/' searches all of them;
+// the events timeline keeps its own dedicated filter instead).
+func (m *Model) vpFor(sc screen) *viewport.Model {
+	switch sc {
 	case screenDetail:
-		return &m.detail, m.detailRaw
+		return &m.detail
+	case screenLogs:
+		return &m.logsView
+	case screenTop:
+		return &m.usage
+	case screenDiag:
+		return &m.diag
+	case screenTopology:
+		return &m.topo
 	case screenHelmHist:
-		return &m.helmHist, m.helmHistRaw
+		return &m.helmHist
+	case screenSizing:
+		return &m.sizingVP
+	case screenPosture:
+		return &m.posture
+	case screenConnectivity:
+		return &m.connectivity
+	case screenAccess:
+		return &m.access
+	case screenDrift:
+		return &m.drift
+	}
+	return nil
+}
+
+// searchableNow reports whether '/' means viewport search on this screen.
+func (m *Model) searchableNow() bool { return m.vpFor(m.screen) != nil }
+
+// setContent stores a viewport's raw content and renders it, keeping an
+// active search highlighted when the content refreshes (describe events
+// landing, log lines streaming in…).
+func (m *Model) setContent(sc screen, content string) {
+	vp := m.vpFor(sc)
+	if vp == nil {
+		return
+	}
+	if m.vpRaw == nil {
+		m.vpRaw = map[screen]string{}
+	}
+	m.vpRaw[sc] = content
+	if m.searchQuery != "" && m.searchScreen == sc {
+		m.applySearch(false)
+		return
+	}
+	vp.SetContent(content)
+}
+
+// setDetailContent keeps existing call sites readable.
+func (m *Model) setDetailContent(content string) { m.setContent(screenDetail, content) }
+
+// setHelmHistContent keeps existing call sites readable.
+func (m *Model) setHelmHistContent(content string) { m.setContent(screenHelmHist, content) }
+
+// searchTarget maps the search's own screen to its viewport and raw content.
+func (m *Model) searchTarget() (*viewport.Model, string) {
+	if vp := m.vpFor(m.searchScreen); vp != nil {
+		return vp, m.vpRaw[m.searchScreen]
 	}
 	return nil, ""
 }
@@ -3681,7 +3805,7 @@ func (m *Model) openDrift() (tea.Model, tea.Cmd) {
 			b.WriteString(line + "\n")
 		}
 	}
-	m.drift.SetContent(b.String())
+	m.setContent(screenDrift, b.String())
 	m.layout()
 	return m, nil
 }
@@ -3691,7 +3815,7 @@ func (m *Model) openDrift() (tea.Model, tea.Cmd) {
 // openAccess asks the API server what the current credentials can read.
 func (m *Model) openAccess() (tea.Model, tea.Cmd) {
 	m.screen = screenAccess
-	m.access.SetContent("asking the API server what you can read…")
+	m.setContent(screenAccess, "asking the API server what you can read…")
 	m.layout()
 	cl, ns, types := m.client, m.client.Namespace, m.types
 	return m, func() tea.Msg {
@@ -3739,7 +3863,7 @@ func (m *Model) renderAccess(r model.AccessReport) {
 	for _, t := range r.Unlistable {
 		b.WriteString("  " + m.theme.Warning.Render("! "+t) + "\n")
 	}
-	m.access.SetContent(b.String())
+	m.setContent(screenAccess, b.String())
 	m.layout()
 }
 
@@ -3766,7 +3890,7 @@ func (m *Model) openConnectivity() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.screen = screenConnectivity
-	m.connectivity.SetContent("evaluating NetworkPolicies for " + subject + "…")
+	m.setContent(screenConnectivity, "evaluating NetworkPolicies for "+subject+"…")
 	m.layout()
 	cl, ns := m.client, obj.Namespace
 	return m, func() tea.Msg {
@@ -3784,7 +3908,7 @@ func (m *Model) renderConnectivity(r model.ConnectivityReport) {
 	b.WriteString(m.rule(fmt.Sprintf("Connectivity — %s", r.Subject)) + "\n\n")
 	if len(r.Policies) == 0 {
 		b.WriteString(m.theme.Warning.Render("⚠ UNRESTRICTED — no NetworkPolicy selects it: all ingress and egress allowed") + "\n")
-		m.connectivity.SetContent(b.String())
+		m.setContent(screenConnectivity, b.String())
 		m.layout()
 		return
 	}
@@ -3792,7 +3916,7 @@ func (m *Model) renderConnectivity(r model.ConnectivityReport) {
 	m.renderDirection(&b, "INGRESS", r.IngressRestricted, r.Ingress)
 	b.WriteString("\n")
 	m.renderDirection(&b, "EGRESS", r.EgressRestricted, r.Egress)
-	m.connectivity.SetContent(b.String())
+	m.setContent(screenConnectivity, b.String())
 	m.layout()
 }
 
@@ -3821,7 +3945,7 @@ func (m *Model) renderDirection(b *strings.Builder, label string, restricted boo
 // openPosture evaluates the compliance rules over the current scope.
 func (m *Model) openPosture() (tea.Model, tea.Cmd) {
 	m.screen = screenPosture
-	m.posture.SetContent("checking posture rules…")
+	m.setContent(screenPosture, "checking posture rules…")
 	m.layout()
 	return m, m.fetchPosture()
 }
@@ -3848,7 +3972,7 @@ func (m *Model) renderPosture(rows []model.PostureFinding) {
 	b.WriteString(m.theme.Faint.Render("Best-practice review of the observed configuration — read-only, nothing is applied.") + "\n\n")
 	if len(rows) == 0 {
 		b.WriteString(m.theme.Ok.Render("✓ no findings — every rule passes on this scope") + "\n")
-		m.posture.SetContent(b.String())
+		m.setContent(screenPosture, b.String())
 		m.layout()
 		return
 	}
@@ -3880,7 +4004,7 @@ func (m *Model) renderPosture(rows []model.PostureFinding) {
 		}
 		b.WriteString("\n")
 	}
-	m.posture.SetContent(b.String())
+	m.setContent(screenPosture, b.String())
 	m.layout()
 }
 
@@ -3936,9 +4060,9 @@ func (m *Model) openSizing() (tea.Model, tea.Cmd) {
 func (m *Model) openSizingUnavailable() (tea.Model, tea.Cmd) {
 	m.screen = screenSizing
 	m.sizingFrom = screenList
-	m.sizingVP.SetContent(m.rule("Sizing (advisory)") + "\n\n" +
-		"No recommendation: metrics are unavailable (no Prometheus reachable\n" +
-		"for this context). Sizing is derived only from observed usage —\n" +
+	m.setContent(screenSizing, m.rule("Sizing (advisory)")+"\n\n"+
+		"No recommendation: metrics are unavailable (no Prometheus reachable\n"+
+		"for this context). Sizing is derived only from observed usage —\n"+
 		"nothing is ever estimated. Use --prometheus-url to force a source.")
 	m.layout()
 	return m, nil
@@ -3949,7 +4073,7 @@ func (m *Model) openSizingFor(obj model.ResourceObject, selector string, from sc
 	m.screen = screenSizing
 	m.sizingFrom = from
 	m.sizingFor = m.curType.Kind + "/" + obj.Name
-	m.sizingVP.SetContent("observing " + m.sizingFor + " over the last hour…")
+	m.setContent(screenSizing, "observing "+m.sizingFor+" over the last hour…")
 	m.layout()
 	return m, m.fetchSizing(obj, selector)
 }
@@ -4277,6 +4401,24 @@ func (m *Model) sizingColumnAt(x int) (int, bool) {
 	return 0, false
 }
 
+// applySizingFilter rebuilds the visible overview rows from the master set
+// (workload name/namespace substring), then re-applies the sort.
+func (m *Model) applySizingFilter() {
+	q := strings.ToLower(strings.TrimSpace(m.sizingQuery))
+	rows := make([]model.SizingAdvice, 0, len(m.sizingAllRows))
+	objs := make([]model.ResourceObject, 0, len(m.sizingAllObjs))
+	for i, r := range m.sizingAllRows {
+		if q != "" && !strings.Contains(strings.ToLower(r.Namespace+"/"+r.Workload), q) {
+			continue
+		}
+		rows = append(rows, r)
+		objs = append(objs, m.sizingAllObjs[i])
+	}
+	m.sizingRows, m.sizingObjs = rows, objs
+	m.sizingWin.SetRows(make([]table.Row, len(rows)))
+	m.applySizingSort()
+}
+
 // applySizingSort reorders rows and their objects together: the selected
 // column's order, or severity worst-first when no column is selected.
 func (m *Model) applySizingSort() {
@@ -4394,7 +4536,7 @@ func (m *Model) renderSizing(a model.SizingAdvice) {
 	m.renderResourceSizing(&b, "CPU", a.CPU, components.FormatCPU)
 	b.WriteString("\n")
 	m.renderResourceSizing(&b, "MEMORY", a.Memory, components.FormatMemory)
-	m.sizingVP.SetContent(b.String())
+	m.setContent(screenSizing, b.String())
 	m.layout()
 }
 

@@ -35,7 +35,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod |
 | `t` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
 | `v` | Events **timeline**: a time axis per object, warnings highlighted, selectable details |
-| `f` | Failure diagnostics: CrashLoopBackOff, OOMKilled, evictions, unschedulable pods (with the scheduler's reason) |
+| `f` | Failure diagnostics **grouped by failure type** (CrashLoopBackOff, OOMKilled, evictions, restarts, unschedulable — with the scheduler's reason), error groups first |
 | `u` | Top consumers (CPU/memory, via Prometheus) |
 | `x` | Connectivity: which NetworkPolicies select a pod (or a workload's template) and the allowed ingress/egress peers/ports — explicit **unrestricted** and **default-deny** states |
 | `a` | Access (RBAC): the API server's own answer on what your credentials can read, plus the discovered types you cannot list; a 403 on a list names the type instead of faking a disconnection |
@@ -62,9 +62,12 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 - **Mouse**: click to select, double-click to open, wheel to scroll, click
   column headers to sort, click header chips (ctx/ns/type) and footer shortcut
   labels to trigger them. `m` toggles mouse capture to select/copy text.
-- Pickers and filters open as **centered modals** over the current view. In
-  content views (describe/YAML, Helm detail & values), `/` searches vim-style:
-  matches highlighted, `n`/`N` to navigate, `Esc` clears.
+- Pickers and filters open as **centered modals** over the current view.
+  **`/` works everywhere, the same way**: it filters row views (lists, Helm
+  releases, events, sizing table) and searches content views vim-style
+  (describe/YAML, logs, failures, topology, posture, connectivity, access,
+  diff, Helm detail & values) — matches highlighted, `n`/`N` to navigate,
+  `Esc` clears first, then goes back.
 
 ## Metrics (Prometheus)
 
