@@ -379,9 +379,9 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 ### Phase v2.5: User Story 15 — Access (RBAC) view (FR-032)
 
-- [ ] T083 [US15] SelfSubjectRulesReview summary in `internal/kube/access.go`
-- [ ] T084 [US15] Access view + inaccessible-type reasons in `internal/ui/`
-- [ ] T085 [P] [US15] Tests
+- [x] T083 [US15] SelfSubjectRulesReview summary in `internal/kube/access.go`
+- [x] T084 [US15] Access view + inaccessible-type reasons in `internal/ui/`
+- [x] T085 [P] [US15] Tests
 
 ### Phase v2.6: User Story 16 — Read-only diff (FR-033)
 
