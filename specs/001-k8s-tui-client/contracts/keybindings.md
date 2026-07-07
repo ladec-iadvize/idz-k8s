@@ -48,6 +48,7 @@ mutating bindings** — the tool is read-only. This is the authoritative list th
 | `p` | Posture / compliance overview (advisory) | US13 / FR-030 |
 | `x` | Per-pod connectivity / NetworkPolicy view | US14 / FR-031 |
 | `a` | Access (RBAC) view | US15 / FR-032 |
+| `D` | Read-only diff: live vs last-applied | US16 / FR-033 |
 
 ## Customizable views (US8, FR-024/FR-025)
 

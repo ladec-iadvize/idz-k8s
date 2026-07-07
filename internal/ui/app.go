@@ -49,6 +49,7 @@ const (
 	screenPosture
 	screenConnectivity
 	screenAccess
+	screenDrift
 )
 
 type pickerKind int
@@ -178,6 +179,9 @@ type Model struct {
 
 	// Access (RBAC) view (US15, read-only introspection).
 	access viewport.Model
+
+	// Live vs last-applied drift view (US16, read-only).
+	drift viewport.Model
 
 	// Sizing recommendations (US6, advisory & read-only): overview table of
 	// every listed workload, Enter → per-workload detail panel.
@@ -330,6 +334,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		posture:        viewport.New(0, 0),
 		connectivity:   viewport.New(0, 0),
 		access:         viewport.New(0, 0),
+		drift:          viewport.New(0, 0),
 		screen:         screenList,
 		marked:         map[string]model.ResourceObject{},
 		sortCol:        -1,
@@ -1018,6 +1023,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.access, cmd = m.access.Update(msg)
 		return m, cmd
+	case screenDrift:
+		var cmd tea.Cmd
+		m.drift, cmd = m.drift.Update(msg)
+		return m, cmd
 	case screenSizingList:
 		switch {
 		case hit(msg, m.keys.Open):
@@ -1112,6 +1121,8 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openConnectivity()
 	case hit(msg, m.keys.Access):
 		return m.openAccess()
+	case hit(msg, m.keys.Drift):
+		return m.openDrift()
 	case hit(msg, m.keys.Topology):
 		return m.openTopology()
 	case hit(msg, m.keys.Events):
@@ -1476,6 +1487,8 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connectivity, cmd = m.connectivity.Update(msg)
 	case screenAccess:
 		m.access, cmd = m.access.Update(msg)
+	case screenDrift:
+		m.drift, cmd = m.drift.Update(msg)
 	case screenTopology:
 		m.topo, cmd = m.topo.Update(msg)
 	case screenEvents:
@@ -2939,6 +2952,7 @@ func (m *Model) layout() {
 	m.posture.Width, m.posture.Height = m.width, bodyH
 	m.connectivity.Width, m.connectivity.Height = m.width, bodyH
 	m.access.Width, m.access.Height = m.width, bodyH
+	m.drift.Width, m.drift.Height = m.width, bodyH
 	m.helmTable.SetHeight(bodyH)
 	m.helmTable.SetWidth(m.width)
 	m.picker.SetHeight(bodyH)
@@ -2992,6 +3006,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.connectivity.View()
 	case screenAccess:
 		return m.access.View()
+	case screenDrift:
+		return m.drift.View()
 	case screenSizingList:
 		return m.sizingListView()
 	default:
@@ -3381,7 +3397,7 @@ func (m Model) screenKeymap() keymapView {
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture, k.Connectivity, k.Access},
+				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture, k.Connectivity, k.Access, k.Drift},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}
@@ -3617,6 +3633,47 @@ func highlightMatches(content, query string, mark func(...string) string) (strin
 		lines[i] = b.String()
 	}
 	return strings.Join(lines, "\n"), hits
+}
+
+// ---- Drift view (US16, FR-033 — read-only, no apply anywhere) ----
+
+// openDrift compares the selected object's live state against its
+// last-applied configuration. Pure local derivation — nothing is fetched
+// and nothing can be applied.
+func (m *Model) openDrift() (tea.Model, tea.Cmd) {
+	obj, found := m.selectedObject()
+	if !found {
+		m.statusMsg = "diff: select an object first"
+		return m, nil
+	}
+	m.screen = screenDrift
+	subject := m.curType.Kind + " " + obj.Namespace + "/" + obj.Name
+	drifts, hasBaseline := kube.Drift(obj.Raw)
+	var b strings.Builder
+	b.WriteString(m.rule("Diff (read-only) — "+subject+" vs last-applied") + "\n\n")
+	switch {
+	case !hasBaseline:
+		b.WriteString(m.theme.Faint.Render("No baseline: this object has no last-applied configuration annotation\n"+
+			"(it was not created with 'kubectl apply' or declarative tooling), so there\n"+
+			"is nothing to diff against. Nothing is wrong — there is just no reference.") + "\n")
+	case len(drifts) == 0:
+		b.WriteString(m.theme.Ok.Render("✓ no drift — the live object matches its last-applied configuration") + "\n")
+	default:
+		fmt.Fprintf(&b, "%d drifted field(s) — fields present in the baseline only; server defaults are not drift:\n\n", len(drifts))
+		fmt.Fprintf(&b, "  %s\n", m.theme.Faint.Render(fmt.Sprintf("%-44s %-28s %s", "FIELD", "APPLIED", "LIVE")))
+		for _, d := range drifts {
+			line := fmt.Sprintf("  ~ %-42s %-28s %s", truncate(d.Path, 42), truncate(d.Applied, 28), truncate(d.Live, 40))
+			if d.Live == "<absent>" {
+				line = m.theme.Error.Render(line)
+			} else {
+				line = m.theme.Warning.Render(line)
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+	m.drift.SetContent(b.String())
+	m.layout()
+	return m, nil
 }
 
 // ---- Access (RBAC) view (US15, FR-032 — read-only introspection) ----
