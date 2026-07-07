@@ -88,6 +88,7 @@ func TestViewportSearchHighlightsAndNavigates(t *testing.T) {
 func TestSearchSurvivesContentRefresh(t *testing.T) {
 	m := detailModel(t)
 	m.searchQuery = "image"
+	m.searchScreen = screenDetail
 	m.applySearch(true)
 	if len(m.searchHits) != 2 {
 		t.Fatalf("hits=%v", m.searchHits)

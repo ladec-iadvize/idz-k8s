@@ -13,7 +13,7 @@ mutating bindings** — the tool is read-only. This is the authoritative list th
 | `q` / `Ctrl+C` | Quit | click quit label |
 | `Esc` | Back / close overlay | click breadcrumb / close `×` |
 | `:` | Jump to a resource type | click resource-type tab |
-| `/` | Filter/search current list or timeline; vim-like highlighted search in content views (describe/YAML, Helm detail), then `n`/`N` navigate matches | click filter field |
+| `/` | One consistent behavior everywhere: filters row views (lists, Helm releases, events, sizing table) and searches content views with highlighting (describe/YAML, logs, failures, topology, posture, connectivity, access, diff, Helm detail), then `n`/`N` navigate matches | click filter field |
 | `Tab` / `Shift+Tab` | Move focus between panes | click target pane |
 
 ## Navigation (lists & views)
