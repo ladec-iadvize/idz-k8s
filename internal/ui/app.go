@@ -264,6 +264,10 @@ type Model struct {
 	searchIdx    int
 	vpRaw        map[screen]string // unhighlighted content per viewport screen
 
+	// Live refresh (watch-driven): a change signal re-renders the list at
+	// most every changeFlushDelay (bursts from a rolling update coalesce).
+	changePending bool
+
 	// Sizing overview row filter ('/' on the table, helm-list style).
 	sizingFiltering bool
 	sizingQuery     string
@@ -379,6 +383,18 @@ type objectsMsg struct {
 }
 type logLineMsg kube.LogLine
 type tickMsg struct{}
+
+// changeMsg: the watch reported a change (ok=false → the client was
+// replaced and the loop must re-arm on the new one).
+type changeMsg struct{ ok bool }
+
+// changeFlushMsg fires after the throttle window to apply coalesced changes.
+type changeFlushMsg struct{}
+
+// changeFlushDelay throttles watch-driven re-renders (a rolling update
+// emits dozens of events per second; the eye needs ~4 fps, not 50).
+const changeFlushDelay = 250 * time.Millisecond
+
 type errMsg struct{ err error }
 type topMsg struct {
 	rows []model.TopConsumer
@@ -450,7 +466,7 @@ type helmResLive struct {
 // ---- Init ----
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{m.loadTypes()}
+	cmds := []tea.Cmd{m.loadTypes(), m.waitForChange()}
 	// Auto-discover the cluster's Prometheus unless an explicit URL was given.
 	if !m.metrics.Enabled() && m.cfg.PrometheusURL == "" {
 		cmds = append(cmds, m.discoverMetrics())
@@ -462,6 +478,19 @@ func (m Model) loadTypes() tea.Cmd {
 	return func() tea.Msg {
 		ts, err := m.client.ResourceTypes()
 		return typesMsg{types: ts, err: err}
+	}
+}
+
+// waitForChange blocks on the client's coalesced watch signal and turns it
+// into a message (same pattern as the log stream). One waiter at a time.
+func (m Model) waitForChange() tea.Cmd {
+	if m.client == nil {
+		return nil
+	}
+	ch := m.client.Changes()
+	return func() tea.Msg {
+		_, ok := <-ch
+		return changeMsg{ok: ok}
 	}
 }
 
@@ -683,6 +712,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.drillSelector != "" && len(m.objects) == 0 {
 				m.statusMsg = "⚠ " + m.drillFor + ": selector matches NO pods (broken link?) — Esc to go back"
 			}
+		}
+		return m, nil
+
+	case changeMsg:
+		// Re-arm first (on the CURRENT client — after a context switch the
+		// old channel closes and this rebinds to the new one), then schedule
+		// one throttled flush for the whole burst.
+		cmds := []tea.Cmd{m.waitForChange()}
+		if msg.ok && !m.changePending {
+			m.changePending = true
+			cmds = append(cmds, tea.Tick(changeFlushDelay, func(time.Time) tea.Msg { return changeFlushMsg{} }))
+		}
+		return m, tea.Batch(cmds...)
+
+	case changeFlushMsg:
+		m.changePending = false
+		if m.screen == screenList {
+			// Reads the informer cache — no API round-trip.
+			return m, m.listObjects()
 		}
 		return m, nil
 

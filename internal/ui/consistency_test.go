@@ -151,3 +151,37 @@ func TestSizingOverviewFilter(t *testing.T) {
 		t.Fatalf("clear broken: rows=%d", len(m.sizingRows))
 	}
 }
+
+// TestLiveRefreshThrottle: a burst of change signals coalesces into ONE
+// throttled flush, and the flush refreshes only the list screen.
+func TestLiveRefreshThrottle(t *testing.T) {
+	m := plainModel(t)
+	m.screen = screenList
+
+	mi, cmd := m.Update(changeMsg{ok: true})
+	m = asModel(t, mi)
+	if !m.changePending || cmd == nil {
+		t.Fatalf("first change must schedule a flush (pending=%v)", m.changePending)
+	}
+	// Burst: further signals only re-arm the wait, no second flush timer.
+	mi, _ = m.Update(changeMsg{ok: true})
+	m = asModel(t, mi)
+	if !m.changePending {
+		t.Fatal("burst must keep the single pending flush")
+	}
+
+	mi, cmd = m.Update(changeFlushMsg{})
+	m = asModel(t, mi)
+	if m.changePending || cmd == nil {
+		t.Fatalf("flush must clear pending and refresh the list (cmd=%v)", cmd)
+	}
+
+	// Outside the list, a flush refreshes nothing.
+	m.screen = screenPosture
+	m.changePending = true
+	mi, cmd = m.Update(changeFlushMsg{})
+	m = asModel(t, mi)
+	if cmd != nil {
+		t.Fatal("flush must be a no-op outside the list screen")
+	}
+}

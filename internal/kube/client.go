@@ -29,9 +29,11 @@ type Client struct {
 	Namespace      string
 
 	// Shared informer cache behind the main list flow (T089); lazily built,
-	// stopped via Close() when the client is replaced.
-	infMu sync.Mutex
-	inf   *informerCache
+	// stopped via Close() when the client is replaced. changes carries the
+	// coalesced live-refresh signal derived from watch events.
+	infMu   sync.Mutex
+	inf     *informerCache
+	changes chan struct{}
 }
 
 // Options configure how the client connects.
