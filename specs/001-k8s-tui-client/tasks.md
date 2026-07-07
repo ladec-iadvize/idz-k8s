@@ -373,9 +373,9 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 ### Phase v2.4: User Story 14 — Connectivity / NetworkPolicy (FR-031)
 
-- [ ] T080 [US14] Per-pod NetworkPolicy matching + allowed peers summary in `internal/kube/netpol.go`
-- [ ] T081 [US14] Connectivity view (policies selecting a pod; unrestricted state) in `internal/ui/`
-- [ ] T082 [P] [US14] Tests
+- [x] T080 [US14] Per-pod NetworkPolicy matching + allowed peers summary in `internal/kube/netpol.go`
+- [x] T081 [US14] Connectivity view (policies selecting a pod; unrestricted state) in `internal/ui/`
+- [x] T082 [P] [US14] Tests
 
 ### Phase v2.5: User Story 15 — Access (RBAC) view (FR-032)
 
