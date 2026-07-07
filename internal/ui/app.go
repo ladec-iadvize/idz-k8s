@@ -816,7 +816,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case describeMsg:
 		if msg.ns == m.detailNS && msg.name == m.detailName && m.screen == screenDetail {
-			m.setDetailContent(describeContent(m.detailObj, msg.events, m.theme) + msg.extra)
+			m.setDetailContent(describeContent(m.detailObj, msg.events, m.theme, m.width) + msg.extra)
 		}
 		return m, nil
 
@@ -1591,7 +1591,10 @@ func (m *Model) goBack() (tea.Model, tea.Cmd) {
 
 // describeContent builds a kubectl-describe-like summary from the object plus
 // its own events (nil while they load).
-func describeContent(obj model.ResourceObject, events []model.Event, th theme.Theme) string {
+func describeContent(obj model.ResourceObject, events []model.Event, th theme.Theme, width int) string {
+	if width < 40 {
+		width = 100
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n", th.Title.Render("Describe: "+obj.Type.Kind+"/"+obj.Name))
 	fmt.Fprintf(&b, "Namespace:  %s\n", orDash(obj.Namespace))
@@ -1624,7 +1627,22 @@ func describeContent(obj model.ResourceObject, events []model.Event, th theme.Th
 			cstatus, _ := cm["status"].(string)
 			reason, _ := cm["reason"].(string)
 			message, _ := cm["message"].(string)
-			fmt.Fprintf(&b, "  %-28s %-7s %-24s %s\n", ctype, cstatus, orDash(reason), truncate(orDash(message), 60))
+			// Full message, hard-wrapped under the MESSAGE column (owner bug
+			// 2026-07-07: truncated messages hid the actual diagnosis).
+			const msgCol = 64 // 2+28+1+7+1+24+1
+			avail := width - msgCol - 1
+			if avail < 24 {
+				fmt.Fprintf(&b, "  %-28s %-7s %-24s\n", ctype, cstatus, orDash(reason))
+				for _, l := range wrapTo(orDash(message), width-8) {
+					b.WriteString("      " + l + "\n")
+				}
+				continue
+			}
+			chunks := wrapTo(orDash(message), avail)
+			fmt.Fprintf(&b, "  %-28s %-7s %-24s %s\n", ctype, cstatus, orDash(reason), chunks[0])
+			for _, l := range chunks[1:] {
+				b.WriteString(strings.Repeat(" ", msgCol) + l + "\n")
+			}
 		}
 	}
 
@@ -1642,13 +1660,19 @@ func describeContent(obj model.ResourceObject, events []model.Event, th theme.Th
 			if e.Count > 1 {
 				cnt = fmt.Sprintf(" x%d", e.Count)
 			}
-			line := fmt.Sprintf("  %-5s %s %s%s — %s", kube.Age(e.Time, now), eventBadge(e), e.Reason, cnt, truncate(e.Message, 80))
-			if e.Warning() {
-				b.WriteString(th.Warning.Render(line))
-			} else {
-				b.WriteString(th.Faint.Render(line))
+			// Full message, wrapped — never truncated (owner bug 2026-07-07).
+			full := fmt.Sprintf("  %-5s %s %s%s — %s", kube.Age(e.Time, now), eventBadge(e), e.Reason, cnt, e.Message)
+			for j, l := range wrapTo(full, width-4) {
+				if j > 0 {
+					l = "    " + l
+				}
+				if e.Warning() {
+					b.WriteString(th.Warning.Render(l))
+				} else {
+					b.WriteString(th.Faint.Render(l))
+				}
+				b.WriteString("\n")
 			}
-			b.WriteString("\n")
 		}
 	}
 	return b.String()
@@ -1765,7 +1789,7 @@ func (m *Model) openDescribe() tea.Cmd {
 	m.detailNS, m.detailName = obj.Namespace, obj.Name
 	m.detailHasUsage = false
 	m.screen = screenDetail
-	m.setDetailContent(describeContent(obj, nil, m.theme) + "\nEvents: loading…")
+	m.setDetailContent(describeContent(obj, nil, m.theme, m.width) + "\nEvents: loading…")
 	m.detail.GotoTop()
 	m.layout()
 	cl, ns, name := m.client, obj.Namespace, obj.Name
@@ -2256,6 +2280,29 @@ func (m *Model) renderEvents() {
 	if winEnd < len(evs) {
 		b.WriteString(m.theme.Faint.Render(fmt.Sprintf("  ↓ %d older", len(evs)-winEnd)))
 		b.WriteString("\n")
+	}
+	// Full message of the selected event (owner bug 2026-07-07: the one-line
+	// rows are width-truncated for click geometry, so the selection gets a
+	// dedicated wrapped block — placed AFTER the rows, geometry untouched).
+	if m.recentSel >= 0 && m.recentSel < len(evs) {
+		e := evs[m.recentSel]
+		b.WriteString("\n" + m.rule("selected event — full message") + "\n")
+		cnt := ""
+		if e.Count > 1 {
+			cnt = fmt.Sprintf(" x%d", e.Count)
+		}
+		head := fmt.Sprintf("  %s %s %s/%s — %s%s", kube.Age(e.Time, now), eventBadge(e),
+			e.ObjKind, e.ObjName, e.Reason, cnt)
+		b.WriteString(m.theme.Section.Render(truncate(head, m.width-2)) + "\n")
+		for _, l := range wrapTo(e.Message, m.width-6) {
+			line := "  " + l
+			if e.Warning() {
+				b.WriteString(m.theme.Warning.Render(line))
+			} else {
+				b.WriteString(line)
+			}
+			b.WriteString("\n")
+		}
 	}
 
 	m.events.SetContent(b.String())
@@ -4508,6 +4555,46 @@ func (m Model) sizingListView() string {
 		b.WriteString("\n")
 	}
 	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// wrapTo hard-wraps text to a display width (rune-counted, word-aware) so a
+// viewport line can never auto-wrap in the terminal — auto-wrap shifts every
+// line below and breaks the click geometry. Unbreakable tokens are cut.
+func wrapTo(s string, w int) []string {
+	if w < 10 {
+		w = 10
+	}
+	var out []string
+	for _, para := range strings.Split(s, "\n") {
+		words := strings.Fields(para)
+		if len(words) == 0 {
+			out = append(out, "")
+			continue
+		}
+		line := ""
+		for _, word := range words {
+			for len([]rune(word)) > w {
+				if line != "" {
+					out = append(out, line)
+					line = ""
+				}
+				r := []rune(word)
+				out = append(out, string(r[:w]))
+				word = string(r[w:])
+			}
+			switch {
+			case line == "":
+				line = word
+			case len([]rune(line))+1+len([]rune(word)) <= w:
+				line += " " + word
+			default:
+				out = append(out, line)
+				line = word
+			}
+		}
+		out = append(out, line)
+	}
+	return out
 }
 
 // padLeft right-aligns a plain string in a fixed width (rune-counted).
