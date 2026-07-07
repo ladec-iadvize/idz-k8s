@@ -238,6 +238,17 @@ type Model struct {
 	// Custom-column prompt (chooser → add custom field…).
 	fieldNaming bool
 	fieldInput  string
+
+	// Vim-like '/' search inside content viewports (describe/YAML, helm
+	// detail incl. values): matches highlighted, 'n'/'N' navigate, Esc
+	// clears first, then goes back.
+	searchTyping bool
+	searchInput  string
+	searchQuery  string
+	searchHits   []int // matching line numbers in the raw content
+	searchIdx    int
+	detailRaw    string // unhighlighted content behind m.detail
+	helmHistRaw  string // unhighlighted content behind m.helmHist
 }
 
 // colItem is one entry of the column chooser.
@@ -744,7 +755,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case describeMsg:
 		if msg.ns == m.detailNS && msg.name == m.detailName && m.screen == screenDetail {
-			m.detail.SetContent(describeContent(m.detailObj, msg.events, m.theme) + msg.extra)
+			m.setDetailContent(describeContent(m.detailObj, msg.events, m.theme) + msg.extra)
 		}
 		return m, nil
 
@@ -812,6 +823,30 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyRunes, tea.KeySpace:
 			m.fieldInput += string(msg.Runes)
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Viewport search typing mode captures ALL keys (Enter searches).
+	if m.searchTyping {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.searchTyping = false
+			m.searchQuery = strings.TrimSpace(m.searchInput)
+			m.applySearch(true)
+			return m, nil
+		case tea.KeyEscape:
+			m.searchTyping = false
+			m.searchInput = ""
+			return m, nil
+		case tea.KeyBackspace:
+			if m.searchInput != "" {
+				m.searchInput = m.searchInput[:len(m.searchInput)-1]
+			}
+			return m, nil
+		case tea.KeyRunes, tea.KeySpace:
+			m.searchInput += string(msg.Runes)
 			return m, nil
 		}
 		return m, nil
@@ -963,6 +998,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case screenHelm:
 		return m.handleHelmKey(msg)
 	case screenHelmHist:
+		if mi, cmd, ok := m.handleSearchKey(msg); ok {
+			return mi, cmd
+		}
 		var cmd tea.Cmd
 		m.helmHist, cmd = m.helmHist.Update(msg)
 		return m, cmd
@@ -1271,6 +1309,12 @@ func (m *Model) navigate(w *winTable, msg tea.KeyMsg) {
 }
 
 func (m Model) handleScrollKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Vim-like search on the describe/YAML detail ('/' then n/N).
+	if m.screen == screenDetail {
+		if mi, cmd, ok := m.handleSearchKey(msg); ok {
+			return mi, cmd
+		}
+	}
 	var cmd tea.Cmd
 	if m.screen == screenDetail {
 		// Toggle secret reveal with 'x' on the detail of a Secret.
@@ -1393,6 +1437,12 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 // ---- Actions ----
 
 func (m *Model) goBack() (tea.Model, tea.Cmd) {
+	// Vim-like: on a searched viewport, the first Esc clears the search.
+	if m.searchQuery != "" && (m.screen == screenDetail || m.screen == screenHelmHist) {
+		m.clearSearch()
+		return m, nil
+	}
+	m.searchQuery, m.searchInput, m.searchHits = "", "", nil
 	if m.logCancel != nil {
 		m.logCancel()
 		m.logCancel = nil
@@ -1602,7 +1652,7 @@ func (m *Model) openDescribe() tea.Cmd {
 	m.detailNS, m.detailName = obj.Namespace, obj.Name
 	m.detailHasUsage = false
 	m.screen = screenDetail
-	m.detail.SetContent(describeContent(obj, nil, m.theme) + "\nEvents: loading…")
+	m.setDetailContent(describeContent(obj, nil, m.theme) + "\nEvents: loading…")
 	m.detail.GotoTop()
 	m.layout()
 	cl, ns, name := m.client, obj.Namespace, obj.Name
@@ -1681,7 +1731,7 @@ func (m *Model) renderDetail() {
 		}
 	}
 	b.WriteString(m.colorizeYAML(string(out)))
-	m.detail.SetContent(b.String())
+	m.setDetailContent(b.String())
 }
 
 func (m Model) usagePanel() string {
@@ -2204,7 +2254,7 @@ func (m Model) openHelmDetail(valuesOnly bool) (tea.Model, tea.Cmd) {
 	}
 	ns, name := row[0], row[1]
 	m.helmValuesOnly = valuesOnly
-	m.helmHist.SetContent("loading release " + ns + "/" + name + "…")
+	m.setHelmHistContent("loading release " + ns + "/" + name + "…")
 	m.screen = screenHelmHist
 	m.layout()
 	hc, kc, types := m.helm, m.client, m.types
@@ -2266,7 +2316,7 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 	fmt.Fprintf(&b, "%s\n\n", m.theme.Title.Render(title))
 	if msg.err != nil {
 		b.WriteString(m.theme.Error.Render("⚠ " + msg.err.Error()))
-		m.helmHist.SetContent(b.String())
+		m.setHelmHistContent(b.String())
 		return
 	}
 	if m.helmValuesOnly {
@@ -2279,7 +2329,7 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 		}
 		b.WriteString("\n")
 		b.WriteString(m.theme.Faint.Render("tip: press 'm' to disable the mouse and copy text"))
-		m.helmHist.SetContent(b.String())
+		m.setHelmHistContent(b.String())
 		m.helmHist.GotoTop()
 		return
 	}
@@ -2343,7 +2393,7 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 		}
 	}
 
-	m.helmHist.SetContent(b.String())
+	m.setHelmHistContent(b.String())
 	m.helmHist.GotoTop()
 }
 
@@ -2923,6 +2973,8 @@ func (m Model) View() string {
 		out = overlayCenter(out, m.inputModal("filter events", m.eventsQuery, "Enter save · Esc cancel"), m.width)
 	case m.screen == screenHelm && m.helmFiltering:
 		out = overlayCenter(out, m.inputModal("filter helm releases", m.helmQuery, "Enter save · Esc cancel"), m.width)
+	case m.searchTyping:
+		out = overlayCenter(out, m.inputModal("search", m.searchInput, "Enter search · 'n'/'N' navigate · Esc clear"), m.width)
 	}
 	return out
 }
@@ -3301,7 +3353,12 @@ func (m Model) screenKeymap() keymapView {
 			short: []key.Binding{k.Up, k.Down, k.Open, k.Sort, k.SortDir, k.Back, k.Quit},
 			full:  [][]key.Binding{nav, {k.Open, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
-	default: // detail, logs, diag, topology
+	case screenDetail, screenHelmHist:
+		return keymapView{
+			short: []key.Binding{k.Up, k.Down, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
+		}
+	default: // logs, diag, topology
 		return keymapView{
 			short: []key.Binding{k.Up, k.Down, k.Back, k.Help, k.Quit},
 			full:  [][]key.Binding{nav, {k.Back, k.Help, k.Quit}},
@@ -3352,6 +3409,152 @@ func (m *Model) persist() {
 	m.cfg.LastNamespace = m.client.Namespace
 	m.cfg.LastType = m.curType.Key()
 	_ = config.Save(m.configPath, m.cfg)
+}
+
+// handleSearchKey handles '/', 'n' and 'N' on a searchable viewport.
+func (m Model) handleSearchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	switch {
+	case hit(msg, m.keys.Filter):
+		m.searchTyping, m.searchInput = true, m.searchQuery
+		return m, nil, true
+	case hit(msg, m.keys.SearchNext) && len(m.searchHits) > 0:
+		m.searchStep(1)
+		return m, nil, true
+	case hit(msg, m.keys.SearchPrev) && len(m.searchHits) > 0:
+		m.searchStep(-1)
+		return m, nil, true
+	}
+	return m, nil, false
+}
+
+// ---- Viewport search ('/', vim-like — describe/YAML and helm detail) ----
+
+// setDetailContent stores the raw detail content and renders it, keeping an
+// active search highlighted when new content arrives (e.g. events landing
+// after a describe).
+func (m *Model) setDetailContent(content string) {
+	m.detailRaw = content
+	if m.screen == screenDetail && m.searchQuery != "" {
+		m.applySearch(false)
+		return
+	}
+	m.detail.SetContent(content)
+}
+
+// setHelmHistContent is setDetailContent for the helm release detail.
+func (m *Model) setHelmHistContent(content string) {
+	m.helmHistRaw = content
+	if m.screen == screenHelmHist && m.searchQuery != "" {
+		m.applySearch(false)
+		return
+	}
+	m.helmHist.SetContent(content)
+}
+
+// searchTarget maps the current screen to its viewport and raw content.
+func (m *Model) searchTarget() (*viewport.Model, string) {
+	switch m.screen {
+	case screenDetail:
+		return &m.detail, m.detailRaw
+	case screenHelmHist:
+		return &m.helmHist, m.helmHistRaw
+	}
+	return nil, ""
+}
+
+// clearSearch restores the unhighlighted content.
+func (m *Model) clearSearch() {
+	m.searchQuery, m.searchInput = "", ""
+	m.searchHits, m.searchIdx = nil, 0
+	if vp, raw := m.searchTarget(); vp != nil {
+		vp.SetContent(raw)
+	}
+	m.statusMsg = ""
+}
+
+// applySearch highlights every match and (optionally) jumps to the first.
+func (m *Model) applySearch(jumpFirst bool) {
+	vp, raw := m.searchTarget()
+	if vp == nil {
+		return
+	}
+	if m.searchQuery == "" {
+		m.clearSearch()
+		return
+	}
+	highlighted, hits := highlightMatches(raw, m.searchQuery, m.theme.Highlight.Render)
+	vp.SetContent(highlighted)
+	m.searchHits = hits
+	if len(hits) == 0 {
+		m.statusMsg = "no match for “" + m.searchQuery + "” — Esc clears"
+		return
+	}
+	if jumpFirst {
+		m.searchIdx = 0
+	}
+	if m.searchIdx >= len(hits) {
+		m.searchIdx = 0
+	}
+	m.gotoSearchHit()
+}
+
+// gotoSearchHit scrolls the current match into view (upper third).
+func (m *Model) gotoSearchHit() {
+	vp, _ := m.searchTarget()
+	if vp == nil || len(m.searchHits) == 0 {
+		return
+	}
+	off := m.searchHits[m.searchIdx] - vp.Height/3
+	if off < 0 {
+		off = 0
+	}
+	vp.SetYOffset(off)
+	m.statusMsg = fmt.Sprintf("match %d/%d for “%s” — 'n' next · 'N' previous · Esc clears",
+		m.searchIdx+1, len(m.searchHits), m.searchQuery)
+}
+
+// searchStep moves to the next/previous match, wrapping around.
+func (m *Model) searchStep(dir int) {
+	if len(m.searchHits) == 0 {
+		return
+	}
+	m.searchIdx = (m.searchIdx + dir + len(m.searchHits)) % len(m.searchHits)
+	m.gotoSearchHit()
+}
+
+// highlightMatches rebuilds matching lines with the query highlighted
+// (case-insensitive). Styled lines are flattened to plain text on match so
+// the highlight offsets stay exact — the searched term wins over syntax
+// color on those lines. Returns the content and the matching line numbers.
+func highlightMatches(content, query string, mark func(...string) string) (string, []int) {
+	q := strings.ToLower(query)
+	lines := strings.Split(content, "\n")
+	var hits []int
+	for i, l := range lines {
+		plain := xansi.Strip(l)
+		low := strings.ToLower(plain)
+		if !strings.Contains(low, q) {
+			continue
+		}
+		hits = append(hits, i)
+		var b strings.Builder
+		for {
+			j := strings.Index(low, q)
+			if j < 0 {
+				b.WriteString(plain)
+				break
+			}
+			b.WriteString(plain[:j])
+			end := j + len(q)
+			if end > len(plain) {
+				end = len(plain)
+			}
+			b.WriteString(mark(plain[j:end]))
+			plain, low = plain[end:], low[end:]
+		}
+		lines[i] = b.String()
+	}
+	return strings.Join(lines, "\n"), hits
 }
 
 // ---- Posture overview (US13, FR-030 — advisory, read-only) ----
