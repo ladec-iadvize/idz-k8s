@@ -46,6 +46,7 @@ const (
 	screenHelmHist
 	screenSizing
 	screenSizingList
+	screenPosture
 )
 
 type pickerKind int
@@ -164,6 +165,9 @@ type Model struct {
 	helmHist       viewport.Model
 	helmRows       []model.HelmRelease
 	helmValuesOnly bool // 'v': show only the values of a release
+
+	// Posture overview (US13, advisory & read-only).
+	posture viewport.Model
 
 	// Sizing recommendations (US6, advisory & read-only): overview table of
 	// every listed workload, Enter → per-workload detail panel.
@@ -302,6 +306,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		helmTable:      table.New(table.WithFocused(true)),
 		helmHist:       viewport.New(0, 0),
 		sizingVP:       viewport.New(0, 0),
+		posture:        viewport.New(0, 0),
 		screen:         screenList,
 		marked:         map[string]model.ResourceObject{},
 		sortCol:        -1,
@@ -353,6 +358,10 @@ type metricsMsg struct {
 type sizingMsg struct {
 	advice model.SizingAdvice
 	err    error
+}
+type postureMsg struct {
+	rows []model.PostureFinding
+	err  error
 }
 type sizingListMsg struct {
 	rows []model.SizingAdvice
@@ -681,6 +690,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderSizing(msg.advice)
 		return m, nil
 
+	case postureMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+		}
+		m.renderPosture(msg.rows)
+		return m, nil
+
 	case sizingListMsg:
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -887,6 +903,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.sizingVP, cmd = m.sizingVP.Update(msg)
 		return m, cmd
+	case screenPosture:
+		var cmd tea.Cmd
+		m.posture, cmd = m.posture.Update(msg)
+		return m, cmd
 	case screenSizingList:
 		switch {
 		case hit(msg, m.keys.Open):
@@ -972,6 +992,8 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openDiag()
 	case hit(msg, m.keys.Sizing):
 		return m.openSizing()
+	case hit(msg, m.keys.Posture):
+		return m.openPosture()
 	case hit(msg, m.keys.Topology):
 		return m.openTopology()
 	case hit(msg, m.keys.Events):
@@ -1324,6 +1346,8 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.diag, cmd = m.diag.Update(msg)
 	case screenSizing:
 		m.sizingVP, cmd = m.sizingVP.Update(msg)
+	case screenPosture:
+		m.posture, cmd = m.posture.Update(msg)
 	case screenTopology:
 		m.topo, cmd = m.topo.Update(msg)
 	case screenEvents:
@@ -2771,6 +2795,7 @@ func (m *Model) layout() {
 	m.helmHist.Width, m.helmHist.Height = m.width, bodyH
 	m.sizingVP.Width, m.sizingVP.Height = m.width, bodyH
 	m.sizingWin.SetHeight(bodyH - 1) // -1: the overview's own column header
+	m.posture.Width, m.posture.Height = m.width, bodyH
 	m.helmTable.SetHeight(bodyH)
 	m.helmTable.SetWidth(m.width)
 	m.picker.SetHeight(bodyH)
@@ -2818,6 +2843,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.helmHist.View()
 	case screenSizing:
 		return m.sizingVP.View()
+	case screenPosture:
+		return m.posture.View()
 	case screenSizingList:
 		return m.sizingListView()
 	default:
@@ -3192,7 +3219,7 @@ func (m Model) screenKeymap() keymapView {
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing},
+				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}
@@ -3277,6 +3304,74 @@ func (m *Model) persist() {
 	m.cfg.LastNamespace = m.client.Namespace
 	m.cfg.LastType = m.curType.Key()
 	_ = config.Save(m.configPath, m.cfg)
+}
+
+// ---- Posture overview (US13, FR-030 — advisory, read-only) ----
+
+// openPosture evaluates the compliance rules over the current scope.
+func (m *Model) openPosture() (tea.Model, tea.Cmd) {
+	m.screen = screenPosture
+	m.posture.SetContent("checking posture rules…")
+	m.layout()
+	return m, m.fetchPosture()
+}
+
+func (m Model) fetchPosture() tea.Cmd {
+	cl, ns := m.client, m.client.Namespace
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		rows, err := cl.Posture(ctx, ns, time.Now())
+		return postureMsg{rows: rows, err: err}
+	}
+}
+
+// renderPosture groups the findings by rule, worst severities first inside
+// each group; every line references the concrete object and field (FR-030).
+func (m *Model) renderPosture(rows []model.PostureFinding) {
+	scope := m.client.Namespace
+	if scope == "" {
+		scope = "all namespaces"
+	}
+	var b strings.Builder
+	b.WriteString(m.rule(fmt.Sprintf("Posture (advisory) — %s, %d finding(s)", scope, len(rows))) + "\n\n")
+	b.WriteString(m.theme.Faint.Render("Best-practice review of the observed configuration — read-only, nothing is applied.") + "\n\n")
+	if len(rows) == 0 {
+		b.WriteString(m.theme.Ok.Render("✓ no findings — every rule passes on this scope") + "\n")
+		m.posture.SetContent(b.String())
+		m.layout()
+		return
+	}
+	byRule := map[string][]model.PostureFinding{}
+	var order []string
+	for _, f := range rows {
+		if len(byRule[f.Rule]) == 0 {
+			order = append(order, f.Rule)
+		}
+		byRule[f.Rule] = append(byRule[f.Rule], f)
+	}
+	for _, rule := range order {
+		fs := byRule[rule]
+		sort.SliceStable(fs, func(i, j int) bool { return fs[i].Severity > fs[j].Severity })
+		b.WriteString(m.rule(fmt.Sprintf("%s (%d)", rule, len(fs))) + "\n")
+		for _, f := range fs {
+			ref := f.Namespace + "/" + f.Name
+			if f.Container != "" {
+				ref += " [" + f.Container + "]"
+			}
+			line := fmt.Sprintf("  %s %-52s %s", f.Severity.Symbol(), truncate(ref, 52), f.Detail)
+			switch f.Severity {
+			case model.HealthError:
+				line = m.theme.Error.Render(line)
+			case model.HealthWarning:
+				line = m.theme.Warning.Render(line)
+			}
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("\n")
+	}
+	m.posture.SetContent(b.String())
+	m.layout()
 }
 
 // ---- Sizing recommendations (US6, FR-023 — advisory, read-only) ----

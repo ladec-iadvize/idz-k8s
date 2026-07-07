@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/iadvize/idz-k8s/internal/kube"
 )
@@ -93,6 +94,12 @@ func TestAllReadFlowsIssueOnlyReadVerbs(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := client.EndpointsByService(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PodsOnNode(ctx, "n1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Posture(ctx, "demo", time.Now()); err != nil {
 		t.Fatal(err)
 	}
 

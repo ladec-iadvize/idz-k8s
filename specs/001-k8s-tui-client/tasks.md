@@ -367,9 +367,9 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 ### Phase v2.3: User Story 13 — Posture overview (FR-030)
 
-- [ ] T077 [US13] Posture rules (no requests/limits, privileged, root, no probes, `latest`, no NetworkPolicy, TLS expiry) in `internal/kube/posture.go`
-- [ ] T078 [US13] Posture view (findings by rule, object references) in `internal/ui/`
-- [ ] T079 [P] [US13] Tests per rule
+- [x] T077 [US13] Posture rules (no requests/limits, privileged, root, no probes, `latest`, no NetworkPolicy, TLS expiry) in `internal/kube/posture.go`
+- [x] T078 [US13] Posture view (findings by rule, object references) in `internal/ui/`
+- [x] T079 [P] [US13] Tests per rule
 
 ### Phase v2.4: User Story 14 — Connectivity / NetworkPolicy (FR-031)
 
