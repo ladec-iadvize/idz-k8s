@@ -48,6 +48,7 @@ const (
 	screenSizingList
 	screenPosture
 	screenConnectivity
+	screenAccess
 )
 
 type pickerKind int
@@ -174,6 +175,9 @@ type Model struct {
 
 	// Per-pod connectivity / NetworkPolicy view (US14, read-only).
 	connectivity viewport.Model
+
+	// Access (RBAC) view (US15, read-only introspection).
+	access viewport.Model
 
 	// Sizing recommendations (US6, advisory & read-only): overview table of
 	// every listed workload, Enter → per-workload detail panel.
@@ -325,6 +329,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		sizingVP:       viewport.New(0, 0),
 		posture:        viewport.New(0, 0),
 		connectivity:   viewport.New(0, 0),
+		access:         viewport.New(0, 0),
 		screen:         screenList,
 		marked:         map[string]model.ResourceObject{},
 		sortCol:        -1,
@@ -375,6 +380,10 @@ type metricsMsg struct {
 }
 type sizingMsg struct {
 	advice model.SizingAdvice
+	err    error
+}
+type accessMsg struct {
+	report model.AccessReport
 	err    error
 }
 type connectivityMsg struct {
@@ -626,6 +635,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case objectsMsg:
 		if msg.err != nil {
+			if kube.IsForbidden(msg.err) {
+				// RBAC denial: an access problem, not a lost connection —
+				// name the type and point to the access view (FR-032).
+				m.errMsg = "forbidden: your credentials cannot list " + m.curType.Key() + " — 'a' shows your access"
+				return m, nil
+			}
 			// Keep the last data on screen; the tick keeps retrying (FR-016).
 			m.disconnected = true
 			m.errMsg = "cluster unreachable — retrying every " +
@@ -710,6 +725,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.renderSizing(msg.advice)
+		return m, nil
+
+	case accessMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		m.renderAccess(msg.report)
 		return m, nil
 
 	case connectivityMsg:
@@ -991,6 +1014,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.connectivity, cmd = m.connectivity.Update(msg)
 		return m, cmd
+	case screenAccess:
+		var cmd tea.Cmd
+		m.access, cmd = m.access.Update(msg)
+		return m, cmd
 	case screenSizingList:
 		switch {
 		case hit(msg, m.keys.Open):
@@ -1083,6 +1110,8 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openPosture()
 	case hit(msg, m.keys.Connectivity):
 		return m.openConnectivity()
+	case hit(msg, m.keys.Access):
+		return m.openAccess()
 	case hit(msg, m.keys.Topology):
 		return m.openTopology()
 	case hit(msg, m.keys.Events):
@@ -1445,6 +1474,8 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.posture, cmd = m.posture.Update(msg)
 	case screenConnectivity:
 		m.connectivity, cmd = m.connectivity.Update(msg)
+	case screenAccess:
+		m.access, cmd = m.access.Update(msg)
 	case screenTopology:
 		m.topo, cmd = m.topo.Update(msg)
 	case screenEvents:
@@ -2907,6 +2938,7 @@ func (m *Model) layout() {
 	m.sizingWin.SetHeight(bodyH - 1) // -1: the overview's own column header
 	m.posture.Width, m.posture.Height = m.width, bodyH
 	m.connectivity.Width, m.connectivity.Height = m.width, bodyH
+	m.access.Width, m.access.Height = m.width, bodyH
 	m.helmTable.SetHeight(bodyH)
 	m.helmTable.SetWidth(m.width)
 	m.picker.SetHeight(bodyH)
@@ -2958,6 +2990,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.posture.View()
 	case screenConnectivity:
 		return m.connectivity.View()
+	case screenAccess:
+		return m.access.View()
 	case screenSizingList:
 		return m.sizingListView()
 	default:
@@ -3347,7 +3381,7 @@ func (m Model) screenKeymap() keymapView {
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture, k.Connectivity},
+				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture, k.Connectivity, k.Access},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}
@@ -3583,6 +3617,63 @@ func highlightMatches(content, query string, mark func(...string) string) (strin
 		lines[i] = b.String()
 	}
 	return strings.Join(lines, "\n"), hits
+}
+
+// ---- Access (RBAC) view (US15, FR-032 — read-only introspection) ----
+
+// openAccess asks the API server what the current credentials can read.
+func (m *Model) openAccess() (tea.Model, tea.Cmd) {
+	m.screen = screenAccess
+	m.access.SetContent("asking the API server what you can read…")
+	m.layout()
+	cl, ns, types := m.client, m.client.Namespace, m.types
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		rep, err := cl.AccessSummary(ctx, ns, types)
+		return accessMsg{report: rep, err: err}
+	}
+}
+
+// renderAccess shows the server's own answer: allowed reads, then the
+// browsable types these credentials cannot list (the view's blind spots).
+func (m *Model) renderAccess(r model.AccessReport) {
+	var b strings.Builder
+	b.WriteString(m.rule(fmt.Sprintf("Access (RBAC) — what you can read in ns %s", r.Namespace)) + "\n\n")
+	b.WriteString(m.theme.Faint.Render("The API server's own answer (SelfSubjectRulesReview) — nothing is guessed.") + "\n\n")
+	if r.Incomplete || r.Evaluation != "" {
+		note := "⚠ the server reported this rule set as INCOMPLETE"
+		if r.Evaluation != "" {
+			note += " — " + r.Evaluation
+		}
+		b.WriteString(m.theme.Warning.Render(note) + "\n\n")
+	}
+	b.WriteString(m.rule(fmt.Sprintf("allowed reads (%d rule(s))", len(r.Rules))) + "\n")
+	if len(r.Rules) == 0 {
+		b.WriteString("  " + m.theme.Error.Render("✗ no read access in this namespace") + "\n")
+	}
+	fmt.Fprintf(&b, "  %s\n", m.theme.Faint.Render(fmt.Sprintf("%-18s %-22s %s", "VERBS", "GROUPS", "RESOURCES")))
+	for _, rule := range r.Rules {
+		groups := strings.Join(rule.Groups, ",")
+		if groups == "" {
+			groups = `""`
+		}
+		res := strings.Join(rule.Resources, ", ")
+		if len(rule.Names) > 0 {
+			res += "  (only: " + strings.Join(rule.Names, ", ") + ")"
+		}
+		fmt.Fprintf(&b, "  %-18s %-22s %s\n", strings.Join(rule.Verbs, ","), truncate(groups, 22), res)
+	}
+	b.WriteString("\n")
+	b.WriteString(m.rule(fmt.Sprintf("not listable with these credentials (%d type(s))", len(r.Unlistable))) + "\n")
+	if len(r.Unlistable) == 0 {
+		b.WriteString("  " + m.theme.Ok.Render("✓ every discovered type is listable") + "\n")
+	}
+	for _, t := range r.Unlistable {
+		b.WriteString("  " + m.theme.Warning.Render("! "+t) + "\n")
+	}
+	m.access.SetContent(b.String())
+	m.layout()
 }
 
 // ---- Connectivity / NetworkPolicy view (US14, FR-031 — read-only) ----

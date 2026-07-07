@@ -38,6 +38,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 | `f` | Failure diagnostics: CrashLoopBackOff, OOMKilled, evictions, unschedulable pods (with the scheduler's reason) |
 | `u` | Top consumers (CPU/memory, via Prometheus) |
 | `x` | Connectivity: which NetworkPolicies select a pod (or a workload's template) and the allowed ingress/egress peers/ports — explicit **unrestricted** and **default-deny** states |
+| `a` | Access (RBAC): the API server's own answer on what your credentials can read, plus the discovered types you cannot list; a 403 on a list names the type instead of faking a disconnection |
 | `p` | Posture (advisory): best-practice findings by rule — missing requests/limits, privileged/root containers, missing probes, `latest` images, namespaces without NetworkPolicy, TLS certificates near/past expiry |
 | `z` | Sizing (advisory): a recap **table of every listed workload** — usage-vs-request gauges and ✓/!/✗ verdicts for CPU & memory, worst first; `Enter` opens the detailed panel (avg/peak gauges vs request/limit). Never applied, never estimated |
 | `:helm` | Helm releases (read-only): history, deployed resources with **live state**, values — reachable from the `:` picker like any resource |
