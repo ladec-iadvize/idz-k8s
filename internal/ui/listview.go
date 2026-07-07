@@ -55,20 +55,55 @@ func (m *Model) columnsForType() []listColumn {
 
 // customColumn builds a user-defined column: "label:app" shows that label's
 // value, "field:.spec.nodeName" the object field at that dot path. Both are
-// stored prefixed in the prefs so stale plain titles stay distinguishable.
+// stored prefixed in the prefs so stale plain titles stay distinguishable;
+// the HEADER renders like the built-in columns (owner feedback 2026-07-07:
+// same look as the other fields).
 func customColumn(spec string) listColumn {
+	title := customTitle(spec)
 	if k, ok := strings.CutPrefix(spec, "label:"); ok {
-		return listColumn{title: k, width: 16,
+		return listColumn{title: title, width: 16,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				return orDash(kube.ObjectLabel(o.Raw, k))
 			}}
 	}
 	path := strings.TrimPrefix(spec, "field:")
 	fields := strings.Split(strings.TrimPrefix(path, "."), ".")
-	return listColumn{title: path, width: 20,
+	return listColumn{title: title, width: 20,
 		cell: func(_ *Model, o model.ResourceObject) string {
 			return fieldCell(o.Raw, fields)
 		}}
+}
+
+// customTitle derives a built-in-looking header from a custom spec:
+// "label:app" → "APP", "field:.status.podIP" → "POD IP".
+func customTitle(spec string) string {
+	if k, ok := strings.CutPrefix(spec, "label:"); ok {
+		return strings.ToUpper(k)
+	}
+	path := strings.TrimPrefix(spec, "field:")
+	seg := path
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		seg = path[i+1:]
+	}
+	return strings.ToUpper(camelSplit(seg))
+}
+
+// camelSplit inserts spaces at camelCase boundaries ("podIP" → "pod IP").
+func camelSplit(s string) string {
+	var b strings.Builder
+	runes := []rune(s)
+	for i, r := range runes {
+		if i > 0 && r >= 'A' && r <= 'Z' && runes[i-1] >= 'a' && runes[i-1] <= 'z' {
+			b.WriteRune(' ')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// isCustomSpec reports whether a chooser entry is a user-defined column.
+func isCustomSpec(spec string) bool {
+	return strings.HasPrefix(spec, "label:") || strings.HasPrefix(spec, "field:")
 }
 
 // fieldCell walks a dot path of map fields and renders the scalar found there

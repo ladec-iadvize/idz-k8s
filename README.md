@@ -55,7 +55,8 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 - **Customizable views**: `C` opens the column chooser (Space shows/hides,
   `←`/`→` reorders — per resource type), including **custom fields**: a label
   key (`app`, `team`) or any object field by dot path (`.status.podIP`,
-  `.spec.nodeName`). Sort and committed filters are
+  `.spec.nodeName`) — rendered like built-in columns (`POD IP`), removable
+  with `⌫` in the chooser. Sort and committed filters are
   remembered per type across launches, `V` saves the whole arrangement (type,
   namespace, columns, sort, filter) as a **named view** and reopens it later,
   `R` resets the current type to its defaults.

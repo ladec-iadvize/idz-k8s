@@ -1533,7 +1533,10 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.pickerWin.Sync(&m.picker)
 			}
 			return m, nil
-		case tea.KeyRunes, tea.KeyBackspace:
+		case tea.KeyBackspace, tea.KeyDelete:
+			m.removeColItem(m.pickerWin.cursor)
+			return m, nil
+		case tea.KeyRunes:
 			return m, nil
 		}
 	}
@@ -3337,7 +3340,7 @@ func (m Model) pickerModal() (string, modalGeom) {
 	lines = append(lines, m.theme.TableHeader.Render(padTo(m.pickerLabel(), inner)))
 	if m.pickerKind == pickColumns {
 		// No type-to-filter here; the line keeps the modal geometry stable.
-		lines = append(lines, m.theme.Faint.Render(padTo("Space show/hide · ←/→ reorder", inner)))
+		lines = append(lines, m.theme.Faint.Render(padTo("Space show/hide · ←/→ reorder · ⌫ remove custom", inner)))
 	} else {
 		lines = append(lines, padTo("▸ "+m.pickerQuery+"▏", inner))
 	}
@@ -4818,7 +4821,12 @@ func (m *Model) applyColumnRows() {
 		if it.on {
 			chk = "✓ "
 		}
-		rows = append(rows, table.Row{chk + it.title})
+		label := it.title
+		if isCustomSpec(it.title) {
+			// Shown like a built-in column, the spec kept as a reminder.
+			label = customTitle(it.title) + "  (" + it.title + ")"
+		}
+		rows = append(rows, table.Row{chk + label})
 	}
 	m.pickerWin.SetRows(rows)
 	m.pickerWin.Sync(&m.picker)
@@ -4868,6 +4876,23 @@ func (m *Model) addCustomColumn(spec string) {
 	m.colItems = append(m.colItems[:at], append([]colItem{{title: spec, on: true}}, m.colItems[at:]...)...)
 	m.applyColumnRows()
 	m.statusMsg = "column added — Enter applies the arrangement"
+}
+
+// removeColItem deletes a user-defined column from the chooser (⌫ — the
+// typo eraser). Built-in columns can only be hidden, never removed.
+func (m *Model) removeColItem(i int) {
+	if i < 0 || i >= len(m.colItems) {
+		return
+	}
+	if !isCustomSpec(m.colItems[i].title) {
+		if m.colItems[i].title != addFieldLabel {
+			m.statusMsg = "built-in columns can only be hidden (Space) — ⌫ removes custom fields"
+		}
+		return
+	}
+	m.colItems = append(m.colItems[:i], m.colItems[i+1:]...)
+	m.applyColumnRows()
+	m.statusMsg = "custom field removed — Enter applies"
 }
 
 // applyColumnChoice commits the chooser (Enter): store the arrangement — or
