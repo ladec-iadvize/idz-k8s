@@ -54,18 +54,17 @@ func (m *Model) columnsForType() []listColumn {
 		return cols
 	}
 	// Base columns in NEITHER list are new since the pref was saved: they
-	// show up by default, so updates never ship invisible features (owner
-	// report 2026-07-09). Legacy prefs (no hidden list) keep the strict
-	// visible-list behavior.
-	if pref.Hidden != nil {
-		hidden := map[string]bool{}
-		for _, h := range pref.Hidden {
-			hidden[h] = true
-		}
-		for _, c := range cols {
-			if !seen[c.title] && !hidden[c.title] {
-				out = append(out, c)
-			}
+	// ALWAYS show up, so updates never ship invisible features (owner
+	// reports 2026-07-09, twice). Legacy prefs (saved before the hidden
+	// list existed) may resurface a column once — hide it again with 'C'
+	// and the choice sticks from then on.
+	hidden := map[string]bool{}
+	for _, h := range pref.Hidden {
+		hidden[h] = true
+	}
+	for _, c := range cols {
+		if !seen[c.title] && !hidden[c.title] {
+			out = append(out, c)
 		}
 	}
 	return out

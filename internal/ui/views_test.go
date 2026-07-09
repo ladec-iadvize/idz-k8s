@@ -47,13 +47,15 @@ func TestColumnPrefAppliedOrderAndSubset(t *testing.T) {
 		"v1/pods": {Columns: []string{"NAME", "NODE", "BOGUS", "AGE"}},
 	}
 	got := colTitles(m.columnsForType())
-	want := []string{"NAME", "NODE", "AGE"} // order kept, unknown BOGUS dropped
-	if len(got) != len(want) {
-		t.Fatalf("columns=%v want %v", got, want)
-	}
+	want := []string{"NAME", "NODE", "AGE"} // saved order first, BOGUS dropped
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("columns=%v want %v", got, want)
+			t.Fatalf("columns=%v want prefix %v", got, want)
+		}
+	}
+	for _, c := range got {
+		if c == "BOGUS" {
+			t.Fatalf("stale title must be dropped: %v", got)
 		}
 	}
 
@@ -223,7 +225,7 @@ func TestSaveOpenAndResetNamedView(t *testing.T) {
 	if m.curType.Key() != "v1/pods" || m.client.Namespace != "demo" || m.filter.Value() != "worker" {
 		t.Fatalf("view not applied: type=%q ns=%q filter=%q", m.curType.Key(), m.client.Namespace, m.filter.Value())
 	}
-	if got := colTitles(m.columnsForType()); got[0] != "NAME" || len(got) != 2 {
+	if got := colTitles(m.columnsForType()); got[0] != "NAME" || got[1] != "NODE" {
 		t.Fatalf("view columns not applied: %v", got)
 	}
 
