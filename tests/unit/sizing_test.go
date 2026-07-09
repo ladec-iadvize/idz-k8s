@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/iadvize/idz-k8s/internal/kube"
 	"github.com/iadvize/idz-k8s/internal/metrics"
 	"github.com/iadvize/idz-k8s/internal/model"
 )
@@ -83,5 +84,26 @@ func TestScopeQueriesShapes(t *testing.T) {
 	}
 	if !strings.Contains(all, "max_over_time") || !strings.Contains(all, "container_memory_working_set_bytes") {
 		t.Errorf("peak mem query malformed:\n%s", all)
+	}
+}
+
+// TestAgeSecondPrecisionDuringStartup (owner request 2026-07-09): ages under
+// five minutes show seconds ("2m31s") so app startup is watchable; the
+// coarser buckets are unchanged.
+func TestAgeSecondPrecisionDuringStartup(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	cases := map[time.Duration]string{
+		12 * time.Second:               "12s",
+		2*time.Minute + 31*time.Second: "2m31s",
+		4*time.Minute + 59*time.Second: "4m59s",
+		5 * time.Minute:                "5m",
+		42 * time.Minute:               "42m",
+		3 * time.Hour:                  "3h",
+		49 * time.Hour:                 "2d",
+	}
+	for d, want := range cases {
+		if got := kube.Age(now.Add(-d), now); got != want {
+			t.Errorf("Age(%v)=%q want %q", d, got, want)
+		}
 	}
 }
