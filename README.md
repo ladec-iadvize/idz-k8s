@@ -13,7 +13,7 @@ controls) — prior kubectl/k9s experience is not required.
 
 ## Build & run
 
-Requires Go 1.23+ and a kubeconfig with read access.
+Requires Go 1.26+ and a kubeconfig with read access.
 
 ```bash
 go build -o idz-k8s ./cmd/idz-k8s
@@ -23,7 +23,8 @@ go build -o idz-k8s ./cmd/idz-k8s
 ```
 
 Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
-`--prometheus-url`, `--refresh` (seconds), `--no-mouse`, `--no-color`.
+`--prometheus-url`, `--refresh` (seconds), `--no-mouse`, `--no-color`,
+`--version`.
 
 ## Views
 
@@ -31,10 +32,10 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 |-----|------|
 | (list) | Browse any resource type — built-ins and CRDs — with READY/STATUS/AGE |
 | `Enter` | Drill down: a workload/Service opens **its pods**, a node opens **the pods it hosts**; a pod opens its YAML |
-| `y` / `d` | YAML view / describe (conditions + the object's events; Services show their backends) |
+| `y` / `d` | YAML view / describe (conditions + the object's events, messages in full; Services show their backends). Secret values are **masked**; `x` on a Secret's detail reveals/hides them |
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod |
 | `t` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
-| `v` | Events **timeline**: a time axis per object, warnings highlighted, selectable details |
+| `v` | Events **timeline**: a time axis per object, warnings highlighted (`w` = warnings only, `k` = kind filter); the selected event's message shows in full below the list |
 | `f` | Failure diagnostics **grouped by failure type** (CrashLoopBackOff, OOMKilled, evictions, restarts, unschedulable — with the scheduler's reason), error groups first |
 | `u` | Top consumers (CPU/memory, via Prometheus) |
 | `x` | Connectivity: which NetworkPolicies select a pod (or a workload's template) and the allowed ingress/egress peers/ports — explicit **unrestricted** and **default-deny** states |
@@ -50,7 +51,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 - **Keyboard**: arrows/PgUp/PgDn, `/` filter (centered input, live), `:` resource
   type (kubectl short names work: `:svc`, `:deploy`, `:helm`…), `n` namespace (a glob like `staging-*` scopes
   every view to all matching namespaces), `c` context, `?` contextual help, `q` quit. `s`/`S` sort
-  columns, `Space` marks resources (then `f`/`v` scope to the selection),
+  columns, `Space` marks resources (then `f`/`v`/`z` scope to the selection),
   `w` warnings-only in the timeline, `Space` pauses log follow.
 - **Customizable views**: `C` opens the column chooser (Space shows/hides,
   `←`/`→` reorders — per resource type), including **custom fields**: a label
@@ -72,6 +73,69 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 - **Live updates**: the list follows the cluster in real time (watch-driven,
   throttled to ~4 fps) — a rolling update is visible as it happens, no manual
   refresh; the periodic tick remains only as a safety net.
+
+## Cookbook
+
+Concrete, keystroke-by-keystroke recipes for the common moves.
+
+**Add a column (pod IP on the pods list)**
+1. `:po` `Enter` to open the pods list, then `C` (column chooser)
+2. `End` to reach `◆ add custom field…`, `Enter`
+3. Type `.status.podIP` — a leading dot means an object field; a plain word
+   (`app`, `team`) means a label key — then `Enter`
+4. `Enter` again to apply: a `POD IP` column appears, and it is remembered
+   for pods across restarts
+
+**Remove a column (or fix a typo)**
+`C`, move onto the entry — custom ones read like `POD IP  (field:.status.podIP)` —
+and press `⌫`: the custom field is deleted (`Enter` applies). Built-in columns
+can only be hidden with `Space` (NAME always stays); `R` resets the whole type
+to its defaults.
+
+**Reorder / hide columns**
+`C`, `←`/`→` moves the highlighted column, `Space` shows/hides it, `Enter`
+applies.
+
+**Save a named view (a "crashwatch")**
+1. On pods: `/` then `api` `Enter` (filter), `s` until RESTARTS, `S` (descending)
+2. `V` → `◆ save current view as…` → type `crashwatch` `Enter`
+3. Later, from anywhere: `V` → `crashwatch` restores type, namespace, columns,
+   sort and filter. Saving under the same name updates it.
+
+**Scope to a namespace family**
+`n`, type `staging-*`, select `◆ pattern: staging-*` — every view (lists,
+events, failures, topology, posture) follows the pattern.
+
+**Watch a rolling update live**
+`:deploy`, `Enter` on the deployment: its pods appear, terminate and turn
+ready in real time (watch-driven, ~4 fps). `Esc` returns to the deployments.
+
+**Find text anywhere**
+`/` behaves the same everywhere: on row views it filters (the committed query
+stays visible as a header chip); on content views (describe/YAML, logs, Helm
+values…) it highlights every match — `n`/`N` navigate, the first `Esc` clears,
+the second leaves the view.
+
+**Reveal a Secret**
+`:secret`, then `Enter` (or `y`) to open its YAML: values are masked; `x`
+toggles the reveal. Nothing is ever written to disk or logs.
+
+**Check if an app is right-sized**
+`:deploy` then `z`: one row per workload, worst first, with usage-vs-request
+gauges. `Enter` on a row opens the detailed panel (average and peak bars
+against request/limit).
+
+## Advisory criteria (sizing)
+
+Verdicts are derived only from observed data over the last hour, in this
+order — thresholds live in `internal/model/sizing.go`:
+
+1. no observed data → **no recommendation** (never estimated)
+2. no request configured → hint to set one near the observed peak
+3. peak ≥ 90% of the limit → **under-provisioned / at risk** (OOM, throttling)
+4. average ≥ request → **under-provisioned**
+5. peak < 50% of the request → **over-provisioned**
+6. otherwise → **sized correctly**
 
 ## Metrics (Prometheus)
 
