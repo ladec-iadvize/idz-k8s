@@ -228,3 +228,27 @@ func TestDottedLabelKeyColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestLegacyBrokenSpecsHeal (owner follow-up 2026-07-09): a spec persisted
+// as "label:metadata.labels.<key>" by an older build must render the label
+// value anyway — configs are never left broken.
+func TestLegacyBrokenSpecsHeal(t *testing.T) {
+	m := newViewsModel(t)
+	raw := podRaw("api", "10.0.0.7", "back")
+	raw["metadata"].(map[string]interface{})["labels"].(map[string]interface{})["app.kubernetes.io/version"] = "2.25.2"
+	o := m.objects[0]
+	o.Raw = raw
+
+	for _, legacy := range []string{
+		"label:metadata.labels.app.kubernetes.io/version",
+		"label:.metadata.labels.app.kubernetes.io/version",
+	} {
+		col := customColumn(legacy)
+		if got := col.cell(&m, o); got != "2.25.2" {
+			t.Errorf("legacy spec %q renders %q, want 2.25.2", legacy, got)
+		}
+		if col.title != "VERSION" {
+			t.Errorf("legacy spec %q title %q, want VERSION", legacy, col.title)
+		}
+	}
+}
