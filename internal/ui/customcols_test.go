@@ -174,16 +174,57 @@ func TestChooserRemovesCustomField(t *testing.T) {
 
 func TestCustomTitleMapping(t *testing.T) {
 	cases := map[string]string{
-		"label:app":                    "APP",
-		"label:karpenter.sh/nodepool":  "KARPENTER.SH/NODEPOOL",
-		"field:.status.podIP":          "POD IP",
-		"field:.spec.nodeName":         "NODE NAME",
-		"field:.spec.storageClassName": "STORAGE CLASS NAME",
-		"field:.spec.schedule":         "SCHEDULE",
+		"label:app":                       "APP",
+		"label:karpenter.sh/nodepool":     "NODEPOOL", // meaningful tail only
+		"label:app.kubernetes.io/version": "VERSION",
+		"field:.status.podIP":             "POD IP",
+		"field:.spec.nodeName":            "NODE NAME",
+		"field:.spec.storageClassName":    "STORAGE CLASS NAME",
+		"field:.spec.schedule":            "SCHEDULE",
 	}
 	for in, want := range cases {
 		if got := customTitle(in); got != want {
 			t.Errorf("customTitle(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+// TestDottedLabelKeyColumns (owner bug 2026-07-09): app version behind
+// metadata.labels."app.kubernetes.io/version" must be addable — whatever
+// form the user types.
+func TestDottedLabelKeyColumns(t *testing.T) {
+	m := newViewsModel(t)
+	raw := podRaw("api", "10.0.0.7", "back")
+	raw["metadata"].(map[string]interface{})["labels"].(map[string]interface{})["app.kubernetes.io/version"] = "2.25.2"
+	m.objects[0].Raw = raw
+	o := m.objects[0]
+
+	// Direct label spec with a dotted key.
+	if got := customColumn("label:app.kubernetes.io/version").cell(&m, o); got != "2.25.2" {
+		t.Errorf("label cell=%q want 2.25.2", got)
+	}
+	// Field path through metadata.labels: greedy dotted-key matching.
+	if got := customColumn("field:.metadata.labels.app.kubernetes.io/version").cell(&m, o); got != "2.25.2" {
+		t.Errorf("field cell=%q want 2.25.2", got)
+	}
+
+	// Chooser input normalization: what people naturally type.
+	for _, input := range []string{
+		"app.kubernetes.io/version",
+		"metadata.labels.app.kubernetes.io/version",
+		".metadata.labels.app.kubernetes.io/version",
+	} {
+		mi, _ := m.openColumnChooser()
+		m2 := asModel(t, mi)
+		m2.addCustomColumn(input)
+		found := ""
+		for _, it := range m2.colItems {
+			if it.on && isCustomSpec(it.title) {
+				found = it.title
+			}
+		}
+		if found != "label:app.kubernetes.io/version" {
+			t.Errorf("input %q normalized to %q, want label:app.kubernetes.io/version", input, found)
 		}
 	}
 }

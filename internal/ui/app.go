@@ -1208,6 +1208,12 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case hit(msg, m.keys.Jump):
 		return m.openPicker(pickType)
 	case hit(msg, m.keys.Top):
+		// Owner decision 2026-07-09: node-oriented views live behind the
+		// list they concern instead of being global.
+		if !strings.EqualFold(m.curType.Kind, "Node") {
+			m.statusMsg = "top usage: open it from the nodes list (:no)"
+			return m, nil
+		}
 		return m.openTop()
 	case hit(msg, m.keys.Diag):
 		return m.openDiag()
@@ -1222,6 +1228,10 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case hit(msg, m.keys.Drift):
 		return m.openDrift()
 	case hit(msg, m.keys.Topology):
+		if !strings.EqualFold(m.curType.Kind, "Node") && !strings.EqualFold(m.curType.Kind, "Deployment") {
+			m.statusMsg = "topology: open it from the deployments (:deploy) or nodes (:no) list"
+			return m, nil
+		}
 		return m.openTopology()
 	case hit(msg, m.keys.Events):
 		return m.openEvents()
@@ -2825,9 +2835,9 @@ func diagGroupWeight(ds []model.Diagnostic) int {
 
 func (m *Model) renderTop(rows []model.TopConsumer) {
 	var b strings.Builder
-	b.WriteString(m.rule(fmt.Sprintf("Top consumers by %s — 'u' switches cpu/mem", m.topKind)) + "\n\n")
+	b.WriteString(m.rule(fmt.Sprintf("Top consumers by %s — cluster-wide, observed now · 'u' switches cpu/mem", m.topKind)) + "\n\n")
 	if len(rows) == 0 {
-		b.WriteString("— no data / metrics unavailable")
+		b.WriteString(m.theme.Faint.Render("— no data: Prometheus unreachable or no samples (nothing is estimated)"))
 		m.setContent(screenTop, b.String())
 		return
 	}
@@ -2837,14 +2847,20 @@ func (m *Model) renderTop(rows []model.TopConsumer) {
 			max = r.Value
 		}
 	}
-	for _, r := range rows {
+	kindLabel := "CPU"
+	if m.topKind == model.MetricMemory {
+		kindLabel = "MEMORY"
+	}
+	head := fmt.Sprintf("  %-3s %-46s %10s  %-16s %s", "#", "POD", kindLabel, "", "% OF TOP")
+	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)) + "\n")
+	for i, r := range rows {
 		frac := 0.0
 		if max > 0 {
 			frac = r.Value / max
 		}
-		label := r.Namespace + "/" + r.Name
-		fmt.Fprintf(&b, "%s %10s  %s\n",
-			components.Gauge(frac, 15), components.FormatValue(r.Kind, r.Value), label)
+		fmt.Fprintf(&b, "  %-3d %-46s %10s  %s %4.0f%%\n",
+			i+1, truncate(r.Namespace+"/"+r.Name, 46),
+			components.FormatValue(r.Kind, r.Value), m.coloredGauge(frac, 14), frac*100)
 	}
 	m.setContent(screenTop, b.String())
 }
@@ -3591,12 +3607,27 @@ func (m Model) screenKeymap() keymapView {
 	nav := []key.Binding{k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End, k.Mouse}
 	switch m.screen {
 	case screenList:
+		// Node-oriented views only advertise themselves where they open
+		// (deployments/nodes for topology, nodes for top usage).
+		isNode := strings.EqualFold(m.curType.Kind, "Node")
+		isDeploy := strings.EqualFold(m.curType.Kind, "Deployment")
+		short := []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Diag, k.Events}
+		views := []key.Binding{k.Sort, k.SortDir, k.Diag, k.Events, k.Sizing, k.Posture, k.Connectivity, k.Access, k.Drift}
+		if isNode || isDeploy {
+			short = append(short, k.Topology)
+			views = append(views, k.Topology)
+		}
+		if isNode {
+			short = append(short, k.Top)
+			views = append(views, k.Top)
+		}
+		short = append(short, k.Namespace, k.Context, k.Help, k.Quit)
 		return keymapView{
-			short: []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Top, k.Diag, k.Topology, k.Events, k.Namespace, k.Context, k.Help, k.Quit},
+			short: short,
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Top, k.Diag, k.Topology, k.Events, k.Sizing, k.Posture, k.Connectivity, k.Access, k.Drift},
+				views,
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}
@@ -4856,7 +4887,13 @@ func (m *Model) addCustomColumn(spec string) {
 	if spec == "" {
 		return
 	}
-	if strings.HasPrefix(spec, ".") {
+	// Normalize: "metadata.labels.<key>" (with or without a leading dot) is
+	// what people naturally type for a label — turn it into a label column,
+	// where dotted keys like app.kubernetes.io/version just work.
+	core := strings.TrimPrefix(spec, ".")
+	if k, ok := strings.CutPrefix(core, "metadata.labels."); ok && k != "" {
+		spec = "label:" + k
+	} else if strings.HasPrefix(spec, ".") {
 		spec = "field:" + spec
 	} else {
 		spec = "label:" + strings.TrimPrefix(spec, "label:")
