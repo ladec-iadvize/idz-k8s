@@ -61,6 +61,11 @@ func (m *Model) columnsForType() []listColumn {
 func customColumn(spec string) listColumn {
 	title := customTitle(spec)
 	if k, ok := strings.CutPrefix(spec, "label:"); ok {
+		// Heal specs saved before the input normalization existed: a key
+		// accidentally stored as "metadata.labels.<key>" is what the user
+		// meant by "<key>" (no real label key starts that way).
+		k = strings.TrimPrefix(k, ".")
+		k = strings.TrimPrefix(k, "metadata.labels.")
 		return listColumn{title: title, width: 16,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				return orDash(kube.ObjectLabel(o.Raw, k))
@@ -78,6 +83,7 @@ func customColumn(spec string) listColumn {
 // "label:app" → "APP", "field:.status.podIP" → "POD IP".
 func customTitle(spec string) string {
 	if k, ok := strings.CutPrefix(spec, "label:"); ok {
+		k = strings.TrimPrefix(strings.TrimPrefix(k, "."), "metadata.labels.")
 		// Long conventional keys keep only their meaningful tail:
 		// app.kubernetes.io/version → VERSION.
 		if i := strings.LastIndex(k, "/"); i >= 0 && i+1 < len(k) {
