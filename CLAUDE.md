@@ -6,6 +6,14 @@ changing anything.
 
 ## Non-negotiable invariants
 
+0. **Consistency is a core product value** (owner directive 2026-07-09).
+   Every view must offer the same interactions the same way: '/' filters row
+   views and searches content views, tables sort with s/S + header click,
+   gauges/verdicts/rule() headers share one visual language, marks (Space)
+   scope the analysis views, Esc means clear-then-back. When adding a view,
+   reuse the established patterns — and when you SPOT an inconsistency,
+   report it to the owner instead of leaving it.
+
 1. **Strictly read-only** (FR-012, SC-006). Never wire a mutating Kubernetes
    verb (`create/update/patch/delete/eviction/exec`) or a mutating Helm action
    (`Install/Upgrade/Rollback/Uninstall`). This is enforced by tests:

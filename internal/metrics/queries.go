@@ -32,3 +32,17 @@ func TopPods(n int, kind model.MetricKind) string {
 	}
 	return fmt.Sprintf(`topk(%d, sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!=""}[5m])))`, n)
 }
+
+// ScopeNowByPod builds the instant per-pod usage vector for a whole scope
+// (one namespace when exactNS is set, the cluster otherwise) — the usage
+// view derives pods AND per-workload aggregates from two of these.
+func ScopeNowByPod(exactNS string, kind model.MetricKind) string {
+	matcher := `container!=""`
+	if exactNS != "" {
+		matcher = fmt.Sprintf(`namespace=%q,container!=""`, exactNS)
+	}
+	if kind == model.MetricMemory {
+		return fmt.Sprintf(`sum by (namespace,pod) (container_memory_working_set_bytes{%s})`, matcher)
+	}
+	return fmt.Sprintf(`sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{%s}[5m]))`, matcher)
+}
