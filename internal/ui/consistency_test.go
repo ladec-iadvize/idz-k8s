@@ -190,24 +190,29 @@ func TestLiveRefreshThrottle(t *testing.T) {
 // deployments/nodes, 'u' only from nodes; elsewhere a hint, no screen change.
 func TestNodeViewsAreContextual(t *testing.T) {
 	m := plainModel(t) // pods list
+	// 'u' passes the gate from pods (rev. 2026-07-09) — without a metrics
+	// client it lands on the explicit unavailable message, NOT the type hint.
 	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
 	m = asModel(t, mi)
-	if m.screen != screenList || !strings.Contains(m.statusMsg, "nodes list") {
-		t.Fatalf("'u' on pods must hint (screen=%d msg=%q)", m.screen, m.statusMsg)
+	if !strings.Contains(m.errMsg, "metrics unavailable") {
+		t.Fatalf("'u' on pods must pass the gate (errMsg=%q statusMsg=%q)", m.errMsg, m.statusMsg)
 	}
+	m.errMsg = ""
+	// …but 't' still hints there.
 	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	m = asModel(t, mi)
 	if m.screen != screenList || m.statusMsg == "" {
 		t.Fatalf("'t' on pods must hint (screen=%d)", m.screen)
 	}
 
+	// 'u' hints on nodes now (usage reads pods).
 	m.curType = model.ResourceType{Version: "v1", Resource: "nodes", Kind: "Node", Namespaced: false}
+	m.statusMsg = ""
 	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
 	m = asModel(t, mi)
-	if m.screen != screenTop {
-		t.Fatalf("'u' on nodes must open top usage, screen=%d", m.screen)
+	if m.screen != screenList || !strings.Contains(m.statusMsg, "pods") {
+		t.Fatalf("'u' on nodes must hint (screen=%d msg=%q)", m.screen, m.statusMsg)
 	}
-	m.screen = screenList
 	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
 	m = asModel(t, mi)
 	if m.screen != screenTopology {
@@ -215,24 +220,70 @@ func TestNodeViewsAreContextual(t *testing.T) {
 	}
 }
 
-// TestRenderTopHouseStyle: the top view uses the shared look — header row,
-// rank, aligned values, relative gauge — and an explicit no-data state.
-func TestRenderTopHouseStyle(t *testing.T) {
+// TestUsageTable: CPU and memory side by side (no toggle), sortable and
+// filterable like every other table, CPU-descending by default, explicit
+// missing-metric cells.
+func TestUsageTable(t *testing.T) {
 	m := plainModel(t)
+	m.client.Namespace = "" // all-ns → names prefixed
 	m.screen = screenTop
-	m.topKind = model.MetricCPU
-	m.renderTop([]model.TopConsumer{
-		{Namespace: "demo", Name: "big", Kind: model.MetricCPU, Value: 2.0},
-		{Namespace: "demo", Name: "small", Kind: model.MetricCPU, Value: 0.5},
-	})
-	content := m.usage.View()
-	for _, want := range []string{"POD", "CPU", "% OF TOP", "demo/big", "100%", "25%"} {
-		if !strings.Contains(content, want) {
-			t.Fatalf("top view missing %q:\n%s", want, content)
+	mi, _ := m.Update(usageTableMsg{rows: []model.UsageRow{
+		{Namespace: "demo", Name: "small", Pods: 1, CPU: 0.5, Mem: 4e8, HasCPU: true, HasMem: true},
+		{Namespace: "demo", Name: "big", Pods: 1, CPU: 2.0, Mem: 1e9, HasCPU: true, HasMem: true},
+		{Namespace: "demo", Name: "silent", Pods: 1},
+	}})
+	m = asModel(t, mi)
+
+	// Default order: hottest CPU first.
+	if m.usageRows[0].Name != "big" {
+		t.Fatalf("default order must be CPU desc, got %+v", m.usageRows[0])
+	}
+	view := m.usageListView()
+	for _, want := range []string{"NAME", "CPU", "MEMORY", "demo/big", "—"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("usage view missing %q:\n%s", want, view)
 		}
 	}
-	m.renderTop(nil)
-	if !strings.Contains(m.usage.View(), "no data") {
-		t.Fatal("empty top view must state the no-data case")
+
+	// '/' filters rows like every other table.
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	m = asModel(t, mi)
+	if !m.usageTyping {
+		t.Fatal("'/' must open the usage filter")
+	}
+	for _, r := range "big" {
+		mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = asModel(t, mi)
+	}
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if len(m.usageRows) != 1 || m.usageRows[0].Name != "big" {
+		t.Fatalf("filter broken: %+v", m.usageRows)
+	}
+
+	// 's' cycles the sortable columns; 'S' flips.
+	m.usageFilterQ = ""
+	m.applyUsageFilter()
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	m = asModel(t, mi)
+	if m.usageSortCol != 0 || m.usageRows[0].Name != "big" {
+		t.Fatalf("name sort: col=%d first=%s", m.usageSortCol, m.usageRows[0].Name)
+	}
+}
+
+// TestUsageAggregatesPerDeployment: from a workload list, rows sum the pods
+// matched by each selector.
+func TestUsageAggregatesPerDeployment(t *testing.T) {
+	m := plainModel(t)
+	m.screen = screenTop
+	mi, _ := m.Update(usageTableMsg{isAgg: true, rows: []model.UsageRow{
+		{Namespace: "demo", Name: "back", Pods: 3, CPU: 1.5, Mem: 3e9, HasCPU: true, HasMem: true},
+	}})
+	m = asModel(t, mi)
+	view := m.usageListView()
+	for _, want := range []string{"PODS", "back", "3"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("aggregated view missing %q:\n%s", want, view)
+		}
 	}
 }

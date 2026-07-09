@@ -80,16 +80,16 @@ func TestSnapshotRender(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Top consumers view (US2).
+	// Usage table (US2, reworked 2026-07-09: CPU and memory side by side).
 	tv := m
-	tv.topKind = model.MetricCPU
 	tv.screen = screenTop
 	tv.layout()
-	tv.renderTop([]model.TopConsumer{
-		{Namespace: "prod", Name: "api-7c9", Kind: model.MetricCPU, Value: 1.85},
-		{Namespace: "prod", Name: "worker-2", Kind: model.MetricCPU, Value: 1.10},
-		{Namespace: "demo", Name: "web-1", Kind: model.MetricCPU, Value: 0.45},
-	})
+	tv.usageAllRows = []model.UsageRow{
+		{Namespace: "prod", Name: "api-7c9", Pods: 1, CPU: 1.85, Mem: 1.2e9, HasCPU: true, HasMem: true},
+		{Namespace: "prod", Name: "worker-2", Pods: 1, CPU: 1.10, Mem: 6e8, HasCPU: true, HasMem: true},
+		{Namespace: "demo", Name: "web-1", Pods: 1, CPU: 0.45, Mem: 2e8, HasCPU: true, HasMem: true},
+	}
+	tv.applyUsageFilter()
 	if err := os.WriteFile(out+"/top.txt", []byte(strip(tv.View())), 0o644); err != nil {
 		t.Fatal(err)
 	}

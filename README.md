@@ -37,7 +37,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 | `t` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
 | `v` | Events **timeline**: a time axis per object, warnings highlighted (`w` = warnings only, `k` = kind filter); the selected event's message shows in full below the list |
 | `f` | Failure diagnostics **grouped by failure type** (CrashLoopBackOff, OOMKilled, evictions, restarts, unschedulable — with the scheduler's reason), error groups first |
-| `u` | Top consumers (CPU/memory, via Prometheus) |
+| `u` | Usage (from the pods or deployments list): **CPU and memory side by side** — values, gauges relative to the top consumer; per-deployment rows aggregate their pods; sortable/filterable like every table |
 | `x` | Connectivity: which NetworkPolicies select a pod (or a workload's template) and the allowed ingress/egress peers/ports — explicit **unrestricted** and **default-deny** states |
 | `a` | Access (RBAC): the API server's own answer on what your credentials can read, plus the discovered types you cannot list; a 403 on a list names the type instead of faking a disconnection |
 | `p` | Posture (advisory): best-practice findings by rule — missing requests/limits, privileged/root containers, missing probes, `latest` images, namespaces without NetworkPolicy, TLS certificates near/past expiry |
@@ -49,7 +49,7 @@ Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 ## Interaction
 
 - **Keyboard**: arrows/PgUp/PgDn, `/` filter (centered input, live), `:` resource
-  type (kubectl short names work: `:svc`, `:deploy`, `:helm`…), `n` namespace (a glob like `staging-*` scopes
+  type (kubectl short names work: `:svc`, `:deploy`, `:helm`…; native types listed first, CRDs below), `n` namespace (a glob like `staging-*` scopes
   every view to all matching namespaces), `c` context, `?` contextual help, `q` quit. `s`/`S` sort
   columns, `Space` marks resources (then `f`/`v`/`z` scope to the selection),
   `w` warnings-only in the timeline, `Space` pauses log follow.

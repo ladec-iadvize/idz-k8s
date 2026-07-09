@@ -227,3 +227,16 @@ type Diagnostic struct {
 	Reason    string // e.g. OOMKilled, CrashLoopBackOff, Evicted, Error (exit 1)
 	Level     HealthLevel
 }
+
+// UsageRow is one row of the usage view ('u'): observed instantaneous CPU
+// and memory for a pod or aggregated over a workload's pods. Missing metrics
+// stay explicit (Has*), never zero-filled.
+type UsageRow struct {
+	Namespace string
+	Name      string
+	Pods      int // matched pods when aggregated per workload; 1 for a pod
+	CPU       float64
+	Mem       float64
+	HasCPU    bool
+	HasMem    bool
+}

@@ -112,7 +112,6 @@ type Model struct {
 	table    table.Model
 	detail   viewport.Model
 	logsView viewport.Model
-	usage    viewport.Model
 	diag     viewport.Model
 	topo     viewport.Model
 	events   viewport.Model
@@ -140,7 +139,16 @@ type Model struct {
 	detailNS, detailName string
 	detailCPU, detailMem model.Usage
 	detailHasUsage       bool
-	topKind              model.MetricKind
+	// Usage view ('u', pods or per-deployment aggregate): CPU and memory
+	// side by side — one consistent table, no metric toggle.
+	usageRows    []model.UsageRow
+	usageAllRows []model.UsageRow
+	usageWin     winTable
+	usageSortCol int
+	usageSortAsc bool
+	usageIsAgg   bool // true when rows aggregate a workload's pods
+	usageFilterQ string
+	usageTyping  bool
 
 	// Events timeline (US5).
 	eventRows       []model.Event
@@ -334,7 +342,6 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		table:          table.New(table.WithFocused(true)),
 		detail:         viewport.New(0, 0),
 		logsView:       viewport.New(0, 0),
-		usage:          viewport.New(0, 0),
 		diag:           viewport.New(0, 0),
 		topo:           viewport.New(0, 0),
 		events:         viewport.New(0, 0),
@@ -351,6 +358,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		marked:         map[string]model.ResourceObject{},
 		sortCol:        -1,
 		sizingSortCol:  -1,
+		usageSortCol:   -1,
 		sortAsc:        true,
 	}
 	// Table look & feel: colored headers, background-highlighted selection.
@@ -396,9 +404,10 @@ type changeFlushMsg struct{}
 const changeFlushDelay = 250 * time.Millisecond
 
 type errMsg struct{ err error }
-type topMsg struct {
-	rows []model.TopConsumer
-	kind model.MetricKind
+type usageTableMsg struct {
+	rows  []model.UsageRow
+	isAgg bool
+	err   error
 }
 type usageMsg struct {
 	ns, name string
@@ -622,16 +631,6 @@ func (m Model) fetchEvents() tea.Cmd {
 	}
 }
 
-func (m Model) fetchTop(kind model.MetricKind) tea.Cmd {
-	mc := m.metrics
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		rows := mc.TopN(ctx, metrics.TopPods(15, kind), kind)
-		return topMsg{rows: rows, kind: kind}
-	}
-}
-
 func (m Model) fetchPodUsage(ns, name string, raw map[string]interface{}) tea.Cmd {
 	mc := m.metrics
 	return func() tea.Msg {
@@ -777,9 +776,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.metrics = msg.client
 		return m, nil
 
-	case topMsg:
-		m.topKind = msg.kind
-		m.renderTop(msg.rows)
+	case usageTableMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		m.usageAllRows, m.usageIsAgg = msg.rows, msg.isAgg
+		m.statusMsg = ""
+		m.applyUsageFilter()
 		return m, nil
 
 	case diagMsg:
@@ -1041,6 +1045,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Usage-view filter typing mode (same behavior as the other tables).
+	if m.screen == screenTop && m.usageTyping {
+		switch msg.Type {
+		case tea.KeyEnter:
+			m.usageTyping = false
+			m.applyUsageFilter()
+			return m, nil
+		case tea.KeyEscape:
+			m.usageTyping = false
+			m.usageFilterQ = ""
+			m.applyUsageFilter()
+			return m, nil
+		case tea.KeyBackspace:
+			if m.usageFilterQ != "" {
+				m.usageFilterQ = m.usageFilterQ[:len(m.usageFilterQ)-1]
+				m.applyUsageFilter()
+			}
+			return m, nil
+		case tea.KeyRunes, tea.KeySpace:
+			m.usageFilterQ += string(msg.Runes)
+			m.applyUsageFilter()
+			return m, nil
+		}
+		return m, nil
+	}
+
 	// Picker type-to-filter captures printable keys BEFORE global shortcuts
 	// (typing "configmaps" must not trigger 'm' mouse-toggle or 'q' quit).
 	if m.screen == screenPicker {
@@ -1166,22 +1196,25 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleTopKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if hit(msg, m.keys.Top) {
-		// Toggle CPU <-> memory and refetch.
-		if m.topKind == model.MetricCPU {
-			m.topKind = model.MetricMemory
-		} else {
-			m.topKind = model.MetricCPU
+	switch {
+	case hit(msg, m.keys.Filter):
+		m.usageTyping = true
+		return m, nil
+	case hit(msg, m.keys.Sort):
+		m.usageSortCol++
+		if m.usageSortCol >= len(m.usageColumns()) {
+			m.usageSortCol = -1 // back to CPU-desc default
 		}
-		if !m.metrics.Enabled() {
-			return m, nil
-		}
-		m.setContent(screenTop, "loading top consumers…")
-		return m, m.fetchTop(m.topKind)
+		m.usageSortAsc = true
+		m.applyUsageSort()
+		return m, nil
+	case hit(msg, m.keys.SortDir):
+		m.usageSortAsc = !m.usageSortAsc
+		m.applyUsageSort()
+		return m, nil
 	}
-	var cmd tea.Cmd
-	m.usage, cmd = m.usage.Update(msg)
-	return m, cmd
+	m.navigate(&m.usageWin, msg)
+	return m, nil
 }
 
 func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1208,10 +1241,10 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case hit(msg, m.keys.Jump):
 		return m.openPicker(pickType)
 	case hit(msg, m.keys.Top):
-		// Owner decision 2026-07-09: node-oriented views live behind the
-		// list they concern instead of being global.
-		if !strings.EqualFold(m.curType.Kind, "Node") {
-			m.statusMsg = "top usage: open it from the nodes list (:no)"
+		// Owner decision 2026-07-09 (rev.): usage reads pods, so it lives
+		// behind the pods and deployments lists (per-deployment aggregate).
+		if !strings.EqualFold(m.curType.Kind, "Pod") && !strings.EqualFold(m.curType.Kind, "Deployment") {
+			m.statusMsg = "usage: open it from the pods (:po) or deployments (:deploy) list"
 			return m, nil
 		}
 		return m.openTop()
@@ -1316,6 +1349,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		case screenSizingList:
 			m.sizingWin.Move(delta)
 			return m, nil
+		case screenTop:
+			m.usageWin.Move(delta)
+			return m, nil
 		case screenHelm:
 			m.helmWin.Move(delta)
 			m.helmWin.Sync(&m.helmTable)
@@ -1387,6 +1423,20 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				return m.openListSelection()
 			}
 		}
+		return m, nil
+	case screenTop:
+		if msg.Y == 2 {
+			if col, ok := m.usageColumnAt(msg.X); ok {
+				if m.usageSortCol == col {
+					m.usageSortAsc = !m.usageSortAsc
+				} else {
+					m.usageSortCol, m.usageSortAsc = col, true
+				}
+				m.applyUsageSort()
+			}
+			return m, nil
+		}
+		m.usageWin.ClickVisible(msg.Y - 3)
 		return m, nil
 	case screenSizingList:
 		if msg.Y == 2 {
@@ -1580,8 +1630,6 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail, cmd = m.detail.Update(msg)
 	case screenLogs:
 		m.logsView, cmd = m.logsView.Update(msg)
-	case screenTop:
-		m.usage, cmd = m.usage.Update(msg)
 	case screenDiag:
 		m.diag, cmd = m.diag.Update(msg)
 	case screenSizing:
@@ -1941,18 +1989,101 @@ func (m Model) usagePanel() string {
 
 func (m *Model) openTop() (tea.Model, tea.Cmd) {
 	m.screen = screenTop
-	m.topKind = model.MetricCPU
+	m.usageRows, m.usageAllRows = nil, nil
+	m.usageWin.SetRows(nil)
 	if !m.metrics.Enabled() {
-		m.setContent(screenTop, "Top consumers — metrics unavailable.\n\n"+
-			"No in-cluster Prometheus was auto-discovered for this context, or it is\n"+
-			"not reachable via the API server proxy. You can force one with\n"+
-			"--prometheus-url (Prometheus is the single metrics source).")
-		m.layout()
+		m.errMsg = "usage: metrics unavailable (no Prometheus reachable — see --prometheus-url)"
+		m.screen = screenList
 		return m, nil
 	}
-	m.setContent(screenTop, "loading top consumers…")
+	m.statusMsg = "observing usage…"
 	m.layout()
-	return m, m.fetchTop(model.MetricCPU)
+	// Deployments aggregate their pods' usage; the pods view lists them raw.
+	var workloads []model.ResourceObject
+	if !strings.EqualFold(m.curType.Kind, "Pod") {
+		src := m.rowObjs
+		if len(m.marked) > 0 {
+			src = make([]model.ResourceObject, 0, len(m.marked))
+			for _, o := range m.marked {
+				src = append(src, o)
+			}
+		}
+		for _, o := range src {
+			if _, ok := kube.PodSelectorLabels(o.Raw); ok {
+				workloads = append(workloads, o)
+			}
+		}
+	}
+	return m, m.fetchUsage(workloads)
+}
+
+// fetchUsage builds the usage rows: two instant per-pod queries feed both
+// the pods view and the per-workload aggregation (cost independent of the
+// row count).
+func (m Model) fetchUsage(workloads []model.ResourceObject) tea.Cmd {
+	cl, mc, ns := m.client, m.metrics, m.client.Namespace
+	isAgg := len(workloads) > 0
+	exactNS := ns
+	if kube.IsNamespacePattern(ns) {
+		exactNS = ""
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		toMap := func(rows []model.TopConsumer) map[string]float64 {
+			out := make(map[string]float64, len(rows))
+			for _, r := range rows {
+				out[r.Namespace+"/"+r.Name] = r.Value
+			}
+			return out
+		}
+		cpu := toMap(mc.TopN(ctx, metrics.ScopeNowByPod(exactNS, model.MetricCPU), model.MetricCPU))
+		mem := toMap(mc.TopN(ctx, metrics.ScopeNowByPod(exactNS, model.MetricMemory), model.MetricMemory))
+		podType := model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+		pods, err := cl.List(ctx, podType, ns)
+		if err != nil {
+			return usageTableMsg{err: err}
+		}
+		var rows []model.UsageRow
+		if !isAgg {
+			rows = make([]model.UsageRow, 0, len(pods))
+			for _, p := range pods {
+				key := p.Namespace + "/" + p.Name
+				c, hc := cpu[key]
+				mv, hm := mem[key]
+				rows = append(rows, model.UsageRow{
+					Namespace: p.Namespace, Name: p.Name, Pods: 1,
+					CPU: c, Mem: mv, HasCPU: hc, HasMem: hm,
+				})
+			}
+		} else {
+			rows = make([]model.UsageRow, 0, len(workloads))
+			for _, wl := range workloads {
+				sel, ok := kube.PodSelectorLabels(wl.Raw)
+				if !ok {
+					continue
+				}
+				row := model.UsageRow{Namespace: wl.Namespace, Name: wl.Name}
+				for _, p := range pods {
+					if p.Namespace != wl.Namespace || !kube.LabelsMatch(p.Raw, sel) {
+						continue
+					}
+					row.Pods++
+					key := p.Namespace + "/" + p.Name
+					if v, found := cpu[key]; found {
+						row.CPU += v
+						row.HasCPU = true
+					}
+					if v, found := mem[key]; found {
+						row.Mem += v
+						row.HasMem = true
+					}
+				}
+				rows = append(rows, row)
+			}
+		}
+		return usageTableMsg{rows: rows, isAgg: isAgg}
+	}
 }
 
 func (m *Model) openEvents() (tea.Model, tea.Cmd) {
@@ -2833,38 +2964,6 @@ func diagGroupWeight(ds []model.Diagnostic) int {
 	return w
 }
 
-func (m *Model) renderTop(rows []model.TopConsumer) {
-	var b strings.Builder
-	b.WriteString(m.rule(fmt.Sprintf("Top consumers by %s — cluster-wide, observed now · 'u' switches cpu/mem", m.topKind)) + "\n\n")
-	if len(rows) == 0 {
-		b.WriteString(m.theme.Faint.Render("— no data: Prometheus unreachable or no samples (nothing is estimated)"))
-		m.setContent(screenTop, b.String())
-		return
-	}
-	max := rows[0].Value
-	for _, r := range rows {
-		if r.Value > max {
-			max = r.Value
-		}
-	}
-	kindLabel := "CPU"
-	if m.topKind == model.MetricMemory {
-		kindLabel = "MEMORY"
-	}
-	head := fmt.Sprintf("  %-3s %-46s %10s  %-16s %s", "#", "POD", kindLabel, "", "% OF TOP")
-	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)) + "\n")
-	for i, r := range rows {
-		frac := 0.0
-		if max > 0 {
-			frac = r.Value / max
-		}
-		fmt.Fprintf(&b, "  %-3d %-46s %10s  %s %4.0f%%\n",
-			i+1, truncate(r.Namespace+"/"+r.Name, 46),
-			components.FormatValue(r.Kind, r.Value), m.coloredGauge(frac, 14), frac*100)
-	}
-	m.setContent(screenTop, b.String())
-}
-
 func (m Model) openLogs() (tea.Model, tea.Cmd) {
 	obj, ok := m.selectedObject()
 	if !ok {
@@ -2917,9 +3016,19 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 	var opts []string
 	switch kind {
 	case pickType:
+		// Native Kubernetes types first, CRDs below (owner request
+		// 2026-07-09) — each group alphabetical; type-to-filter unchanged.
+		var natives, crds []string
 		for _, t := range m.types {
-			opts = append(opts, typeOptionLabel(t))
+			if t.IsCRD {
+				crds = append(crds, typeOptionLabel(t))
+			} else {
+				natives = append(natives, typeOptionLabel(t))
+			}
 		}
+		sort.Strings(natives)
+		sort.Strings(crds)
+		opts = append(append(opts, natives...), crds...)
 	case pickContext:
 		ctxs, err := kube.Contexts(m.kubeconfigPath, m.client.Namespace)
 		if err != nil {
@@ -2940,7 +3049,9 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 		}
 		opts = nss
 	}
-	sort.Strings(opts)
+	if kind != pickType {
+		sort.Strings(opts)
+	}
 	switch kind {
 	case pickNamespace:
 		// Offer an "all namespaces" choice at the top (cross-namespace view).
@@ -3153,7 +3264,7 @@ func (m *Model) layout() {
 	m.helmWin.Sync(&m.helmTable)
 	m.detail.Width, m.detail.Height = m.width, bodyH
 	m.logsView.Width, m.logsView.Height = m.width, bodyH
-	m.usage.Width, m.usage.Height = m.width, bodyH
+	m.usageWin.SetHeight(bodyH - 1) // -1: the usage table's own header
 	m.diag.Width, m.diag.Height = m.width, bodyH
 	m.topo.Width, m.topo.Height = m.width, bodyH
 	m.events.Width, m.events.Height = m.width, bodyH
@@ -3198,7 +3309,7 @@ func (m Model) bodyView(sc screen) string {
 	case screenLogs:
 		return m.logsView.View()
 	case screenTop:
-		return m.usage.View()
+		return m.usageListView()
 	case screenDiag:
 		return m.diag.View()
 	case screenTopology:
@@ -3266,6 +3377,8 @@ func (m Model) View() string {
 		out = overlayCenter(out, m.inputModal("search", m.searchInput, "Enter search · 'n'/'N' navigate · Esc clear"), m.width)
 	case m.screen == screenSizingList && m.sizingFiltering:
 		out = overlayCenter(out, m.inputModal("filter workloads", m.sizingQuery, "Enter save · Esc cancel"), m.width)
+	case m.screen == screenTop && m.usageTyping:
+		out = overlayCenter(out, m.inputModal("filter usage rows", m.usageFilterQ, "Enter save · Esc cancel"), m.width)
 	}
 	return out
 }
@@ -3469,6 +3582,8 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 	add(sep, "")
 	add(m.theme.Faint.Render("type ")+m.theme.TypeVal.Render(typeLabel), ":")
 	switch {
+	case sc == screenTop && (strings.TrimSpace(m.usageFilterQ) != "" || m.usageTyping):
+		line += "  " + m.theme.Warning.Render("filter:"+m.usageFilterQ) + m.theme.Faint.Render(" (/ edit)")
 	case sc == screenSizingList && (strings.TrimSpace(m.sizingQuery) != "" || m.sizingFiltering):
 		line += "  " + m.theme.Warning.Render("filter:"+m.sizingQuery) + m.theme.Faint.Render(" (/ edit)")
 	case (sc == screenHelm || sc == screenHelmHist) && (strings.TrimSpace(m.helmQuery) != "" || m.helmFiltering):
@@ -3613,11 +3728,12 @@ func (m Model) screenKeymap() keymapView {
 		isDeploy := strings.EqualFold(m.curType.Kind, "Deployment")
 		short := []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Diag, k.Events}
 		views := []key.Binding{k.Sort, k.SortDir, k.Diag, k.Events, k.Sizing, k.Posture, k.Connectivity, k.Access, k.Drift}
+		isPod := strings.EqualFold(m.curType.Kind, "Pod")
 		if isNode || isDeploy {
 			short = append(short, k.Topology)
 			views = append(views, k.Topology)
 		}
-		if isNode {
+		if isPod || isDeploy {
 			short = append(short, k.Top)
 			views = append(views, k.Top)
 		}
@@ -3653,8 +3769,8 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenTop:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Top, k.Filter, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Top, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Filter, k.Sort, k.SortDir, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Filter, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
 	case screenSizingList:
 		return keymapView{
@@ -3745,8 +3861,6 @@ func (m *Model) vpFor(sc screen) *viewport.Model {
 		return &m.detail
 	case screenLogs:
 		return &m.logsView
-	case screenTop:
-		return &m.usage
 	case screenDiag:
 		return &m.diag
 	case screenTopology:
@@ -4415,6 +4529,198 @@ func (m Model) sizingGauge(rs model.ResourceSizing, width int) string {
 		return m.theme.Faint.Render(strings.Repeat("·", width))
 	}
 	return m.coloredGauge(rs.Peak/den, width)
+}
+
+// usageColumn is one column of the usage table ('u').
+type usageColumn struct {
+	title string
+	width int // 0 = flexible
+	right bool
+	cell  func(m *Model, r model.UsageRow) string
+	less  func(a, b model.UsageRow) bool
+}
+
+// usageColumns defines the table: CPU and memory side by side — no metric
+// toggle (consistency, owner 2026-07-09). Gauges are relative to the top
+// consumer of each column.
+func (m *Model) usageColumns() []usageColumn {
+	var maxCPU, maxMem float64
+	for _, r := range m.usageAllRows {
+		if r.CPU > maxCPU {
+			maxCPU = r.CPU
+		}
+		if r.Mem > maxMem {
+			maxMem = r.Mem
+		}
+	}
+	relGauge := func(v float64, has bool, max float64) string {
+		if !has || max <= 0 {
+			return m.theme.Faint.Render(strings.Repeat("·", 12))
+		}
+		return m.coloredGauge(v/max, 12)
+	}
+	valOrDash := func(v float64, has bool, format func(float64) string) string {
+		if !has {
+			return "—"
+		}
+		return format(v)
+	}
+	cols := []usageColumn{
+		{title: "NAME", width: 0,
+			cell: func(m *Model, r model.UsageRow) string {
+				if m.client != nil && (m.client.Namespace == "" || kube.IsNamespacePattern(m.client.Namespace)) {
+					return r.Namespace + "/" + r.Name
+				}
+				return r.Name
+			},
+			less: func(a, b model.UsageRow) bool { return a.Namespace+a.Name < b.Namespace+b.Name }},
+	}
+	if m.usageIsAgg {
+		cols = append(cols, usageColumn{title: "PODS", width: 4, right: true,
+			cell: func(_ *Model, r model.UsageRow) string { return fmt.Sprintf("%d", r.Pods) },
+			less: func(a, b model.UsageRow) bool { return a.Pods < b.Pods }})
+	}
+	cols = append(cols,
+		usageColumn{title: "CPU", width: 9, right: true,
+			cell: func(_ *Model, r model.UsageRow) string { return valOrDash(r.CPU, r.HasCPU, components.FormatCPU) },
+			less: func(a, b model.UsageRow) bool { return a.CPU < b.CPU }},
+		usageColumn{title: "", width: 14,
+			cell: func(m *Model, r model.UsageRow) string { return relGauge(r.CPU, r.HasCPU, maxCPU) },
+			less: func(a, b model.UsageRow) bool { return a.CPU < b.CPU }},
+		usageColumn{title: "MEMORY", width: 9, right: true,
+			cell: func(_ *Model, r model.UsageRow) string { return valOrDash(r.Mem, r.HasMem, components.FormatMemory) },
+			less: func(a, b model.UsageRow) bool { return a.Mem < b.Mem }},
+		usageColumn{title: "", width: 14,
+			cell: func(m *Model, r model.UsageRow) string { return relGauge(r.Mem, r.HasMem, maxMem) },
+			less: func(a, b model.UsageRow) bool { return a.Mem < b.Mem }},
+	)
+	return cols
+}
+
+// applyUsageFilter rebuilds the visible rows (name/namespace substring),
+// then re-applies the sort.
+func (m *Model) applyUsageFilter() {
+	q := strings.ToLower(strings.TrimSpace(m.usageFilterQ))
+	rows := make([]model.UsageRow, 0, len(m.usageAllRows))
+	for _, r := range m.usageAllRows {
+		if q != "" && !strings.Contains(strings.ToLower(r.Namespace+"/"+r.Name), q) {
+			continue
+		}
+		rows = append(rows, r)
+	}
+	m.usageRows = rows
+	m.usageWin.SetRows(make([]table.Row, len(rows)))
+	m.applyUsageSort()
+}
+
+// applyUsageSort: selected column order, or CPU-descending by default (the
+// hottest consumers first).
+func (m *Model) applyUsageSort() {
+	cols := m.usageColumns()
+	less := func(a, b model.UsageRow) bool { return a.CPU > b.CPU }
+	if m.usageSortCol >= 0 && m.usageSortCol < len(cols) {
+		l := cols[m.usageSortCol].less
+		if m.usageSortAsc {
+			less = l
+		} else {
+			less = func(a, b model.UsageRow) bool { return l(b, a) }
+		}
+	}
+	sort.SliceStable(m.usageRows, func(i, j int) bool { return less(m.usageRows[i], m.usageRows[j]) })
+	m.usageWin.Home()
+}
+
+// usageWidths / usageColumnAt mirror the sizing table geometry helpers.
+func (m *Model) usageWidths(cols []usageColumn) []int {
+	widths := make([]int, len(cols))
+	fixed := 0
+	flexIdx := -1
+	for i, c := range cols {
+		w := c.width
+		if w == 0 {
+			flexIdx, w = i, 20
+		}
+		widths[i] = w
+		fixed += w
+	}
+	if flexIdx >= 0 {
+		if extra := m.width - fixed - len(cols); extra > 0 {
+			widths[flexIdx] += extra
+		}
+	}
+	return widths
+}
+
+func (m *Model) usageColumnAt(x int) (int, bool) {
+	widths := m.usageWidths(m.usageColumns())
+	pos := 0
+	for i, w := range widths {
+		if x >= pos && x < pos+w {
+			return i, true
+		}
+		pos += w + 1
+	}
+	return 0, false
+}
+
+// usageListView renders the table in the house style.
+func (m Model) usageListView() string {
+	cols := m.usageColumns()
+	widths := m.usageWidths(cols)
+	var b strings.Builder
+	head := ""
+	for i, c := range cols {
+		title := c.title
+		if m.usageSortCol == i {
+			if m.usageSortAsc {
+				title += " ↑"
+			} else {
+				title += " ↓"
+			}
+		}
+		cell := padTo(title, widths[i])
+		if c.right {
+			cell = padLeft(title, widths[i])
+		}
+		head += cell + " "
+	}
+	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)))
+	b.WriteString("\n")
+	if len(m.usageRows) == 0 {
+		b.WriteString(m.theme.Faint.Render(" no data — Prometheus unreachable or no samples (nothing is estimated)"))
+		b.WriteString("\n")
+	}
+	from := m.usageWin.win
+	to := from + m.usageWin.height
+	if to > len(m.usageRows) {
+		to = len(m.usageRows)
+	}
+	for i := from; i < to; i++ {
+		r := m.usageRows[i]
+		line := ""
+		for j, c := range cols {
+			raw := c.cell(&m, r)
+			var cell string
+			switch {
+			case c.right:
+				cell = padLeft(raw, widths[j])
+			case strings.Contains(raw, "\x1b"):
+				cell = padTo2(raw, widths[j])
+			default:
+				cell = padTo(raw, widths[j])
+			}
+			line += cell + " "
+		}
+		if i == m.usageWin.cursor {
+			line = m.theme.TableSelected.Render(padTo2(line, m.width))
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	for i := to - from; i < m.usageWin.height; i++ {
+		b.WriteString("\n")
+	}
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 // sizingColumn is one column of the sizing overview table.
