@@ -11,6 +11,7 @@ import (
 
 	"github.com/iadvize/idz-k8s/internal/kube"
 	"github.com/iadvize/idz-k8s/internal/model"
+	"github.com/iadvize/idz-k8s/internal/ui/components"
 )
 
 // listColumn is one type-aware column of the main list. width 0 = flexible
@@ -230,6 +231,46 @@ func (m *Model) columnsBase() []listColumn {
 
 	switch {
 	case strings.EqualFold(kind, "Pod"):
+		usageKey := func(o model.ResourceObject) string { return o.Namespace + "/" + o.Name }
+		// Live usage columns (owner request 2026-07-09): raw value and % of
+		// the pod's request, fed at tick cadence — "—" when Prometheus has
+		// no sample or no request is set (never estimated).
+		cpuUse := listColumn{title: "CPU", width: 8,
+			cell: func(m *Model, o model.ResourceObject) string {
+				if v, ok := m.podUsageCPU[usageKey(o)]; ok {
+					return components.FormatCPU(v)
+				}
+				return "—"
+			},
+		}
+		memUse := listColumn{title: "MEM", width: 9,
+			cell: func(m *Model, o model.ResourceObject) string {
+				if v, ok := m.podUsageMem[usageKey(o)]; ok {
+					return components.FormatMemory(v)
+				}
+				return "—"
+			}}
+		cpuPct := listColumn{title: "CPU%R", width: 6,
+			cell: func(m *Model, o model.ResourceObject) string {
+				return usagePctCell(m.podUsageCPU[usageKey(o)], hasKey(m.podUsageCPU, usageKey(o)), reqCPU(o))
+			}}
+		memPct := listColumn{title: "MEM%R", width: 6,
+			cell: func(m *Model, o model.ResourceObject) string {
+				return usagePctCell(m.podUsageMem[usageKey(o)], hasKey(m.podUsageMem, usageKey(o)), reqMem(o))
+			}}
+		// Numeric sorts (missing data sorts last ascending).
+		cpuUse.less = func(a, b model.ResourceObject) bool {
+			return m.podUsageCPU[usageKey(a)] < m.podUsageCPU[usageKey(b)]
+		}
+		memUse.less = func(a, b model.ResourceObject) bool {
+			return m.podUsageMem[usageKey(a)] < m.podUsageMem[usageKey(b)]
+		}
+		cpuPct.less = func(a, b model.ResourceObject) bool {
+			return usageFrac(m.podUsageCPU[usageKey(a)], reqCPU(a)) < usageFrac(m.podUsageCPU[usageKey(b)], reqCPU(b))
+		}
+		memPct.less = func(a, b model.ResourceObject) bool {
+			return usageFrac(m.podUsageMem[usageKey(a)], reqMem(a)) < usageFrac(m.podUsageMem[usageKey(b)], reqMem(b))
+		}
 		restarts := listColumn{title: "RESTARTS", width: 9,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				if r := kube.PodRestarts(o.Raw); r > 0 {
@@ -241,7 +282,7 @@ func (m *Model) columnsBase() []listColumn {
 		node := listColumn{title: "NODE", width: 24,
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(kube.PodNode(o.Raw)) },
 			less: func(a, b model.ResourceObject) bool { return kube.PodNode(a.Raw) < kube.PodNode(b.Raw) }}
-		return []listColumn{ns, name, ready, restarts, node, status, age}
+		return []listColumn{ns, name, ready, cpuUse, cpuPct, memUse, memPct, restarts, node, status, age}
 
 	case strings.EqualFold(kind, "Node"):
 		pods := listColumn{title: "PODS READY", width: 11,
@@ -645,4 +686,34 @@ func relTime(ts string, now time.Time) string {
 		return "-"
 	}
 	return kube.Age(t, now)
+}
+
+// Helpers behind the pods list usage columns.
+
+func hasKey(m map[string]float64, k string) bool { _, ok := m[k]; return ok }
+
+func reqCPU(o model.ResourceObject) float64 {
+	c, _, _, _ := kube.PodResources(o.Raw)
+	return c
+}
+
+func reqMem(o model.ResourceObject) float64 {
+	_, _, mm, _ := kube.PodResources(o.Raw)
+	return mm
+}
+
+// usageFrac returns usage/request (-1 when unknown, sorting last ascending).
+func usageFrac(usage, request float64) float64 {
+	if request <= 0 || usage <= 0 {
+		return -1
+	}
+	return usage / request
+}
+
+// usagePctCell renders "% of request": explicit "—" without data or request.
+func usagePctCell(usage float64, hasData bool, request float64) string {
+	if !hasData || request <= 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%.0f%%", usage/request*100)
 }
