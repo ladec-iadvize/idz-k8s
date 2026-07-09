@@ -38,10 +38,12 @@ func (m *Model) columnsForType() []listColumn {
 		byTitle[c.title] = c
 	}
 	out := make([]listColumn, 0, len(pref.Columns))
+	seen := map[string]bool{}
 	for _, t := range pref.Columns {
 		switch {
 		case byTitle[t].cell != nil:
 			out = append(out, byTitle[t])
+			seen[t] = true
 		case strings.HasPrefix(t, "label:") || strings.HasPrefix(t, "field:"):
 			// User-defined columns: a label value or a dot-path field.
 			out = append(out, customColumn(t))
@@ -50,6 +52,21 @@ func (m *Model) columnsForType() []listColumn {
 	}
 	if len(out) == 0 {
 		return cols
+	}
+	// Base columns in NEITHER list are new since the pref was saved: they
+	// show up by default, so updates never ship invisible features (owner
+	// report 2026-07-09). Legacy prefs (no hidden list) keep the strict
+	// visible-list behavior.
+	if pref.Hidden != nil {
+		hidden := map[string]bool{}
+		for _, h := range pref.Hidden {
+			hidden[h] = true
+		}
+		for _, c := range cols {
+			if !seen[c.title] && !hidden[c.title] {
+				out = append(out, c)
+			}
+		}
 	}
 	return out
 }

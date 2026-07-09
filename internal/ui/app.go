@@ -5505,7 +5505,7 @@ func (m *Model) persistViewPref() {
 		pref.SortCol, pref.SortAsc = cols[m.sortCol-1].title, m.sortAsc
 	}
 	pref.Filter = strings.TrimSpace(m.filter.Value())
-	if len(pref.Columns) == 0 && pref.SortCol == "" && pref.Filter == "" {
+	if len(pref.Columns) == 0 && pref.Hidden == nil && pref.SortCol == "" && pref.Filter == "" {
 		delete(m.cfg.ViewPrefs, key)
 	} else {
 		if m.cfg.ViewPrefs == nil {
@@ -5679,8 +5679,16 @@ func (m Model) applyColumnChoice() (tea.Model, tea.Cmd) {
 	}
 	pref := m.cfg.ViewPrefs[key]
 	pref.Columns = titles
+	// Record what was explicitly turned OFF, so base columns added by
+	// future updates (in neither list) show up by default.
+	pref.Hidden = []string{}
+	for _, it := range m.colItems {
+		if !it.on && !isCustomSpec(it.title) && it.title != addFieldLabel {
+			pref.Hidden = append(pref.Hidden, it.title)
+		}
+	}
 	if def {
-		pref.Columns = nil
+		pref.Columns, pref.Hidden = nil, nil
 	}
 	m.cfg.ViewPrefs[key] = pref
 	m.screen = screenList
@@ -5741,6 +5749,7 @@ func (m *Model) saveCurrentView(name string) {
 		Type:      m.curType.Key(),
 		Namespace: m.client.Namespace,
 		Columns:   m.cfg.ViewPrefs[m.curType.Key()].Columns,
+		Hidden:    m.cfg.ViewPrefs[m.curType.Key()].Hidden,
 		Filter:    strings.TrimSpace(m.filter.Value()),
 	}
 	if cols := m.columnsForType(); m.sortCol >= 1 && m.sortCol <= len(cols) {
@@ -5780,7 +5789,7 @@ func (m Model) applySavedView(v config.SavedView) (tea.Model, tea.Cmd) {
 	if m.cfg.ViewPrefs == nil {
 		m.cfg.ViewPrefs = map[string]config.ViewPref{}
 	}
-	m.cfg.ViewPrefs[v.Type] = config.ViewPref{Columns: v.Columns, SortCol: v.SortCol, SortAsc: v.SortAsc, Filter: v.Filter}
+	m.cfg.ViewPrefs[v.Type] = config.ViewPref{Columns: v.Columns, Hidden: v.Hidden, SortCol: v.SortCol, SortAsc: v.SortAsc, Filter: v.Filter}
 	m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 	m.marked = map[string]model.ResourceObject{}
 	m.applyViewPref()
