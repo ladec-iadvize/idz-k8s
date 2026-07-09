@@ -53,14 +53,17 @@ func TestCustomColumnPrefResolution(t *testing.T) {
 		"v1/pods": {Columns: []string{"NAME", "label:app", "field:.status.podIP", "BOGUS"}},
 	}
 	got := colTitles(m.columnsForType())
-	// Custom columns render with built-in-looking headers (owner feedback).
+	// Custom columns render with built-in-looking headers (owner feedback);
+	// the saved order leads, unlisted base columns follow, BOGUS is dropped.
 	want := []string{"NAME", "APP", "POD IP"}
-	if len(got) != len(want) {
-		t.Fatalf("columns=%v want %v", got, want)
-	}
 	for i := range want {
 		if got[i] != want[i] {
-			t.Fatalf("columns=%v want %v", got, want)
+			t.Fatalf("columns=%v want prefix %v", got, want)
+		}
+	}
+	for _, c := range got {
+		if c == "BOGUS" {
+			t.Fatalf("stale title must be dropped: %v", got)
 		}
 	}
 }
@@ -352,10 +355,16 @@ func TestNewBaseColumnsSurfaceOnUpdatedBuilds(t *testing.T) {
 		}
 	}
 
-	// Legacy pref (nil hidden): strict visible list, nothing surfaces.
+	// Legacy pref (nil hidden): unknown base columns surface too — a
+	// feature must never stay invisible behind an old pref (rev. after the
+	// second owner report).
 	m.cfg.ViewPrefs["v1/pods"] = config.ViewPref{Columns: []string{"NAMESPACE", "NAME", "STATUS", "AGE"}}
-	if got := colTitles(m.columnsForType()); len(got) != 4 {
-		t.Fatalf("legacy pref must stay strict, got %v", got)
+	got = colTitles(m.columnsForType())
+	if !strings.Contains(strings.Join(got, " "), "CPU%R") {
+		t.Fatalf("legacy pref must surface new columns, got %v", got)
+	}
+	if got[0] != "NAMESPACE" || got[3] != "AGE" {
+		t.Fatalf("saved order must stay first: %v", got)
 	}
 }
 
