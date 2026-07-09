@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/iadvize/idz-k8s/internal/config"
+	"github.com/iadvize/idz-k8s/internal/model"
 )
 
 func podRaw(name, ip, app string) map[string]interface{} {
@@ -250,5 +251,72 @@ func TestLegacyBrokenSpecsHeal(t *testing.T) {
 		if col.title != "VERSION" {
 			t.Errorf("legacy spec %q title %q, want VERSION", legacy, col.title)
 		}
+	}
+}
+
+// TestPodUsageColumns (owner request 2026-07-09): the pods list shows raw
+// usage and % of the request; missing data or missing request stays "—",
+// and the % column sorts numerically.
+func TestPodUsageColumns(t *testing.T) {
+	m := newViewsModel(t)
+	withReq := func(name, cpuReq, memReq string) model.ResourceObject {
+		return model.ResourceObject{
+			Namespace: "demo", Name: name,
+			Raw: map[string]interface{}{
+				"metadata": map[string]interface{}{"name": name, "namespace": "demo"},
+				"spec": map[string]interface{}{
+					"containers": []interface{}{map[string]interface{}{
+						"name": "app",
+						"resources": map[string]interface{}{
+							"requests": map[string]interface{}{"cpu": cpuReq, "memory": memReq},
+						},
+					}},
+				},
+			},
+		}
+	}
+	m.objects = []model.ResourceObject{
+		withReq("hot", "1", "1Gi"),
+		withReq("cold", "1", "1Gi"),
+		{Namespace: "demo", Name: "noreq", Raw: map[string]interface{}{
+			"metadata": map[string]interface{}{"name": "noreq", "namespace": "demo"},
+		}},
+	}
+	m.podUsageCPU = map[string]float64{"demo/hot": 0.9, "demo/cold": 0.1, "demo/noreq": 0.2}
+	m.podUsageMem = map[string]float64{"demo/hot": 5e8}
+
+	cols := m.columnsForType()
+	byTitle := map[string]listColumn{}
+	for _, c := range cols {
+		byTitle[c.title] = c
+	}
+	for _, want := range []string{"CPU", "CPU%R", "MEM", "MEM%R"} {
+		if byTitle[want].cell == nil {
+			t.Fatalf("pods list missing column %q (have %v)", want, colTitles(cols))
+		}
+	}
+	hot, cold, noreq := m.objects[0], m.objects[1], m.objects[2]
+	if got := byTitle["CPU"].cell(&m, hot); got != "0.90" && !strings.Contains(got, "900m") {
+		t.Errorf("CPU cell=%q", got)
+	}
+	if got := byTitle["CPU%R"].cell(&m, hot); got != "90%" {
+		t.Errorf("CPU%%R hot=%q want 90%%", got)
+	}
+	if got := byTitle["CPU%R"].cell(&m, noreq); got != "—" {
+		t.Errorf("no request must be —, got %q", got)
+	}
+	if got := byTitle["MEM%R"].cell(&m, cold); got != "—" {
+		t.Errorf("no mem sample must be —, got %q", got)
+	}
+	if got := byTitle["MEM%R"].cell(&m, hot); got != "47%" && got != "46%" {
+		t.Errorf("MEM%%R hot=%q want ~47%%", got)
+	}
+	// Sorting by CPU%R: hot > noreq(-1) and cold ascending.
+	less := byTitle["CPU%R"].less
+	if !less(cold, hot) || less(hot, cold) {
+		t.Error("CPU%R sort broken")
+	}
+	if !less(noreq, cold) {
+		t.Error("missing request must sort last ascending")
 	}
 }

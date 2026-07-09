@@ -234,6 +234,12 @@ type Model struct {
 	recentBaseLine int
 	recentShown    int
 
+	// Live per-pod usage for the pods list columns (CPU/MEM + % of request),
+	// refreshed on the periodic tick — never on the watch bursts, so
+	// Prometheus is queried at most once per refresh interval.
+	podUsageCPU map[string]float64 // key: ns/name
+	podUsageMem map[string]float64
+
 	// Row health per visible row (whole-row coloring) and per-node pod
 	// readiness (Node view column).
 	rowLevels []model.HealthLevel
@@ -425,6 +431,9 @@ type changeFlushMsg struct{}
 const changeFlushDelay = 250 * time.Millisecond
 
 type errMsg struct{ err error }
+type podUsageMsg struct {
+	cpu, mem map[string]float64
+}
 type usageTableMsg struct {
 	rows  []model.UsageRow
 	isAgg bool
@@ -758,6 +767,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{m.tick()}
 		if m.screen == screenList {
 			cmds = append(cmds, m.listObjects())
+			if strings.EqualFold(m.curType.Kind, "Pod") && m.metrics.Enabled() {
+				cmds = append(cmds, m.fetchListUsage())
+			}
 		}
 		if len(m.types) == 0 {
 			// Startup discovery failed (cluster was unreachable): retry it.
@@ -795,6 +807,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Silent: where metrics come from is an implementation detail. The
 		// views themselves show "unavailable" when Prometheus is missing.
 		m.metrics = msg.client
+		return m, nil
+
+	case podUsageMsg:
+		m.podUsageCPU, m.podUsageMem = msg.cpu, msg.mem
+		if m.screen == screenList && strings.EqualFold(m.curType.Kind, "Pod") {
+			m.applyRows()
+		}
 		return m, nil
 
 	case usageTableMsg:
@@ -1945,6 +1964,9 @@ func (m *Model) drillIntoPods() (tea.Cmd, bool) {
 	m.drillNamespace = obj.Namespace // query scope only; ns filter untouched
 	m.curType = pods
 	m.statusMsg = "pods of " + m.drillFor + " — Esc to go back"
+	if m.metrics.Enabled() {
+		return tea.Batch(m.listObjects(), m.fetchListUsage()), true
+	}
 	return m.listObjects(), true
 }
 
@@ -2128,6 +2150,31 @@ func (m *Model) openTop() (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, m.fetchUsage(workloads, markedKeys)
+}
+
+// fetchListUsage feeds the pods list's CPU/MEM columns (two instant batch
+// queries for the whole scope, at tick cadence only).
+func (m Model) fetchListUsage() tea.Cmd {
+	mc, ns := m.metrics, m.client.Namespace
+	exactNS := ns
+	if kube.IsNamespacePattern(ns) {
+		exactNS = ""
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		toMap := func(rows []model.TopConsumer) map[string]float64 {
+			out := make(map[string]float64, len(rows))
+			for _, r := range rows {
+				out[r.Namespace+"/"+r.Name] = r.Value
+			}
+			return out
+		}
+		return podUsageMsg{
+			cpu: toMap(mc.TopN(ctx, metrics.ScopeNowByPod(exactNS, model.MetricCPU), model.MetricCPU)),
+			mem: toMap(mc.TopN(ctx, metrics.ScopeNowByPod(exactNS, model.MetricMemory), model.MetricMemory)),
+		}
+	}
 }
 
 // fetchUsage builds the usage rows: two instant per-pod queries feed both
@@ -3403,7 +3450,11 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 		m.screen = screenList
 		m.layout()
 		m.persist()
-		return m, m.listObjects()
+		cmds := []tea.Cmd{m.listObjects()}
+		if strings.EqualFold(m.curType.Kind, "Pod") && m.metrics.Enabled() {
+			cmds = append(cmds, m.fetchListUsage())
+		}
+		return m, tea.Batch(cmds...)
 	case pickNamespace:
 		switch {
 		case choice == allNamespacesLabel:
