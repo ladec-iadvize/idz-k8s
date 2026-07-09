@@ -16,6 +16,11 @@ import (
 // apply time (FR-025 tolerance).
 type ViewPref struct {
 	Columns []string `yaml:"columns,omitempty"` // titles, display order
+	// Hidden lists the base columns the user explicitly turned off. Base
+	// columns in neither list are NEW since the pref was saved and show up
+	// by default (prefs must never hide future features). nil = legacy pref
+	// saved before this field existed: strict visible-list semantics.
+	Hidden  []string `yaml:"hidden,omitempty"`
 	SortCol string   `yaml:"sortCol,omitempty"` // column title; "" = no sort
 	SortAsc bool     `yaml:"sortAsc,omitempty"`
 	Filter  string   `yaml:"filter,omitempty"`
@@ -28,6 +33,7 @@ type SavedView struct {
 	Type      string   `yaml:"type"` // resource type key, e.g. apps/v1/deployments
 	Namespace string   `yaml:"namespace,omitempty"`
 	Columns   []string `yaml:"columns,omitempty"`
+	Hidden    []string `yaml:"hidden,omitempty"`
 	SortCol   string   `yaml:"sortCol,omitempty"`
 	SortAsc   bool     `yaml:"sortAsc,omitempty"`
 	Filter    string   `yaml:"filter,omitempty"`

@@ -320,3 +320,65 @@ func TestPodUsageColumns(t *testing.T) {
 		t.Error("missing request must sort last ascending")
 	}
 }
+
+// TestNewBaseColumnsSurfaceOnUpdatedBuilds (owner report 2026-07-09: usage
+// columns invisible behind a customized view): base columns in NEITHER the
+// visible nor the hidden list are new since the pref was saved and must
+// appear; explicitly hidden ones stay hidden; legacy prefs (no hidden list)
+// keep the strict behavior.
+func TestNewBaseColumnsSurfaceOnUpdatedBuilds(t *testing.T) {
+	m := newViewsModel(t)
+
+	// Modern pref: NODE explicitly hidden, usage columns unknown at save
+	// time → they must surface; NODE must not.
+	m.cfg.ViewPrefs = map[string]config.ViewPref{
+		"v1/pods": {
+			Columns: []string{"NAMESPACE", "NAME", "STATUS", "AGE"},
+			Hidden:  []string{"READY", "RESTARTS", "NODE"},
+		},
+	}
+	got := colTitles(m.columnsForType())
+	joined := strings.Join(got, " ")
+	for _, want := range []string{"CPU", "CPU%R", "MEM", "MEM%R"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("new column %q must surface, got %v", want, got)
+		}
+	}
+	for _, banned := range []string{"NODE", "READY", "RESTARTS"} {
+		for _, c := range got {
+			if c == banned {
+				t.Fatalf("explicitly hidden %q resurfaced: %v", banned, got)
+			}
+		}
+	}
+
+	// Legacy pref (nil hidden): strict visible list, nothing surfaces.
+	m.cfg.ViewPrefs["v1/pods"] = config.ViewPref{Columns: []string{"NAMESPACE", "NAME", "STATUS", "AGE"}}
+	if got := colTitles(m.columnsForType()); len(got) != 4 {
+		t.Fatalf("legacy pref must stay strict, got %v", got)
+	}
+}
+
+// TestChooserApplyRecordsHidden: applying the chooser stores the OFF base
+// columns in hidden, so the pref round-trips through the new semantics.
+func TestChooserApplyRecordsHidden(t *testing.T) {
+	m := newViewsModel(t)
+	mi, _ := m.openColumnChooser()
+	m = asModel(t, mi)
+	// Hide NAMESPACE.
+	m.pickerWin.cursor = 0
+	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeySpace})
+	m = asModel(t, mi)
+	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	pref := m.cfg.ViewPrefs["v1/pods"]
+	found := false
+	for _, h := range pref.Hidden {
+		if h == "NAMESPACE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("hidden list must record NAMESPACE, got %+v", pref)
+	}
+}
