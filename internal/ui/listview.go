@@ -78,6 +78,11 @@ func customColumn(spec string) listColumn {
 // "label:app" → "APP", "field:.status.podIP" → "POD IP".
 func customTitle(spec string) string {
 	if k, ok := strings.CutPrefix(spec, "label:"); ok {
+		// Long conventional keys keep only their meaningful tail:
+		// app.kubernetes.io/version → VERSION.
+		if i := strings.LastIndex(k, "/"); i >= 0 && i+1 < len(k) {
+			k = k[i+1:]
+		}
 		return strings.ToUpper(k)
 	}
 	path := strings.TrimPrefix(spec, "field:")
@@ -109,16 +114,12 @@ func isCustomSpec(spec string) bool {
 // fieldCell walks a dot path of map fields and renders the scalar found there
 // ("-" when absent, "…" for a non-scalar like a list or object).
 func fieldCell(raw map[string]interface{}, fields []string) string {
-	var cur interface{} = raw
-	for _, f := range fields {
-		m, ok := cur.(map[string]interface{})
-		if !ok {
-			return "-"
-		}
-		cur, ok = m[f]
-		if !ok {
-			return "-"
-		}
+	// Map keys may legally contain dots (app.kubernetes.io/version), so the
+	// walk backtracks: every join length is tried, and a shorter key that
+	// dead-ends never hides a longer one.
+	cur, ok := resolveField(raw, fields)
+	if !ok {
+		return "-"
 	}
 	switch v := cur.(type) {
 	case string:
@@ -130,6 +131,32 @@ func fieldCell(raw map[string]interface{}, fields []string) string {
 	default:
 		return "…"
 	}
+}
+
+// resolveField resolves a dot path against nested maps, trying every join
+// length of the remaining segments (dotted keys) with backtracking.
+func resolveField(cur interface{}, fields []string) (interface{}, bool) {
+	if len(fields) == 0 {
+		return cur, true
+	}
+	mm, ok := cur.(map[string]interface{})
+	if !ok {
+		return nil, false
+	}
+	key := ""
+	for j := 0; j < len(fields); j++ {
+		if j == 0 {
+			key = fields[0]
+		} else {
+			key += "." + fields[j]
+		}
+		if v, found := mm[key]; found {
+			if out, done := resolveField(v, fields[j+1:]); done {
+				return out, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // columnsBase returns every column the type offers, in default order —

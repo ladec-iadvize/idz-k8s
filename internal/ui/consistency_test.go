@@ -185,3 +185,54 @@ func TestLiveRefreshThrottle(t *testing.T) {
 		t.Fatal("flush must be a no-op outside the list screen")
 	}
 }
+
+// TestNodeViewsAreContextual (owner decision 2026-07-09): 't' opens only from
+// deployments/nodes, 'u' only from nodes; elsewhere a hint, no screen change.
+func TestNodeViewsAreContextual(t *testing.T) {
+	m := plainModel(t) // pods list
+	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
+	m = asModel(t, mi)
+	if m.screen != screenList || !strings.Contains(m.statusMsg, "nodes list") {
+		t.Fatalf("'u' on pods must hint (screen=%d msg=%q)", m.screen, m.statusMsg)
+	}
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	m = asModel(t, mi)
+	if m.screen != screenList || m.statusMsg == "" {
+		t.Fatalf("'t' on pods must hint (screen=%d)", m.screen)
+	}
+
+	m.curType = model.ResourceType{Version: "v1", Resource: "nodes", Kind: "Node", Namespaced: false}
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
+	m = asModel(t, mi)
+	if m.screen != screenTop {
+		t.Fatalf("'u' on nodes must open top usage, screen=%d", m.screen)
+	}
+	m.screen = screenList
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	m = asModel(t, mi)
+	if m.screen != screenTopology {
+		t.Fatalf("'t' on nodes must open topology, screen=%d", m.screen)
+	}
+}
+
+// TestRenderTopHouseStyle: the top view uses the shared look — header row,
+// rank, aligned values, relative gauge — and an explicit no-data state.
+func TestRenderTopHouseStyle(t *testing.T) {
+	m := plainModel(t)
+	m.screen = screenTop
+	m.topKind = model.MetricCPU
+	m.renderTop([]model.TopConsumer{
+		{Namespace: "demo", Name: "big", Kind: model.MetricCPU, Value: 2.0},
+		{Namespace: "demo", Name: "small", Kind: model.MetricCPU, Value: 0.5},
+	})
+	content := m.usage.View()
+	for _, want := range []string{"POD", "CPU", "% OF TOP", "demo/big", "100%", "25%"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("top view missing %q:\n%s", want, content)
+		}
+	}
+	m.renderTop(nil)
+	if !strings.Contains(m.usage.View(), "no data") {
+		t.Fatal("empty top view must state the no-data case")
+	}
+}
