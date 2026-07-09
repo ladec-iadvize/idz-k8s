@@ -266,6 +266,25 @@ func joinSelector(m map[string]string) string {
 	return strings.Join(parts, ",")
 }
 
+// GetObject fetches one object (read-only GET) as a model.ResourceObject —
+// used to jump from a finding/event to the object it references.
+func (c *Client) GetObject(ctx context.Context, t model.ResourceType, namespace, name string) (model.ResourceObject, error) {
+	ri := c.Dynamic.Resource(GVR(t))
+	var (
+		u   *unstructured.Unstructured
+		err error
+	)
+	if t.Namespaced && namespace != "" {
+		u, err = ri.Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	} else {
+		u, err = ri.Get(ctx, name, metav1.GetOptions{})
+	}
+	if err != nil {
+		return model.ResourceObject{}, err
+	}
+	return toResourceObject(t, u), nil
+}
+
 // GetObjectStatus fetches one object read-only and derives its display status.
 // found=false when the object does not exist (e.g. a chart resource that was
 // deleted — useful to spot drift in the Helm release view).
