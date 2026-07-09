@@ -152,6 +152,7 @@ type Model struct {
 
 	// Events timeline (US5).
 	eventRows       []model.Event
+	eventsShown     []model.Event // after filters, most recent first (render order)
 	eventsQuery     string
 	eventsFiltering bool            // typing a filter (Enter commits, Esc cancels)
 	eventsKind      string          // kind filter ("" = all kinds)
@@ -174,6 +175,8 @@ type Model struct {
 	// Helm release overview (US12, read-only).
 	helmFiltering  bool   // typing a helm filter (Enter commits, Esc cancels)
 	helmQuery      string // committed helm filter (name/namespace/chart)
+	helmSortCol    int    // -1 = storage order
+	helmSortAsc    bool
 	helmTable      table.Model
 	helmHist       viewport.Model
 	helmRows       []model.HelmRelease
@@ -272,6 +275,23 @@ type Model struct {
 	searchIdx    int
 	vpRaw        map[screen]string // unhighlighted content per viewport screen
 
+	// Failures/posture: selectable findings (Enter jumps to the object),
+	// 'w' keeps error-level findings only.
+	diagAll        []model.Diagnostic
+	diagSel        int
+	diagErrOnly    bool
+	diagRefs       []objRef
+	diagLines      []int // content line of each selectable finding
+	postureAll     []model.PostureFinding
+	postureSel     int
+	postureErrOnly bool
+	postureRefs    []objRef
+	postureLines   []int
+
+	// Where Esc returns from a describe opened out of an analysis view
+	// (failures/posture/events) — screenList means "normal describe".
+	describeReturn screen
+
 	// Live refresh (watch-driven): a change signal re-renders the list at
 	// most every changeFlushDelay (bursts from a rolling update coalesce).
 	changePending bool
@@ -359,6 +379,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		sortCol:        -1,
 		sizingSortCol:  -1,
 		usageSortCol:   -1,
+		helmSortCol:    -1,
 		sortAsc:        true,
 	}
 	// Table look & feel: colored headers, background-highlighted selection.
@@ -866,6 +887,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderHelmDetail(msg)
 		return m, nil
 
+	case describeRefMsg:
+		if m.screen == screenDetail {
+			m.detailObj = msg.obj
+			m.detailNS, m.detailName = msg.obj.Namespace, msg.obj.Name
+			m.setDetailContent(describeContent(msg.obj, msg.events, m.theme, m.width))
+		}
+		return m, nil
+
 	case describeMsg:
 		if msg.ns == m.detailNS && msg.name == m.detailName && m.screen == screenDetail {
 			m.setDetailContent(describeContent(m.detailObj, msg.events, m.theme, m.width) + msg.extra)
@@ -1132,6 +1161,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case screenTop:
 		return m.handleTopKey(msg)
 	case screenDiag:
+		switch {
+		case hit(msg, m.keys.Open):
+			if m.diagSel >= 0 && m.diagSel < len(m.diagRefs) {
+				return m.openDescribeRef(m.diagRefs[m.diagSel])
+			}
+			return m, nil
+		case hit(msg, m.keys.WarnOnly):
+			m.diagErrOnly = !m.diagErrOnly
+			m.diagSel = 0
+			m.renderDiagView()
+			return m, nil
+		}
+		switch msg.Type {
+		case tea.KeyUp:
+			if m.diagSel > 0 {
+				m.diagSel--
+				m.renderDiagView()
+			}
+			return m, nil
+		case tea.KeyDown:
+			if m.diagSel < len(m.diagRefs)-1 {
+				m.diagSel++
+				m.renderDiagView()
+			}
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.diag, cmd = m.diag.Update(msg)
 		return m, cmd
@@ -1140,6 +1195,32 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sizingVP, cmd = m.sizingVP.Update(msg)
 		return m, cmd
 	case screenPosture:
+		switch {
+		case hit(msg, m.keys.Open):
+			if m.postureSel >= 0 && m.postureSel < len(m.postureRefs) {
+				return m.openDescribeRef(m.postureRefs[m.postureSel])
+			}
+			return m, nil
+		case hit(msg, m.keys.WarnOnly):
+			m.postureErrOnly = !m.postureErrOnly
+			m.postureSel = 0
+			m.renderPostureView()
+			return m, nil
+		}
+		switch msg.Type {
+		case tea.KeyUp:
+			if m.postureSel > 0 {
+				m.postureSel--
+				m.renderPostureView()
+			}
+			return m, nil
+		case tea.KeyDown:
+			if m.postureSel < len(m.postureRefs)-1 {
+				m.postureSel++
+				m.renderPostureView()
+			}
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.posture, cmd = m.posture.Update(msg)
 		return m, cmd
@@ -1457,6 +1538,23 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case screenHelm:
+		if msg.Y == 2 {
+			widths := m.helmColWidths()
+			pos := 0
+			for i, w := range widths {
+				if msg.X >= pos && msg.X < pos+w {
+					if m.helmSortCol == i {
+						m.helmSortAsc = !m.helmSortAsc
+					} else {
+						m.helmSortCol, m.helmSortAsc = i, true
+					}
+					m.renderHelm()
+					break
+				}
+				pos += w
+			}
+			return m, nil
+		}
 		if m.helmWin.ClickVisible(msg.Y - 3) {
 			m.helmWin.Sync(&m.helmTable)
 			if doubleClick(m.helmWin.cursor) {
@@ -1681,6 +1779,14 @@ func (m *Model) goBack() (tea.Model, tea.Cmd) {
 		cmd := m.exitDrill()
 		m.layout()
 		return m, cmd
+	}
+	if m.screen == screenDetail && m.describeReturn != screenList && m.describeReturn != screenDetail {
+		back := m.describeReturn
+		m.describeReturn = screenList
+		m.revealSecret = false
+		m.screen = back
+		m.layout()
+		return m, nil
 	}
 	if m.screen == screenSizing && m.sizingFrom == screenSizingList {
 		m.sizingFrom = screenList
@@ -1998,6 +2104,13 @@ func (m *Model) openTop() (tea.Model, tea.Cmd) {
 	}
 	m.statusMsg = "observing usage…"
 	m.layout()
+	// Marked pods scope the pods view (consistency with f/v/z).
+	markedKeys := map[string]bool{}
+	if strings.EqualFold(m.curType.Kind, "Pod") {
+		for k := range m.marked {
+			markedKeys[k] = true
+		}
+	}
 	// Deployments aggregate their pods' usage; the pods view lists them raw.
 	var workloads []model.ResourceObject
 	if !strings.EqualFold(m.curType.Kind, "Pod") {
@@ -2014,13 +2127,13 @@ func (m *Model) openTop() (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	return m, m.fetchUsage(workloads)
+	return m, m.fetchUsage(workloads, markedKeys)
 }
 
 // fetchUsage builds the usage rows: two instant per-pod queries feed both
 // the pods view and the per-workload aggregation (cost independent of the
 // row count).
-func (m Model) fetchUsage(workloads []model.ResourceObject) tea.Cmd {
+func (m Model) fetchUsage(workloads []model.ResourceObject, markedKeys map[string]bool) tea.Cmd {
 	cl, mc, ns := m.client, m.metrics, m.client.Namespace
 	isAgg := len(workloads) > 0
 	exactNS := ns
@@ -2049,6 +2162,9 @@ func (m Model) fetchUsage(workloads []model.ResourceObject) tea.Cmd {
 			rows = make([]model.UsageRow, 0, len(pods))
 			for _, p := range pods {
 				key := p.Namespace + "/" + p.Name
+				if len(markedKeys) > 0 && !markedKeys[key] {
+					continue // Space-marked pods scope the view
+				}
 				c, hc := cpu[key]
 				mv, hm := mem[key]
 				rows = append(rows, model.UsageRow{
@@ -2122,6 +2238,14 @@ func (m *Model) openEvents() (tea.Model, tea.Cmd) {
 // (highlighted on the timeline); PgUp/PgDn scroll the view.
 func (m Model) handleEventsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case hit(msg, m.keys.Open):
+		// Jump to the object the selected event references (consistency:
+		// Enter navigates everywhere).
+		if m.recentSel >= 0 && m.recentSel < len(m.eventsShown) {
+			e := m.eventsShown[m.recentSel]
+			return m.openDescribeRef(objRef{kind: e.ObjKind, ns: e.Namespace, name: e.ObjName})
+		}
+		return m, nil
 	case hit(msg, m.keys.Filter):
 		m.eventsFiltering = true
 		m.renderEvents()
@@ -2219,6 +2343,7 @@ func (m *Model) renderEvents() {
 		}
 		evs = append(evs, e)
 	}
+	m.eventsShown = evs
 
 	kindLabel := m.eventsKind
 	if kindLabel == "" {
@@ -2562,11 +2687,68 @@ func (m *Model) openHelm() (tea.Model, tea.Cmd) {
 	}
 }
 
+// helmColWidths returns the helm table's column widths (must stay in sync
+// with openHelm's SetColumns).
+func (m *Model) helmColWidths() []int {
+	return []int{22, 28, max(16, m.width-100), 12, 5, 14, 9}
+}
+
+// helmLess returns the sort order for a helm column index.
+func helmLess(col int) func(a, b model.HelmRelease) bool {
+	switch col {
+	case 0:
+		return func(a, b model.HelmRelease) bool { return a.Namespace+a.Name < b.Namespace+b.Name }
+	case 1:
+		return func(a, b model.HelmRelease) bool { return a.Name < b.Name }
+	case 2:
+		return func(a, b model.HelmRelease) bool { return a.Chart < b.Chart }
+	case 3:
+		return func(a, b model.HelmRelease) bool { return a.ChartVersion < b.ChartVersion }
+	case 4:
+		return func(a, b model.HelmRelease) bool { return a.Revision < b.Revision }
+	case 5:
+		return func(a, b model.HelmRelease) bool { return a.Status < b.Status }
+	default:
+		return func(a, b model.HelmRelease) bool { return a.Updated.Before(b.Updated) }
+	}
+}
+
+// updateHelmColumns refreshes the header titles with the sort arrow.
+func (m *Model) updateHelmColumns() {
+	titles := []string{"NAMESPACE", "RELEASE", "CHART", "VERSION", "REV", "STATUS", "UPDATED"}
+	widths := m.helmColWidths()
+	cols := make([]table.Column, len(titles))
+	for i, t := range titles {
+		if m.helmSortCol == i {
+			if m.helmSortAsc {
+				t += " ↑"
+			} else {
+				t += " ↓"
+			}
+		}
+		cols[i] = table.Column{Title: t, Width: widths[i]}
+	}
+	m.helmTable.SetColumns(cols)
+}
+
 func (m *Model) renderHelm() {
 	now := time.Now()
+	m.updateHelmColumns()
 	q := strings.ToLower(strings.TrimSpace(m.helmQuery))
-	rows := make([]table.Row, 0, len(m.helmRows))
-	for _, r := range m.helmRows {
+	src := m.helmRows
+	if m.helmSortCol >= 0 {
+		src = make([]model.HelmRelease, len(m.helmRows))
+		copy(src, m.helmRows)
+		l := helmLess(m.helmSortCol)
+		sort.SliceStable(src, func(i, j int) bool {
+			if m.helmSortAsc {
+				return l(src[i], src[j])
+			}
+			return l(src[j], src[i])
+		})
+	}
+	rows := make([]table.Row, 0, len(src))
+	for _, r := range src {
 		if q != "" && !strings.Contains(strings.ToLower(r.Namespace+"/"+r.Name+" "+r.Chart), q) {
 			continue
 		}
@@ -2589,6 +2771,20 @@ func (m Model) handleHelmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openHelmDetail(true) // values only
 	case hit(msg, m.keys.Filter):
 		m.helmFiltering = true
+		return m, nil
+	case hit(msg, m.keys.Sort):
+		m.helmSortCol++
+		if m.helmSortCol > 6 {
+			m.helmSortCol = -1
+		}
+		m.helmSortAsc = true
+		m.renderHelm()
+		return m, nil
+	case hit(msg, m.keys.SortDir):
+		if m.helmSortCol >= 0 {
+			m.helmSortAsc = !m.helmSortAsc
+			m.renderHelm()
+		}
 		return m, nil
 	}
 	m.navigate(&m.helmWin, msg)
@@ -2878,6 +3074,34 @@ func (m *Model) openDiag() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) renderDiag(rows []model.Diagnostic) {
+	m.diagAll = rows
+	m.diagSel = 0
+	m.renderDiagView()
+}
+
+// renderDiagView renders from state so selection/filter changes re-render
+// without refetching.
+func (m *Model) renderDiagView() {
+	rows := m.diagAll
+	if m.diagErrOnly {
+		kept := make([]model.Diagnostic, 0, len(rows))
+		for _, d := range rows {
+			if d.Level >= model.HealthError {
+				kept = append(kept, d)
+			}
+		}
+		rows = kept
+	}
+	if m.diagSel >= len(rows) {
+		m.diagSel = len(rows) - 1
+	}
+	if m.diagSel < 0 {
+		m.diagSel = 0
+	}
+	m.renderDiagContent(rows)
+}
+
+func (m *Model) renderDiagContent(rows []model.Diagnostic) {
 	scope := m.client.Namespace
 	if scope == "" {
 		scope = "all namespaces"
@@ -2910,6 +3134,8 @@ func (m *Model) renderDiag(rows []model.Diagnostic) {
 		}
 		return len(byCat[order[i]]) > len(byCat[order[j]])
 	})
+	m.diagRefs, m.diagLines = nil, nil
+	idx := 0
 	for _, cat := range order {
 		ds := byCat[cat]
 		b.WriteString(m.rule(fmt.Sprintf("%s (%d)", cat, len(ds))) + "\n")
@@ -2918,20 +3144,44 @@ func (m *Model) renderDiag(rows []model.Diagnostic) {
 			if d.Container != "" {
 				who += " [" + d.Container + "]"
 			}
+			m.diagRefs = append(m.diagRefs, objRef{typeKey: "v1/pods", ns: d.Namespace, name: d.Pod})
+			m.diagLines = append(m.diagLines, strings.Count(b.String(), "\n"))
 			line := fmt.Sprintf("  %s %-45s %s", d.Level.Symbol(), truncate(who, 45), d.Reason)
-			switch d.Level {
-			case model.HealthError:
-				b.WriteString(m.theme.Error.Render(line))
-			case model.HealthWarning:
-				b.WriteString(m.theme.Warning.Render(line))
-			default:
-				b.WriteString(line)
+			switch {
+			case idx == m.diagSel:
+				line = m.theme.TableSelected.Render(padTo2(line, m.width))
+			case d.Level == model.HealthError:
+				line = m.theme.Error.Render(line)
+			case d.Level == model.HealthWarning:
+				line = m.theme.Warning.Render(line)
 			}
+			b.WriteString(line)
 			b.WriteString("\n")
+			idx++
 		}
 		b.WriteString("\n")
 	}
+	b.WriteString(m.theme.Faint.Render("Enter opens the pod · 'w' errors only · ↑/↓ select"))
+	b.WriteString("\n")
 	m.setContent(screenDiag, b.String())
+	m.keepFindingVisible(&m.diag, m.diagLines, m.diagSel)
+}
+
+// keepFindingVisible scrolls a findings viewport so the selection shows.
+func (m *Model) keepFindingVisible(vp *viewport.Model, lines []int, sel int) {
+	if sel < 0 || sel >= len(lines) {
+		return
+	}
+	line := lines[sel]
+	if line < vp.YOffset {
+		off := line - 2
+		if off < 0 {
+			off = 0
+		}
+		vp.SetYOffset(off)
+	} else if line >= vp.YOffset+vp.Height {
+		vp.SetYOffset(line - vp.Height + 3)
+	}
 }
 
 // diagCategory folds a diagnostic reason to its failure type: "OOMKilled
@@ -3749,13 +3999,18 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenHelm:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Open, k.Values, k.Filter, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Open, k.Values, k.Filter, k.Mouse, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Values, k.Filter, k.Sort, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Values, k.Filter, k.Sort, k.SortDir, k.Mouse, k.Back, k.Help, k.Quit}},
 		}
 	case screenEvents:
 		return keymapView{
-			short: []key.Binding{k.Filter, k.Kind, k.WarnOnly, k.Namespace, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Filter, k.Kind, k.WarnOnly, k.Namespace}, {k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Open, k.Filter, k.Kind, k.WarnOnly, k.Namespace, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Filter, k.Kind, k.WarnOnly, k.Namespace}, {k.Back, k.Help, k.Quit}},
+		}
+	case screenDiag, screenPosture:
+		return keymapView{
+			short: []key.Binding{k.Up, k.Down, k.Open, k.WarnOnly, k.Filter, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.WarnOnly, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
 		}
 	case screenLogs:
 		return keymapView{
@@ -4183,6 +4438,63 @@ func (m *Model) renderDirection(b *strings.Builder, label string, restricted boo
 	}
 }
 
+// ---- Jump to the referenced object (consistency batch 2026-07-09) ----
+
+// objRef points a finding/event at the concrete object it references.
+type objRef struct {
+	typeKey string // e.g. "v1/pods"; "" = resolve by kind
+	kind    string // used when typeKey is empty (events carry a Kind)
+	ns      string
+	name    string
+}
+
+// openDescribeRef fetches the referenced object and opens its describe;
+// Esc returns to the view the jump came from.
+func (m *Model) openDescribeRef(ref objRef) (tea.Model, tea.Cmd) {
+	t, ok := findTypeByKey(m.types, ref.typeKey)
+	if !ok && ref.kind != "" {
+		for _, tt := range m.types {
+			if strings.EqualFold(tt.Kind, ref.kind) {
+				t, ok = tt, true
+				break
+			}
+		}
+	}
+	if !ok {
+		m.statusMsg = "cannot open: type not browsable on this cluster"
+		return m, nil
+	}
+	m.describeReturn = m.screen
+	m.screen = screenDetail
+	m.detailNS, m.detailName = ref.ns, ref.name
+	m.detailHasUsage = false
+	m.setDetailContent("fetching " + t.Kind + " " + ref.ns + "/" + ref.name + "…")
+	m.detail.GotoTop()
+	m.layout()
+	cl := m.client
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		obj, err := cl.GetObject(ctx, t, ref.ns, ref.name)
+		if err != nil {
+			return errMsg{err}
+		}
+		rows, _ := cl.Events(ctx, ref.ns)
+		var own []model.Event
+		for _, e := range rows {
+			if e.ObjName == ref.name {
+				own = append(own, e)
+			}
+		}
+		return describeRefMsg{obj: obj, events: own}
+	}
+}
+
+type describeRefMsg struct {
+	obj    model.ResourceObject
+	events []model.Event
+}
+
 // ---- Posture overview (US13, FR-030 — advisory, read-only) ----
 
 // openPosture evaluates the compliance rules over the current scope.
@@ -4206,6 +4518,44 @@ func (m Model) fetchPosture() tea.Cmd {
 // renderPosture groups the findings by rule, worst severities first inside
 // each group; every line references the concrete object and field (FR-030).
 func (m *Model) renderPosture(rows []model.PostureFinding) {
+	m.postureAll = rows
+	m.postureSel = 0
+	m.renderPostureView()
+}
+
+// postureRef maps a finding to the object it references.
+func postureRef(f model.PostureFinding) objRef {
+	switch f.Rule {
+	case kube.RuleNoNetpol:
+		return objRef{typeKey: "v1/namespaces", name: f.Name}
+	case kube.RuleTLSExpiry:
+		return objRef{typeKey: "v1/secrets", ns: f.Namespace, name: f.Name}
+	default:
+		return objRef{typeKey: "v1/pods", ns: f.Namespace, name: f.Name}
+	}
+}
+
+func (m *Model) renderPostureView() {
+	rows := m.postureAll
+	if m.postureErrOnly {
+		kept := make([]model.PostureFinding, 0, len(rows))
+		for _, f := range rows {
+			if f.Severity >= model.HealthError {
+				kept = append(kept, f)
+			}
+		}
+		rows = kept
+	}
+	if m.postureSel >= len(rows) {
+		m.postureSel = len(rows) - 1
+	}
+	if m.postureSel < 0 {
+		m.postureSel = 0
+	}
+	m.renderPostureContent(rows)
+}
+
+func (m *Model) renderPostureContent(rows []model.PostureFinding) {
 	scope := m.client.Namespace
 	if scope == "" {
 		scope = "all namespaces"
@@ -4227,6 +4577,8 @@ func (m *Model) renderPosture(rows []model.PostureFinding) {
 		}
 		byRule[f.Rule] = append(byRule[f.Rule], f)
 	}
+	m.postureRefs, m.postureLines = nil, nil
+	idx := 0
 	for _, rule := range order {
 		fs := byRule[rule]
 		sort.SliceStable(fs, func(i, j int) bool { return fs[i].Severity > fs[j].Severity })
@@ -4236,18 +4588,26 @@ func (m *Model) renderPosture(rows []model.PostureFinding) {
 			if f.Container != "" {
 				ref += " [" + f.Container + "]"
 			}
+			m.postureRefs = append(m.postureRefs, postureRef(f))
+			m.postureLines = append(m.postureLines, strings.Count(b.String(), "\n"))
 			line := fmt.Sprintf("  %s %-52s %s", f.Severity.Symbol(), truncate(ref, 52), f.Detail)
-			switch f.Severity {
-			case model.HealthError:
+			switch {
+			case idx == m.postureSel:
+				line = m.theme.TableSelected.Render(padTo2(line, m.width))
+			case f.Severity == model.HealthError:
 				line = m.theme.Error.Render(line)
-			case model.HealthWarning:
+			case f.Severity == model.HealthWarning:
 				line = m.theme.Warning.Render(line)
 			}
 			b.WriteString(line + "\n")
+			idx++
 		}
 		b.WriteString("\n")
 	}
+	b.WriteString(m.theme.Faint.Render("Enter opens the object · 'w' errors only · ↑/↓ select"))
+	b.WriteString("\n")
 	m.setContent(screenPosture, b.String())
+	m.keepFindingVisible(&m.posture, m.postureLines, m.postureSel)
 	m.layout()
 }
 

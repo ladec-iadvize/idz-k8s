@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -285,5 +286,103 @@ func TestUsageAggregatesPerDeployment(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("aggregated view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+// TestDiagSelectionEnterAndSeverityFilter: findings are selectable, Enter
+// jumps to the pod's describe (Esc returns), 'w' keeps errors only.
+func TestDiagSelectionEnterAndSeverityFilter(t *testing.T) {
+	m := plainModel(t)
+	m.types = []model.ResourceType{{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}}
+	m.screen = screenDiag
+	m.renderDiag([]model.Diagnostic{
+		{Namespace: "demo", Pod: "boom", Container: "app", Reason: "OOMKilled (x3 restarts)", Level: model.HealthError},
+		{Namespace: "demo", Pod: "slow", Container: "app", Reason: "restarted x2", Level: model.HealthWarning},
+	})
+	if len(m.diagRefs) != 2 {
+		t.Fatalf("refs=%v", m.diagRefs)
+	}
+	// Down selects the second finding; Enter opens its describe.
+	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	m = asModel(t, mi)
+	mi, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.screen != screenDetail || cmd == nil || m.detailName != "slow" {
+		t.Fatalf("Enter must open the pod describe (screen=%d name=%q)", m.screen, m.detailName)
+	}
+	// Esc returns to the failures view, not the list.
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	if m.screen != screenDiag {
+		t.Fatalf("Esc must return to failures, screen=%d", m.screen)
+	}
+	// 'w' keeps only error-level findings.
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("w")})
+	m = asModel(t, mi)
+	if len(m.diagRefs) != 1 || m.diagRefs[0].name != "boom" {
+		t.Fatalf("errors-only filter broken: %v", m.diagRefs)
+	}
+}
+
+// TestPostureEnterTargetsTheRightKind: netpol findings open the namespace,
+// TLS ones the secret, container rules the pod.
+func TestPostureEnterTargetsTheRightKind(t *testing.T) {
+	m := plainModel(t)
+	m.screen = screenPosture
+	m.renderPosture([]model.PostureFinding{
+		{Rule: kube.RuleNoNetpol, Severity: model.HealthWarning, Namespace: "demo", Name: "demo"},
+		{Rule: kube.RuleTLSExpiry, Severity: model.HealthError, Namespace: "demo", Name: "cert"},
+		{Rule: kube.RulePrivileged, Severity: model.HealthError, Namespace: "demo", Name: "bad", Container: "app"},
+	})
+	want := map[string]string{"demo": "v1/namespaces", "cert": "v1/secrets", "bad": "v1/pods"}
+	for _, ref := range m.postureRefs {
+		if want[ref.name] != ref.typeKey {
+			t.Errorf("ref %q → %q, want %q", ref.name, ref.typeKey, want[ref.name])
+		}
+	}
+}
+
+// TestEventsEnterOpensObject: Enter on the selected event jumps to the
+// referenced object's describe.
+func TestEventsEnterOpensObject(t *testing.T) {
+	m := plainModel(t)
+	m.types = []model.ResourceType{{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}}
+	m.width, m.height = 100, 34
+	m.layout()
+	m.screen = screenEvents
+	m.eventRows = []model.Event{
+		{Reason: "BackOff", Type: "Warning", Message: "x", ObjKind: "Pod", ObjName: "web-1", Namespace: "demo", Time: time.Now()},
+	}
+	m.renderEvents()
+	mi, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.screen != screenDetail || cmd == nil || m.detailName != "web-1" {
+		t.Fatalf("Enter must open the event's object (screen=%d name=%q)", m.screen, m.detailName)
+	}
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	if m.screen != screenEvents {
+		t.Fatalf("Esc must return to the timeline, screen=%d", m.screen)
+	}
+}
+
+// TestHelmSort: 's' cycles columns with arrows, 'S' flips — like every table.
+func TestHelmSort(t *testing.T) {
+	m := helmModel(t)
+	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	m = asModel(t, mi)
+	if m.helmSortCol != 0 {
+		t.Fatalf("sortCol=%d", m.helmSortCol)
+	}
+	// Column 1 = RELEASE: back-api before front ascending.
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+	m = asModel(t, mi)
+	if got := m.helmWin.rows[0][1]; got != "back-api" {
+		t.Fatalf("asc sort first=%q", got)
+	}
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	m = asModel(t, mi)
+	if got := m.helmWin.rows[0][1]; got != "front" {
+		t.Fatalf("desc sort first=%q", got)
 	}
 }
