@@ -141,7 +141,14 @@ func Age(created time.Time, now time.Time) string {
 	d := now.Sub(created)
 	switch {
 	case d < time.Minute:
-		return "just now"
+		// Second precision while an app starts up (owner request
+		// 2026-07-09): "12s", then "2m31s" until five minutes.
+		if d < 0 {
+			d = 0
+		}
+		return itoa(int(d.Seconds())) + "s"
+	case d < 5*time.Minute:
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
 	case d < time.Hour:
 		return itoa(int(d.Minutes())) + "m"
 	case d < 24*time.Hour:
