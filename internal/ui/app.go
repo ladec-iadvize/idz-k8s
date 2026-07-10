@@ -240,6 +240,10 @@ type Model struct {
 	podUsageCPU map[string]float64 // key: ns/name
 	podUsageMem map[string]float64
 
+	// Longest content of the list's flexible column (rune-counted), set by
+	// applyRows — listWidths caps the flex width with it.
+	flexContentW int
+
 	// Row health per visible row (whole-row coloring) and per-node pod
 	// readiness (Node view column).
 	rowLevels []model.HealthLevel
@@ -2737,7 +2741,16 @@ func (m *Model) openHelm() (tea.Model, tea.Cmd) {
 // helmColWidths returns the helm table's column widths (must stay in sync
 // with openHelm's SetColumns).
 func (m *Model) helmColWidths() []int {
-	return []int{22, 28, max(16, m.width-100), 12, 5, 14, 9}
+	chart := 16
+	for _, r := range m.helmRows {
+		if l := len([]rune(r.Chart)) + 2; l > chart {
+			chart = l
+		}
+	}
+	if lim := m.width - 100; chart > lim && lim >= 16 {
+		chart = lim
+	}
+	return []int{22, 28, chart, 12, 5, 14, 9}
 }
 
 // helmLess returns the sort order for a helm column index.
@@ -5056,6 +5069,18 @@ func (m *Model) usageWidths(cols []usageColumn) []int {
 	}
 	if flexIdx >= 0 {
 		if extra := m.width - fixed - len(cols); extra > 0 {
+			content := len([]rune(cols[flexIdx].title))
+			for _, r := range m.usageRows {
+				if l := len([]rune(cols[flexIdx].cell(m, r))); l > content {
+					content = l
+				}
+			}
+			if need := content + 2 - widths[flexIdx]; need < extra {
+				if need < 0 {
+					need = 0
+				}
+				extra = need
+			}
 			widths[flexIdx] += extra
 		}
 	}
@@ -5228,6 +5253,18 @@ func (m *Model) sizingWidths(cols []sizingColumn) []int {
 	}
 	if flexIdx >= 0 {
 		if extra := m.width - fixed - len(cols); extra > 0 {
+			content := len([]rune(cols[flexIdx].title))
+			for _, r := range m.sizingRows {
+				if l := len([]rune(cols[flexIdx].cell(m, r))); l > content {
+					content = l
+				}
+			}
+			if need := content + 2 - widths[flexIdx]; need < extra {
+				if need < 0 {
+					need = 0
+				}
+				extra = need
+			}
 			widths[flexIdx] += extra
 		}
 	}

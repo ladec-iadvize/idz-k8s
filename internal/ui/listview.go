@@ -550,6 +550,15 @@ func (m *Model) listWidths(cols []listColumn) []int {
 	}
 	if flexIdx >= 0 {
 		if extra := m.width - fixed - len(cols); extra > 0 {
+			// Cap the flexible column to its longest visible content (+2):
+			// on a wide terminal an uncapped NAME opens a desert between
+			// the name and the next column (owner report 2026-07-10).
+			if need := m.flexContentW + 2 - widths[flexIdx]; need < extra {
+				if need < 0 {
+					need = 0
+				}
+				extra = need
+			}
 			widths[flexIdx] += extra
 		}
 	}
@@ -600,6 +609,22 @@ func (m *Model) applyRows() {
 	}
 	m.rowLevels = levels
 	m.rowObjs = kept
+	// Longest content of the flexible column (title included) for listWidths.
+	m.flexContentW = 0
+	flexIdx := -1
+	for i, c := range cols {
+		if c.width == 0 {
+			flexIdx = i
+			m.flexContentW = len([]rune(c.title))
+		}
+	}
+	if flexIdx >= 0 {
+		for _, r := range rows {
+			if l := len([]rune(r[flexIdx+1])); l > m.flexContentW {
+				m.flexContentW = l
+			}
+		}
+	}
 	m.win.SetRows(rows)
 }
 
