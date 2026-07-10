@@ -269,3 +269,34 @@ func TestApplySavedViewUnknownTypeIsTolerated(t *testing.T) {
 		t.Fatalf("current type must be unchanged, got %q", m.curType.Key())
 	}
 }
+
+// TestFlexColumnCappedToContent (owner report 2026-07-10): on a wide
+// terminal the NAME column stops at its longest content instead of
+// swallowing the whole width and pushing the other columns to the far right.
+func TestFlexColumnCappedToContent(t *testing.T) {
+	m := newViewsModel(t)
+	m.width = 400 // very wide terminal
+	m.layout()
+	m.objects = []model.ResourceObject{
+		{Name: "sdk-app-service-cfb7d7c8b-5znsw", Namespace: "demo"},
+		{Name: "short", Namespace: "demo"},
+	}
+	m.applyRows()
+	cols := m.columnsForType()
+	widths := m.listWidths(cols)
+	nameIdx := -1
+	for i, c := range cols {
+		if c.title == "NAME" {
+			nameIdx = i + 1 // +1: mark column
+		}
+	}
+	longest := len("sdk-app-service-cfb7d7c8b-5znsw")
+	if w := widths[nameIdx]; w < longest || w > longest+4 {
+		t.Fatalf("NAME width=%d, want ~%d (content-capped, not %d-wide)", w, longest+2, m.width)
+	}
+	// Narrow terminal keeps the old behavior (flex absorbs what exists).
+	m.width = 100
+	if w := m.listWidths(cols)[nameIdx]; w > 100 {
+		t.Fatalf("narrow width must stay bounded, got %d", w)
+	}
+}
