@@ -11,6 +11,12 @@ It targets a general technical audience: everything is discoverable from the
 interface itself (visible menus, contextual shortcut help, clickable
 controls) — prior kubectl/k9s experience is not required.
 
+## Install
+
+Prebuilt binaries for Linux/macOS (amd64/arm64) are attached to every
+[release](https://github.com/ladec-iadvize/idz-k8s/releases) — download,
+untar, run. Or build from source:
+
 ## Build & run
 
 Requires Go 1.26+ and a kubeconfig with read access.
