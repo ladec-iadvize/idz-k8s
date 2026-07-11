@@ -8,6 +8,7 @@ import (
 
 	"github.com/iadvize/idz-k8s/internal/config"
 	"github.com/iadvize/idz-k8s/internal/model"
+	"github.com/iadvize/idz-k8s/internal/ui/theme"
 )
 
 func TestConfigDefaults(t *testing.T) {
@@ -175,5 +176,24 @@ savedViews:
 	}
 	if got.SavedViews[0].Name != "keep" || got.SavedViews[0].Type != "v1/pods" {
 		t.Fatalf("wrong survivor (first wins): %+v", got.SavedViews[0])
+	}
+}
+
+// TestThemeForName: explicit names resolve, unknown falls back to auto (the
+// terminal default) without erroring — visible difference asserted via a
+// palette that differs between dark and light.
+func TestThemeForName(t *testing.T) {
+	dark := theme.ForName("dark")
+	light := theme.ForName("light")
+	if dark.Error.GetForeground() == light.Error.GetForeground() {
+		t.Fatal("dark and light palettes must differ")
+	}
+	// auto/unknown must not panic and must return one of the two.
+	for _, n := range []string{"auto", "none", "wat"} {
+		got := theme.ForName(n)
+		if got.Error.GetForeground() != dark.Error.GetForeground() &&
+			got.Error.GetForeground() != light.Error.GetForeground() {
+			t.Fatalf("ForName(%q) returned an unexpected palette", n)
+		}
 	}
 }
