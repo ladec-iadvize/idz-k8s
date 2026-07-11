@@ -3757,6 +3757,47 @@ var kikooArt = []string{
 	"╚═╝╚═════╝ ╚══════╝      ╚═╝  ╚═╝ ╚════╝ ╚══════╝",
 }
 
+// kikooBubble evokes the iAdvize logo: the conversation bubble with the "i"
+// (shown left of the art on wide terminals). Same height as kikooArt.
+var kikooBubble = []string{
+	"  ╭─────────╮  ",
+	"  │    ●    │  ",
+	"  │    █    │  ",
+	"  ╰──╮ ╭────╯  ",
+	"     ╰─╯       ",
+	"    iAdvize    ",
+}
+
+// kikooHelm is the Kubernetes side (right of the art).
+var kikooHelm = []string{
+	"      │        ",
+	"  ╭───┴───╮    ",
+	"──┤   ⎈   ├──  ",
+	"  ╰───┬───╯    ",
+	"      │        ",
+	"  ~ ~ ~ ~ ~    ",
+}
+
+// kikooPattern fills the remaining flanks with floating conversation
+// bubbles (deterministic per row — Date/rand are unavailable by design).
+var kikooPattern = []string{
+	"  ·    ○     ·   ",
+	"     ·    ◌    · ",
+	" ○     ·     ·   ",
+	"    ·     ◌    · ",
+	"  ·   ○      ·   ",
+	"      ·    ·   ○ ",
+}
+
+// repeatToWidth tiles a pattern to exactly w runes.
+func repeatToWidth(pattern string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	r := []rune(strings.Repeat(pattern, w/len([]rune(pattern))+1))
+	return string(r[:w])
+}
+
 // iAdvize brand green (and a darker shade for depth).
 var (
 	kikooGreen     = lipgloss.NewStyle().Foreground(lipgloss.Color("#8CC63F")).Bold(true)
@@ -3772,11 +3813,37 @@ func (m Model) bannerH() int {
 	return len(kikooArt) + 2 // art + tagline + blank
 }
 
-// banner renders the kikoo header block (bannerH lines exactly).
+// banner renders the kikoo header block (bannerH lines exactly): the
+// iAdvize bubble logo, the idz-k8s art and a helm, with a bubble pattern
+// filling the flanks on wide terminals.
 func (m Model) banner() string {
+	artW := len([]rune(kikooArt[0]))
+	sideW := len([]rune(kikooBubble[0]))
+	wide := m.width >= artW+2*sideW+8
+
 	var b strings.Builder
-	center := func(line string, styled string) {
-		pad := (m.width - len([]rune(line))) / 2
+	for i, l := range kikooArt {
+		style := kikooGreen
+		if i >= len(kikooArt)-2 {
+			style = kikooDarkGreen
+		}
+		var plain, styled string
+		if wide {
+			core := kikooBubble[i] + " " + l + " " + kikooHelm[i]
+			fill := (m.width - len([]rune(core))) / 2
+			left := repeatToWidth(kikooPattern[i%len(kikooPattern)], fill)
+			right := repeatToWidth(kikooPattern[(i+3)%len(kikooPattern)], m.width-len([]rune(core))-fill)
+			plain = left + core + right
+			styled = kikooDarkGreen.Render(left) +
+				kikooGreen.Render(kikooBubble[i]) + " " +
+				style.Render(l) + " " +
+				kikooDarkGreen.Render(kikooHelm[i]) +
+				kikooDarkGreen.Render(right)
+		} else {
+			plain = l
+			styled = style.Render(l)
+		}
+		pad := (m.width - len([]rune(plain))) / 2
 		if pad < 0 {
 			pad = 0
 		}
@@ -3784,16 +3851,14 @@ func (m Model) banner() string {
 		b.WriteString(xansi.Truncate(styled, m.width, ""))
 		b.WriteString("\n")
 	}
-	for i, l := range kikooArt {
-		style := kikooGreen
-		if i >= len(kikooArt)-2 {
-			style = kikooDarkGreen
-		}
-		center(l, style.Render(l))
-	}
 	tag := "⎈  the read-only Kubernetes overview — powered by iAdvize 💚"
-	center(tag, kikooDarkGreen.Render(tag))
-	b.WriteString("\n")
+	pad := (m.width - len([]rune(tag))) / 2
+	if pad < 0 {
+		pad = 0
+	}
+	b.WriteString(strings.Repeat(" ", pad))
+	b.WriteString(xansi.Truncate(kikooDarkGreen.Render(tag), m.width, ""))
+	b.WriteString("\n\n")
 	return b.String()
 }
 
