@@ -386,3 +386,78 @@ func TestHelmSort(t *testing.T) {
 		t.Fatalf("desc sort first=%q", got)
 	}
 }
+
+// TestTopologySelectionAndDrill (owner request 2026-07-11): node headers are
+// selectable, wide pod names get room, Enter drills into the node's pods.
+func TestTopologySelectionAndDrill(t *testing.T) {
+	m := plainModel(t)
+	m.width = 300
+	m.layout()
+	m.types = []model.ResourceType{{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}}
+	m.screen = screenTopology
+	longPod := "ha-conversations/sdk-app-service-cfb7d7c8b-verylongsuffix"
+	m.renderTopology([]model.TopologyNode{
+		{Name: "node-a", Pods: []model.TopologyPod{{Namespace: "ha-conversations", Name: "sdk-app-service-cfb7d7c8b-verylongsuffix"}}},
+		{Name: "node-b"},
+	})
+	content := m.vpRaw[screenTopology]
+	if !strings.Contains(content, longPod) {
+		t.Fatalf("wide terminal must show the full pod name:\n%s", content)
+	}
+	if len(m.topoNodeLines) != 2 {
+		t.Fatalf("node lines=%v", m.topoNodeLines)
+	}
+	// Down selects node-b; Enter drills into its pods.
+	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	m = asModel(t, mi)
+	if m.topoSel != 1 {
+		t.Fatalf("topoSel=%d", m.topoSel)
+	}
+	mi, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.screen != screenList || m.drillNode != "node-b" || cmd == nil {
+		t.Fatalf("Enter must drill (screen=%d node=%q)", m.screen, m.drillNode)
+	}
+}
+
+// TestUsageEnterOpensRowObject: Enter on a usage row describes the pod (pods
+// mode) or the workload (aggregate mode).
+func TestUsageEnterOpensRowObject(t *testing.T) {
+	m := plainModel(t)
+	m.types = []model.ResourceType{{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}}
+	m.screen = screenTop
+	m.usageTypeKey = "v1/pods"
+	mi, _ := m.Update(usageTableMsg{rows: []model.UsageRow{
+		{Namespace: "demo", Name: "web-1", Pods: 1, CPU: 1, HasCPU: true},
+	}})
+	m = asModel(t, mi)
+	mi, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.screen != screenDetail || cmd == nil || m.detailName != "web-1" {
+		t.Fatalf("Enter must open the row's object (screen=%d name=%q)", m.screen, m.detailName)
+	}
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	if m.screen != screenTop {
+		t.Fatalf("Esc must return to usage, screen=%d", m.screen)
+	}
+}
+
+// TestFindingsMouseClickSelects: clicking a finding line selects it in the
+// failures view (parity with the tables).
+func TestFindingsMouseClickSelects(t *testing.T) {
+	m := plainModel(t)
+	m.types = []model.ResourceType{{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}}
+	m.screen = screenDiag
+	m.renderDiag([]model.Diagnostic{
+		{Namespace: "demo", Pod: "a", Reason: "OOMKilled (x1)", Level: model.HealthError},
+		{Namespace: "demo", Pod: "b", Reason: "OOMKilled (x2)", Level: model.HealthError},
+	})
+	// Click the second finding's line (content y = line + 2 with no scroll).
+	y := m.diagLines[1] + 2
+	mi, _ := m.Update(tea.MouseMsg{X: 4, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = asModel(t, mi)
+	if m.diagSel != 1 {
+		t.Fatalf("click must select the finding, sel=%d", m.diagSel)
+	}
+}
