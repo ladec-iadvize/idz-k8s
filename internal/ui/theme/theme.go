@@ -72,6 +72,53 @@ func Default() Theme {
 	}
 }
 
+// Light returns a palette tuned for light terminal backgrounds: darker
+// foregrounds, soft chip backgrounds — same structure, same symbols.
+func Light() Theme {
+	return Theme{
+		Title:     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")),
+		StatusBar: lipgloss.NewStyle().Foreground(lipgloss.Color("25")),
+		Help:      lipgloss.NewStyle().Faint(true),
+		Selected:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("28")),
+		Highlight: lipgloss.NewStyle().Reverse(true).Bold(true),
+		Faint:     lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+		Error:     lipgloss.NewStyle().Foreground(lipgloss.Color("160")),
+		Ok:        lipgloss.NewStyle().Foreground(lipgloss.Color("28")),
+		Warning:   lipgloss.NewStyle().Foreground(lipgloss.Color("130")),
+
+		AppBadge: lipgloss.NewStyle().Background(lipgloss.Color("61")).Foreground(lipgloss.Color("231")).Bold(true).Padding(0, 1),
+		ROBadge:  lipgloss.NewStyle().Background(lipgloss.Color("254")).Foreground(lipgloss.Color("130")).Padding(0, 1),
+		CtxVal:   lipgloss.NewStyle().Background(lipgloss.Color("153")).Foreground(lipgloss.Color("17")).Bold(true).Padding(0, 1),
+		NsVal:    lipgloss.NewStyle().Background(lipgloss.Color("157")).Foreground(lipgloss.Color("22")).Bold(true).Padding(0, 1),
+		TypeVal:  lipgloss.NewStyle().Background(lipgloss.Color("183")).Foreground(lipgloss.Color("53")).Bold(true).Padding(0, 1),
+
+		TableHeader:   lipgloss.NewStyle().Foreground(lipgloss.Color("25")).Bold(true),
+		TableSelected: lipgloss.NewStyle().Background(lipgloss.Color("117")).Foreground(lipgloss.Color("16")).Bold(true),
+
+		Section:  lipgloss.NewStyle().Background(lipgloss.Color("253")).Foreground(lipgloss.Color("25")).Bold(true).Padding(0, 1),
+		YamlKey:  lipgloss.NewStyle().Foreground(lipgloss.Color("26")),
+		Position: lipgloss.NewStyle().Foreground(lipgloss.Color("25")),
+	}
+}
+
+// ForName resolves a configured theme name: "dark" and "light" are explicit,
+// "auto" follows the terminal's background (the OS/terminal default), and
+// anything else falls back to auto. "none" keeps the dark palette — lipgloss
+// drops the colors under NO_COLOR and the symbols carry the meaning.
+func ForName(name string) Theme {
+	switch name {
+	case "dark":
+		return Default()
+	case "light":
+		return Light()
+	default: // auto, none, unknown
+		if lipgloss.HasDarkBackground() {
+			return Default()
+		}
+		return Light()
+	}
+}
+
 // Status renders a health as "<symbol> <label>", colored, with the symbol as a
 // non-color fallback so meaning survives without color (FR-020).
 func (t Theme) Status(s model.StatusSummary) string {

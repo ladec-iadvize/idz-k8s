@@ -1,0 +1,29 @@
+# Prebuilt binaries for every tag (owner request 2026-07-11): users install
+# from the GitHub release instead of running go build.
+version: 2
+
+builds:
+  - main: ./cmd/idz-k8s
+    binary: idz-k8s
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+
+release:
+  draft: false
+  footer: |
+    Read-only Kubernetes overview TUI — see the [README](https://github.com/ladec-iadvize/idz-k8s#readme) for usage.

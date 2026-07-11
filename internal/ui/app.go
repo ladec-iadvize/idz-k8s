@@ -348,6 +348,11 @@ func WithHelm(hc *helm.Client) Option {
 	return func(m *Model) { m.helm = hc }
 }
 
+// WithTheme applies a resolved theme (dark/light/auto — see theme.ForName).
+func WithTheme(t theme.Theme) Option {
+	return func(m *Model) { m.theme = t }
+}
+
 // WithMouse records whether mouse capture is initially enabled (the 'm' key
 // toggles it at runtime to allow native text selection / copy-paste).
 func WithMouse(on bool) Option {

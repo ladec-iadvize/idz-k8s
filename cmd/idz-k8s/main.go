@@ -15,6 +15,7 @@ import (
 	"github.com/iadvize/idz-k8s/internal/metrics"
 	"github.com/iadvize/idz-k8s/internal/telemetry"
 	"github.com/iadvize/idz-k8s/internal/ui"
+	"github.com/iadvize/idz-k8s/internal/ui/theme"
 )
 
 var version = "0.1.0-dev"
@@ -29,6 +30,7 @@ func main() {
 		refresh       int
 		noMouse       bool
 		noColor       bool
+		themeFlag     string
 		showVersion   bool
 	)
 
@@ -85,12 +87,16 @@ func main() {
 				log.Warn("prometheus client init failed; metrics will show unavailable", "err", err)
 			}
 
+			if themeFlag != "" {
+				cfg.Theme = themeFlag // session override; persisted prefs untouched
+			}
 			m := ui.New(client, cfg, kubeconfig,
 				ui.WithMetrics(mc),
 				ui.WithHelm(helm.New(kubeconfig, ctxToUse)),
 				ui.WithConfigPath(configPath),
 				ui.WithInitialTypeKey(cfg.LastType),
 				ui.WithMouse(!noMouse),
+				ui.WithTheme(theme.ForName(cfg.Theme)),
 			)
 			opts := []tea.ProgramOption{tea.WithAltScreen()}
 			if !noMouse {
@@ -112,6 +118,7 @@ func main() {
 	f.IntVar(&refresh, "refresh", 0, "refresh interval in seconds (default: config or 5)")
 	f.BoolVar(&noMouse, "no-mouse", false, "disable mouse capture (keyboard-only)")
 	f.BoolVar(&noColor, "no-color", false, "force plain rendering (also honors NO_COLOR)")
+	f.StringVar(&themeFlag, "theme", "", "theme: auto (follows the terminal background), dark, light")
 	f.BoolVar(&showVersion, "version", false, "print version and exit")
 
 	if err := root.Execute(); err != nil {
