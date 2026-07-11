@@ -461,3 +461,47 @@ func TestFindingsMouseClickSelects(t *testing.T) {
 		t.Fatalf("click must select the finding, sel=%d", m.diagSel)
 	}
 }
+
+// TestKikooBannerGeometry (--kikoo): the banner renders on large terminals,
+// vanishes on small ones, and mouse clicks keep hitting the right rows.
+func TestKikooBannerGeometry(t *testing.T) {
+	m := plainModel(t)
+	m.kikoo = true
+	m.width, m.height = 120, 40
+	m.layout()
+	m.objects = []model.ResourceObject{
+		{Name: "first", Namespace: "demo"},
+		{Name: "second", Namespace: "demo"},
+	}
+	m.applyRows()
+
+	view := m.View()
+	if !strings.Contains(view, "iAdvize") {
+		t.Fatalf("banner missing on a large terminal")
+	}
+	if got := strings.Count(view, "\n") + 1; got > m.height {
+		t.Fatalf("view is %d lines for a %d-line terminal (banner must fit the budget)", got, m.height)
+	}
+
+	// A click on the SECOND row: banner-less geometry says y=4; on screen it
+	// is bannerH lower. The normalized handler must select row 1.
+	y := 4 + m.bannerH()
+	mi, _ := m.Update(tea.MouseMsg{X: 5, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = asModel(t, mi)
+	if m.win.cursor != 1 {
+		t.Fatalf("banner shifted the click mapping: cursor=%d want 1", m.win.cursor)
+	}
+	// Clicks inside the banner are inert.
+	mi, _ = m.Update(tea.MouseMsg{X: 5, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m = asModel(t, mi)
+	if m.win.cursor != 1 {
+		t.Fatal("banner clicks must be decoration-only")
+	}
+
+	// Small terminal: banner disappears entirely.
+	m.height = 24
+	m.layout()
+	if m.bannerH() != 0 || strings.Contains(m.View(), "iAdvize 💚") {
+		t.Fatal("banner must vanish on small terminals")
+	}
+}

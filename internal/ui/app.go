@@ -215,6 +215,9 @@ type Model struct {
 	disconnected bool
 	bodyH        int // content height, set by layout (used for click zones)
 
+	// kikoo: celebratory banner mode (visual only).
+	kikoo bool
+
 	// mouseOn tracks mouse capture; toggled with 'm' so the terminal's native
 	// text selection (copy/paste) can be used when needed.
 	mouseOn bool
@@ -351,6 +354,13 @@ func WithHelm(hc *helm.Client) Option {
 // WithTheme applies a resolved theme (dark/light/auto — see theme.ForName).
 func WithTheme(t theme.Theme) Option {
 	return func(m *Model) { m.theme = t }
+}
+
+// WithKikoo enables the celebratory ASCII banner (--kikoo): pure visual
+// flair, iAdvize green. The banner is composed OUTSIDE the click geometry
+// (prepended after overlays; mouse Y is normalized in one place).
+func WithKikoo(on bool) Option {
+	return func(m *Model) { m.kikoo = on }
 }
 
 // WithMouse records whether mouse capture is initially enabled (the 'm' key
@@ -1531,6 +1541,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 	if msg.Button != tea.MouseButtonLeft || msg.Action != tea.MouseActionPress {
 		return m.delegate(msg)
+	}
+	// kikoo banner: all click geometry below is banner-less — normalize once.
+	msg.Y -= m.bannerH()
+	if msg.Y < 0 {
+		return m, nil // click inside the banner: pure decoration
 	}
 
 	// Clickable on-screen controls (T048): header chips and footer labels act
@@ -3700,7 +3715,7 @@ func (m *Model) layout() {
 	if m.help.ShowAll {
 		footerH = 8
 	}
-	bodyH := m.height - headerH - footerH
+	bodyH := m.height - headerH - footerH - m.bannerH()
 	if bodyH < 3 {
 		bodyH = 3
 	}
@@ -3729,6 +3744,57 @@ func (m *Model) layout() {
 	m.helmTable.SetWidth(m.width)
 	m.picker.SetHeight(bodyH)
 	m.picker.SetWidth(m.width)
+}
+
+// kikooArt is the --kikoo banner (iAdvize green, centered, truncated to the
+// width — banner lines NEVER wrap).
+var kikooArt = []string{
+	"██╗██████╗ ███████╗      ██╗  ██╗ █████╗ ███████╗",
+	"██║██╔══██╗╚══███╔╝      ██║ ██╔╝██╔══██╗██╔════╝",
+	"██║██║  ██║  ███╔╝ █████╗█████╔╝ ╚█████╔╝███████╗",
+	"██║██║  ██║ ███╔╝  ╚════╝██╔═██╗ ██╔══██╗╚════██║",
+	"██║██████╔╝███████╗      ██║  ██╗╚█████╔╝███████║",
+	"╚═╝╚═════╝ ╚══════╝      ╚═╝  ╚═╝ ╚════╝ ╚══════╝",
+}
+
+// iAdvize brand green (and a darker shade for depth).
+var (
+	kikooGreen     = lipgloss.NewStyle().Foreground(lipgloss.Color("#8CC63F")).Bold(true)
+	kikooDarkGreen = lipgloss.NewStyle().Foreground(lipgloss.Color("#5E8F1F"))
+)
+
+// bannerH returns the banner height: 0 unless kikoo is on AND the terminal
+// is comfortably large (the banner never eats a small screen).
+func (m Model) bannerH() int {
+	if !m.kikoo || m.height < 28 || m.width < 60 {
+		return 0
+	}
+	return len(kikooArt) + 2 // art + tagline + blank
+}
+
+// banner renders the kikoo header block (bannerH lines exactly).
+func (m Model) banner() string {
+	var b strings.Builder
+	center := func(line string, styled string) {
+		pad := (m.width - len([]rune(line))) / 2
+		if pad < 0 {
+			pad = 0
+		}
+		b.WriteString(strings.Repeat(" ", pad))
+		b.WriteString(xansi.Truncate(styled, m.width, ""))
+		b.WriteString("\n")
+	}
+	for i, l := range kikooArt {
+		style := kikooGreen
+		if i >= len(kikooArt)-2 {
+			style = kikooDarkGreen
+		}
+		center(l, style.Render(l))
+	}
+	tag := "⎈  the read-only Kubernetes overview — powered by iAdvize 💚"
+	center(tag, kikooDarkGreen.Render(tag))
+	b.WriteString("\n")
+	return b.String()
 }
 
 // rule renders a full-width thin separator; with a title it becomes a section
@@ -3829,6 +3895,12 @@ func (m Model) View() string {
 		out = overlayCenter(out, m.inputModal("filter workloads", m.sizingQuery, "Enter save · Esc cancel"), m.width)
 	case m.screen == screenTop && m.usageTyping:
 		out = overlayCenter(out, m.inputModal("filter usage rows", m.usageFilterQ, "Enter save · Esc cancel"), m.width)
+	}
+	// The banner is prepended AFTER the overlays: modals center within the
+	// app area and every click keeps its banner-less coordinates (mouse Y is
+	// normalized once in handleMouse).
+	if h := m.bannerH(); h > 0 {
+		out = m.banner() + out
 	}
 	return out
 }
