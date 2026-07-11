@@ -31,6 +31,7 @@ func main() {
 		noMouse       bool
 		noColor       bool
 		themeFlag     string
+		kikoo         bool
 		showVersion   bool
 	)
 
@@ -97,6 +98,7 @@ func main() {
 				ui.WithInitialTypeKey(cfg.LastType),
 				ui.WithMouse(!noMouse),
 				ui.WithTheme(theme.ForName(cfg.Theme)),
+				ui.WithKikoo(kikoo),
 			)
 			opts := []tea.ProgramOption{tea.WithAltScreen()}
 			if !noMouse {
@@ -120,6 +122,7 @@ func main() {
 	f.BoolVar(&noColor, "no-color", false, "force plain rendering (also honors NO_COLOR)")
 	f.StringVar(&themeFlag, "theme", "", "theme: auto (follows the terminal background), dark, light")
 	f.BoolVar(&showVersion, "version", false, "print version and exit")
+	f.BoolVar(&kikoo, "kikoo", false, "celebratory ASCII banner (iAdvize green)")
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

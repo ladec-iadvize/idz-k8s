@@ -31,7 +31,8 @@ go build -o idz-k8s ./cmd/idz-k8s
 Flags: `--kubeconfig`, `--context`, `-n/--namespace`, `--config`,
 `--prometheus-url`, `--refresh` (seconds), `--theme` (auto/dark/light —
 `auto` follows the terminal background; also persistable as `theme:` in the
-config file), `--no-mouse`, `--no-color`, `--version`.
+config file), `--no-mouse`, `--no-color`, `--version`, and `--kikoo` (you will know it
+when you see it 💚).
 
 ## Views
 
