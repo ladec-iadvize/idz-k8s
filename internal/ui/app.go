@@ -285,6 +285,14 @@ type Model struct {
 	searchIdx    int
 	vpRaw        map[screen]string // unhighlighted content per viewport screen
 
+	// Topology: selectable node headers (Enter drills to the node's pods).
+	topoNodes     []model.TopologyNode
+	topoSel       int
+	topoNodeLines []int
+
+	// The type behind the usage rows (Enter jumps to it).
+	usageTypeKey string
+
 	// Failures/posture: selectable findings (Enter jumps to the object),
 	// 'w' keeps error-level findings only.
 	diagAll        []model.Diagnostic
@@ -1282,6 +1290,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.navigate(&m.sizingWin, msg)
 		return m, nil
 	case screenTopology:
+		switch {
+		case hit(msg, m.keys.Open):
+			if m.topoSel >= 0 && m.topoSel < len(m.topoNodes) {
+				return m.drillNodePods(m.topoNodes[m.topoSel].Name)
+			}
+			return m, nil
+		}
+		switch msg.Type {
+		case tea.KeyUp:
+			if m.topoSel > 0 {
+				m.topoSel--
+				m.renderTopologyView()
+				m.keepFindingVisible(&m.topo, m.topoNodeLines, m.topoSel)
+			}
+			return m, nil
+		case tea.KeyDown:
+			if m.topoSel < len(m.topoNodes)-1 {
+				m.topoSel++
+				m.renderTopologyView()
+				m.keepFindingVisible(&m.topo, m.topoNodeLines, m.topoSel)
+			}
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.topo, cmd = m.topo.Update(msg)
 		return m, cmd
@@ -1301,6 +1332,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleTopKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case hit(msg, m.keys.Open):
+		if c := m.usageWin.cursor; c >= 0 && c < len(m.usageRows) {
+			r := m.usageRows[c]
+			return m.openDescribeRef(objRef{typeKey: m.usageTypeKey, ns: r.Namespace, name: r.Name})
+		}
+		return m, nil
 	case hit(msg, m.keys.Filter):
 		m.usageTyping = true
 		return m, nil
@@ -1427,6 +1464,25 @@ func (m *Model) toggleMark() {
 	m.applyRows()
 }
 
+// drillNodePods opens the node-drill pod list from anywhere (topology).
+func (m *Model) drillNodePods(node string) (tea.Model, tea.Cmd) {
+	pods, okType := findTypeByKey(m.types, "v1/pods")
+	if !okType {
+		pods = model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+	}
+	m.drillPrevType = m.curType
+	m.drillNode = node
+	m.drillFor = "Node/" + node
+	m.curType = pods
+	m.screen = screenList
+	m.statusMsg = "pods on " + m.drillFor + " — Esc to go back"
+	m.layout()
+	if m.metrics.Enabled() {
+		return m, tea.Batch(m.listObjects(), m.fetchListUsage())
+	}
+	return m, m.listObjects()
+}
+
 // openListSelection is the Enter action of the list: drill into a workload's
 // pods, or open the YAML detail (k9s-like).
 func (m Model) openListSelection() (tea.Model, tea.Cmd) {
@@ -1540,7 +1596,39 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		m.usageWin.ClickVisible(msg.Y - 3)
+		if m.usageWin.ClickVisible(msg.Y-3) && doubleClick(m.usageWin.cursor) {
+			if c := m.usageWin.cursor; c >= 0 && c < len(m.usageRows) {
+				r := m.usageRows[c]
+				return m.openDescribeRef(objRef{typeKey: m.usageTypeKey, ns: r.Namespace, name: r.Name})
+			}
+		}
+		return m, nil
+	case screenDiag:
+		if i, ok := findingAt(m.diag.YOffset+msg.Y-2, m.diagLines); ok {
+			m.diagSel = i
+			m.renderDiagView()
+			if doubleClick(1000 + i) {
+				return m.openDescribeRef(m.diagRefs[i])
+			}
+		}
+		return m, nil
+	case screenPosture:
+		if i, ok := findingAt(m.posture.YOffset+msg.Y-2, m.postureLines); ok {
+			m.postureSel = i
+			m.renderPostureView()
+			if doubleClick(2000 + i) {
+				return m.openDescribeRef(m.postureRefs[i])
+			}
+		}
+		return m, nil
+	case screenTopology:
+		if i, ok := findingAt(m.topo.YOffset+msg.Y-2, m.topoNodeLines); ok {
+			m.topoSel = i
+			m.renderTopologyView()
+			if doubleClick(3000 + i) {
+				return m.drillNodePods(m.topoNodes[i].Name)
+			}
+		}
 		return m, nil
 	case screenSizingList:
 		if msg.Y == 2 {
@@ -2127,6 +2215,10 @@ func (m *Model) openTop() (tea.Model, tea.Cmd) {
 		m.errMsg = "usage: metrics unavailable (no Prometheus reachable — see --prometheus-url)"
 		m.screen = screenList
 		return m, nil
+	}
+	m.usageTypeKey = "v1/pods"
+	if !strings.EqualFold(m.curType.Kind, "Pod") {
+		m.usageTypeKey = m.curType.Key()
 	}
 	m.statusMsg = "observing usage…"
 	m.layout()
@@ -3013,16 +3105,45 @@ func (m *Model) openTopology() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) renderTopology(nodes []model.TopologyNode) {
+	m.topoNodes = nodes
+	if m.topoSel >= len(nodes) {
+		m.topoSel = 0
+	}
+	m.renderTopologyView()
+}
+
+// renderTopologyView renders from state (selection changes re-render).
+func (m *Model) renderTopologyView() {
+	nodes := m.topoNodes
 	scope := m.client.Namespace
 	if scope == "" {
 		scope = "all namespaces"
 	}
+	// Pod names use the room they need (owner report 2026-07-11): the
+	// column grows with the longest ns/name, bounded by the terminal.
+	podW := 40
+	for _, n := range nodes {
+		for _, p := range n.Pods {
+			if l := len([]rune(p.Namespace + "/" + p.Name)); l > podW {
+				podW = l
+			}
+		}
+	}
+	if lim := m.width - 42; podW > lim && lim >= 40 {
+		podW = lim
+	}
 	var b strings.Builder
 	b.WriteString(m.rule(fmt.Sprintf("Topology — %d nodes, pods in %s", countRealNodes(nodes), scope)) + "\n\n")
-	for _, n := range nodes {
-		// Node header (colored by node health).
+	m.topoNodeLines = nil
+	for ni, n := range nodes {
+		// Node header (colored by node health; selectable — Enter drills).
+		m.topoNodeLines = append(m.topoNodeLines, strings.Count(b.String(), "\n"))
 		header := fmt.Sprintf("%s %s  (%d pods)", n.Status.Symbol(), n.Name, len(n.Pods))
-		b.WriteString(m.nodeStyle(n.Status).Render(header))
+		if ni == m.topoSel {
+			b.WriteString(m.theme.TableSelected.Render(padTo2(header+"  — Enter opens its pods", m.width)))
+		} else {
+			b.WriteString(m.nodeStyle(n.Status).Render(header))
+		}
 		b.WriteString("\n")
 
 		// Capacity: colored gauges + reserved/allocatable + free.
@@ -3038,10 +3159,10 @@ func (m *Model) renderTopology(nodes []model.TopologyNode) {
 		}
 
 		// Pod table with aligned columns; % in dedicated columns.
-		b.WriteString(m.theme.Faint.Render(fmt.Sprintf("      %-40s %9s %5s %10s %5s", "POD", "CPU", "CPU%", "MEM", "MEM%")))
+		b.WriteString(m.theme.Faint.Render(fmt.Sprintf("      %-*s %9s %5s %10s %5s", podW, "POD", "CPU", "CPU%", "MEM", "MEM%")))
 		b.WriteString("\n")
 		for _, p := range n.Pods {
-			name := truncate(p.Namespace+"/"+p.Name, 40)
+			name := truncate(p.Namespace+"/"+p.Name, podW)
 			cpuCell, memCell := "-", "-"
 			cpuPct, memPct := "", ""
 			if p.CPUReq > 0 {
@@ -3056,8 +3177,8 @@ func (m *Model) renderTopology(nodes []model.TopologyNode) {
 			if n.AllocMem > 0 {
 				memPct = m.pctCell(p.MemReq / n.AllocMem)
 			}
-			fmt.Fprintf(&b, "    %s %-40s %9s %5s %10s %5s\n",
-				p.Status.Symbol(), name, cpuCell, cpuPct, memCell, memPct)
+			fmt.Fprintf(&b, "    %s %-*s %9s %5s %10s %5s\n",
+				p.Status.Symbol(), podW, name, cpuCell, cpuPct, memCell, memPct)
 		}
 		b.WriteString("\n")
 	}
@@ -3225,6 +3346,16 @@ func (m *Model) renderDiagContent(rows []model.Diagnostic) {
 	b.WriteString("\n")
 	m.setContent(screenDiag, b.String())
 	m.keepFindingVisible(&m.diag, m.diagLines, m.diagSel)
+}
+
+// findingAt maps a viewport content line to the finding rendered there.
+func findingAt(contentLine int, lines []int) (int, bool) {
+	for i, l := range lines {
+		if l == contentLine {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // keepFindingVisible scrolls a findings viewport so the selection shows.
@@ -4088,8 +4219,13 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenTop:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Filter, k.Sort, k.SortDir, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Filter, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Filter, k.Sort, k.SortDir, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Filter, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
+		}
+	case screenTopology:
+		return keymapView{
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Filter, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
 		}
 	case screenSizingList:
 		return keymapView{
