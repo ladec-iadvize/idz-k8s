@@ -3757,14 +3757,15 @@ var kikooArt = []string{
 	"╚═╝╚═════╝ ╚══════╝      ╚═╝  ╚═╝ ╚════╝ ╚══════╝",
 }
 
-// kikooBubble evokes the iAdvize logo: the conversation bubble with the "i"
-// (shown left of the art on wide terminals). Same height as kikooArt.
+// kikooBubble is the actual iAdvize logo: the mint-green disc with the
+// smile near the bottom (shown left of the art on wide terminals). Same
+// height as kikooArt.
 var kikooBubble = []string{
-	"  ╭─────────╮  ",
-	"  │    ●    │  ",
-	"  │    █    │  ",
-	"  ╰──╮ ╭────╯  ",
-	"     ╰─╯       ",
+	"    ▄█████▄    ",
+	"  ▄█████████▄  ",
+	"  ███████████  ",
+	"  ██▄ ▀▀▀ ▄██  ",
+	"  ▀█████████▀  ",
 	"    iAdvize    ",
 }
 
@@ -3798,10 +3799,10 @@ func repeatToWidth(pattern string, w int) string {
 	return string(r[:w])
 }
 
-// iAdvize brand green (and a darker shade for depth).
+// iAdvize brand green — the mint of the logo — and a darker shade for depth.
 var (
-	kikooGreen     = lipgloss.NewStyle().Foreground(lipgloss.Color("#8CC63F")).Bold(true)
-	kikooDarkGreen = lipgloss.NewStyle().Foreground(lipgloss.Color("#5E8F1F"))
+	kikooGreen     = lipgloss.NewStyle().Foreground(lipgloss.Color("#3DDFA4")).Bold(true)
+	kikooDarkGreen = lipgloss.NewStyle().Foreground(lipgloss.Color("#1FA97A"))
 )
 
 // bannerH returns the banner height: 0 unless kikoo is on AND the terminal
