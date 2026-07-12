@@ -10,6 +10,7 @@ import (
 	"github.com/iadvize/idz-k8s/internal/config"
 	"github.com/iadvize/idz-k8s/internal/kube"
 	"github.com/iadvize/idz-k8s/internal/model"
+	"github.com/iadvize/idz-k8s/internal/ui/theme"
 )
 
 func deploymentModel(t *testing.T) Model {
@@ -314,8 +315,8 @@ func TestMergedLogPrefixColoredAndStable(t *testing.T) {
 		t.Fatalf("merged line must carry the pod prefix, got %q", m.logBuf)
 	}
 	// Stable color: same pod always maps to the same style.
-	first := podPrefixStyle("web-1")
-	second := podPrefixStyle("web-1")
+	first := theme.PodPrefix("web-1")
+	second := theme.PodPrefix("web-1")
 	if first.Render("x") != second.Render("x") {
 		t.Fatal("pod prefix color must be deterministic")
 	}

@@ -40,6 +40,7 @@ type KeyMap struct {
 	Views        key.Binding
 	ResetView    key.Binding
 	Values       key.Binding
+	Reveal       key.Binding
 	Pause        key.Binding
 	WarnOnly     key.Binding
 	Mouse        key.Binding
@@ -85,6 +86,7 @@ func Default() KeyMap {
 		Views:        key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "views (save/open)")),
 		ResetView:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "reset view")),
 		Values:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "values")),
+		Reveal:       key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "reveal/mask secret values")),
 		Pause:        key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "pause/resume")),
 		WarnOnly:     key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "warnings only")),
 		Mouse:        key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mouse on/off (copy text)")),
@@ -101,12 +103,17 @@ func (k KeyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Open, k.Filter, k.Logs, k.Top, k.Diag, k.Topology, k.Namespace, k.Context, k.Help, k.Quit}
 }
 
-// FullHelp lists all bindings grouped for the help overlay.
+// FullHelp lists all bindings grouped for the help overlay. Every KeyMap
+// field must appear here — the overlay is the discoverability contract
+// (FR-010), an absent binding is an undiscoverable one.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End},
-		{k.Open, k.Back, k.Filter, k.Jump, k.Logs, k.Top, k.Diag, k.Topology, k.Sizing, k.Posture},
-		{k.Sort, k.Columns, k.Views, k.ResetView},
-		{k.Namespace, k.Context, k.Help, k.Quit},
+		{k.Open, k.Back, k.Filter, k.Jump, k.Mark, k.SearchNext, k.SearchPrev},
+		{k.Logs, k.Yaml, k.Describe, k.Owner, k.Events, k.Top, k.Diag, k.Topology},
+		{k.Sizing, k.Posture, k.Connectivity, k.Access, k.Drift},
+		{k.Sort, k.SortDir, k.Columns, k.Views, k.ResetView},
+		{k.Kind, k.Namespace, k.Context, k.Values, k.Reveal, k.Pause, k.WarnOnly},
+		{k.Mouse, k.Help, k.Quit},
 	}
 }
