@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -61,6 +62,11 @@ func NewClient(opts Options) (*Client, error) {
 	}
 	// Server deprecation warnings must never be printed over the TUI.
 	restCfg.WarningHandler = rest.NoWarnings{}
+	// Posture/topology/diagnostics fan out several parallel LISTs; the
+	// client-go defaults (5 QPS, burst 10) can throttle them past their
+	// per-request timeouts on large clusters.
+	restCfg.QPS = 50
+	restCfg.Burst = 100
 
 	// Namespace scope: empty means ALL namespaces (the tool's default overview
 	// scope). The kubeconfig context's default namespace is intentionally NOT
@@ -80,7 +86,13 @@ func NewClient(opts Options) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("building dynamic client: %w", err)
 	}
-	disc, err := discovery.NewDiscoveryClientForConfig(restCfg)
+	// Discovery calls (ServerPreferredResources) take no context, so an
+	// unresponsive apiserver would block startup forever without a
+	// client-side timeout. Only discovery gets one: a Timeout on the shared
+	// config would kill long-lived streams (log follow, informer watches).
+	discCfg := rest.CopyConfig(restCfg)
+	discCfg.Timeout = 30 * time.Second
+	disc, err := discovery.NewDiscoveryClientForConfig(discCfg)
 	if err != nil {
 		return nil, fmt.Errorf("building discovery client: %w", err)
 	}

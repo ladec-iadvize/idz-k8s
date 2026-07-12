@@ -76,7 +76,10 @@ func main() {
 			})
 			if err != nil && contextName == "" && cfg.LastContext != "" {
 				// Remembered context may no longer exist; fall back to default.
+				// Reset ctxToUse too: helm.New below must target the context
+				// actually in use, not the dead remembered one.
 				log.Warn("remembered context unavailable, using kubeconfig default", "context", cfg.LastContext, "err", err)
+				ctxToUse = ""
 				client, err = kube.NewClient(kube.Options{KubeconfigPath: kubeconfig, Namespace: namespace})
 			}
 			if err != nil {

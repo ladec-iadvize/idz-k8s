@@ -113,16 +113,17 @@ func (c *Client) Changes() <-chan struct{} {
 }
 
 // notifyChange signals without ever blocking an informer goroutine (the
-// buffered channel coalesces bursts — a rolling update is one signal).
+// buffered channel coalesces bursts — a rolling update is one signal). The
+// non-blocking send happens under infMu so it can never race with Close()
+// closing the channel (send on closed channel would panic the whole app).
 func (c *Client) notifyChange() {
 	c.infMu.Lock()
-	ch := c.changes
-	c.infMu.Unlock()
-	if ch == nil {
+	defer c.infMu.Unlock()
+	if c.changes == nil {
 		return
 	}
 	select {
-	case ch <- struct{}{}:
+	case c.changes <- struct{}{}:
 	default:
 	}
 }

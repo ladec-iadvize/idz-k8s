@@ -2,7 +2,9 @@ package integration
 
 import (
 	"context"
+	"runtime"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -89,6 +91,30 @@ func TestStreamPodLogsCompletesWithoutError(t *testing.T) {
 	if !done {
 		t.Fatalf("log stream did not signal completion")
 	}
+}
+
+// TestStreamPodLogsAbandonedReaderDoesNotLeak: cancelling the context and
+// abandoning the channel without draining it (exactly what the UI does when
+// the user switches pods in the log view) must let the producer goroutine
+// exit — regression for the unguarded terminal sends that blocked forever.
+func TestStreamPodLogsAbandonedReaderDoesNotLeak(t *testing.T) {
+	client, _ := NewFakeClient("demo", NewPod("demo", "web-1", "Running"))
+	before := runtime.NumGoroutine()
+	for i := 0; i < 10; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		ch := client.StreamPodLogs(ctx, "demo", "web-1", "", 10, true)
+		<-ch // consume the first line so the producer moves past it
+		cancel()
+		// ch is abandoned here: nobody ever reads the terminal Done line.
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= before+2 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("log producer goroutines leaked: before=%d now=%d", before, runtime.NumGoroutine())
 }
 
 func TestStreamWorkloadLogsMergesPods(t *testing.T) {
