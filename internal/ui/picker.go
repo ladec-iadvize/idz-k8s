@@ -193,14 +193,24 @@ func (m Model) pickerLabel() string {
 // current type-to-filter query (case-insensitive substring match).
 func (m *Model) applyPickerRows() {
 	q := strings.ToLower(strings.TrimSpace(m.pickerQuery))
+	trimmed := strings.TrimSpace(m.pickerQuery)
+	glob := m.pickerKind == pickNamespace && kube.IsNamespacePattern(trimmed)
 	rows := make([]table.Row, 0, len(m.pickerOpts))
 	// Namespace picker: a glob query ("staging-*") becomes a selectable
-	// pattern scope of its own, on top of the matching literal entries.
-	if m.pickerKind == pickNamespace && kube.IsNamespacePattern(strings.TrimSpace(m.pickerQuery)) {
-		rows = append(rows, table.Row{nsPatternPrefix + strings.TrimSpace(m.pickerQuery)})
+	// pattern scope of its own, followed by EXACTLY the namespaces the
+	// pattern would select — a live preview of the scope (owner bug
+	// 2026-07-12: the literal substring filter hid every match, leaving a
+	// single row and seemingly dead arrow keys).
+	if glob {
+		rows = append(rows, table.Row{nsPatternPrefix + trimmed})
 	}
 	for _, o := range m.pickerOpts {
-		if q == "" || strings.Contains(strings.ToLower(o), q) {
+		switch {
+		case glob:
+			if o != allNamespacesLabel && kube.MatchNamespace(trimmed, o) {
+				rows = append(rows, table.Row{o})
+			}
+		case q == "" || strings.Contains(strings.ToLower(o), q):
 			rows = append(rows, table.Row{o})
 		}
 	}
