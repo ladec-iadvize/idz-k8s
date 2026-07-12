@@ -91,6 +91,11 @@ const allNamespacesLabel = "◆ all namespaces"
 // view to the namespaces the pattern matches.
 const nsPatternPrefix = "◆ pattern: "
 
+// activeContextSuffix marks the active context in the context picker; the
+// "  (…)" annotation form matches the type picker's labels and is stripped
+// on selection.
+const activeContextSuffix = "  (active)"
+
 // Model is the root Bubble Tea model.
 type Model struct {
 	cfg            config.Config
@@ -437,6 +442,13 @@ type typesMsg struct {
 	types []model.ResourceType
 	err   error
 }
+
+// nsOptionsMsg carries the cluster's namespace list for the namespace picker,
+// fetched asynchronously so a slow apiserver never freezes the Update loop.
+type nsOptionsMsg struct {
+	opts []string
+	err  error
+}
 type objectsMsg struct {
 	objects  []model.ResourceObject
 	nodePods map[string][2]int // only set when listing nodes
@@ -732,6 +744,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyViewPref()
 		}
 		return m, tea.Batch(m.listObjects(), m.tick())
+
+	case nsOptionsMsg:
+		// Stale by the time it lands? (picker closed or repurposed) Drop it.
+		if m.screen != screenPicker || m.pickerKind != pickNamespace {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.errMsg = "listing namespaces: " + msg.err.Error()
+			return m, nil // keep the best-effort options already shown
+		}
+		opts := append([]string{}, msg.opts...)
+		sort.Strings(opts)
+		m.pickerOpts = append([]string{allNamespacesLabel}, opts...)
+		m.applyPickerRows()
+		return m, nil
 
 	case objectsMsg:
 		if msg.err != nil {
@@ -3474,7 +3501,10 @@ func (m Model) nextLogLine() tea.Cmd {
 func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 	m.pickerKind = kind
 	m.pickerReturn = m.screen // return here when the picker closes
-	var opts []string
+	var (
+		opts []string
+		cmd  tea.Cmd
+	)
 	switch kind {
 	case pickType:
 		// Native Kubernetes types first, CRDs below (owner request
@@ -3491,24 +3521,24 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 		sort.Strings(crds)
 		opts = append(append(opts, natives...), crds...)
 	case pickContext:
-		ctxs, err := kube.Contexts(m.kubeconfigPath, m.client.Namespace)
+		ctxs, err := kube.Contexts(m.kubeconfigPath, m.client.ActiveContext())
 		if err != nil {
 			m.errMsg = err.Error()
 			return m, nil
 		}
 		for _, c := range ctxs {
-			opts = append(opts, c.Name)
+			label := c.Name
+			if c.Active {
+				label += activeContextSuffix
+			}
+			opts = append(opts, label)
 		}
 	case pickNamespace:
-		// List the cluster's namespaces read-only.
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		nss, err := m.client.Namespaces(ctx)
-		cancel()
-		if err != nil {
-			m.errMsg = "listing namespaces: " + err.Error()
-			nss = m.namespaceOptions() // best-effort fallback
-		}
-		opts = nss
+		// Open instantly on best-effort options (derived from the objects on
+		// screen); the real cluster list arrives via nsOptionsMsg. Listing
+		// synchronously here would freeze the whole TUI on a slow apiserver.
+		opts = m.namespaceOptions()
+		cmd = m.fetchNamespaceOptions()
 	}
 	if kind != pickType {
 		sort.Strings(opts)
@@ -3527,7 +3557,18 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 	m.applyPickerRows()
 	m.screen = screenPicker
 	m.layout()
-	return m, nil
+	return m, cmd
+}
+
+// fetchNamespaceOptions lists the cluster's namespaces off the Update loop.
+func (m Model) fetchNamespaceOptions() tea.Cmd {
+	client := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		nss, err := client.Namespaces(ctx)
+		return nsOptionsMsg{opts: nss, err: err}
+	}
 }
 
 func (m Model) pickerLabel() string {
@@ -3684,6 +3725,7 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 		}
 		return m.goBack()
 	case pickContext:
+		choice = strings.TrimSuffix(choice, activeContextSuffix)
 		nc, err := kube.NewClient(kube.Options{KubeconfigPath: m.kubeconfigPath, Context: choice})
 		if err != nil {
 			m.errMsg = err.Error()

@@ -27,6 +27,17 @@ func (c *Client) StreamPodLogs(ctx context.Context, namespace, pod, container st
 	out := make(chan LogLine)
 	go func() {
 		defer close(out)
+		// Every send races with the reader going away (the UI cancels ctx and
+		// drops the channel when switching pods); an unguarded send would leak
+		// this goroutine forever.
+		send := func(l LogLine) bool {
+			select {
+			case out <- l:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 		opts := &corev1.PodLogOptions{Follow: follow}
 		if container != "" {
 			opts.Container = container
@@ -37,25 +48,22 @@ func (c *Client) StreamPodLogs(ctx context.Context, namespace, pod, container st
 		req := c.Clientset.CoreV1().Pods(namespace).GetLogs(pod, opts)
 		stream, err := req.Stream(ctx)
 		if err != nil {
-			out <- LogLine{Err: err, Done: true}
+			send(LogLine{Err: err, Done: true})
 			return
 		}
 		defer func() { _ = stream.Close() }()
 		sc := bufio.NewScanner(stream)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
-			select {
-			case <-ctx.Done():
-				out <- LogLine{Done: true}
+			if !send(LogLine{Text: sc.Text()}) {
 				return
-			case out <- LogLine{Text: sc.Text()}:
 			}
 		}
 		if err := sc.Err(); err != nil {
-			out <- LogLine{Err: err, Done: true}
+			send(LogLine{Err: err, Done: true})
 			return
 		}
-		out <- LogLine{Done: true}
+		send(LogLine{Done: true})
 	}()
 	return out
 }
