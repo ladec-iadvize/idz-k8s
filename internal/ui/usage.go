@@ -65,13 +65,7 @@ func (m *Model) openTop() (tea.Model, tea.Cmd) {
 }
 
 // usageColumn is one column of the usage table ('u').
-type usageColumn struct {
-	title string
-	width int // 0 = flexible
-	right bool
-	cell  func(m *Model, r model.UsageRow) string
-	less  func(a, b model.UsageRow) bool
-}
+type usageColumn = houseColumn[model.UsageRow]
 
 // usageColumns defines the table: CPU and memory side by side — no metric
 // toggle (consistency, owner 2026-07-09). Gauges are relative to the top
@@ -163,107 +157,19 @@ func (m *Model) applyUsageSort() {
 	m.usageWin.Home()
 }
 
-// usageWidths / usageColumnAt mirror the sizing table geometry helpers.
+// usageWidths / usageColumnAt delegate to the house table geometry helpers.
 func (m *Model) usageWidths(cols []usageColumn) []int {
-	widths := make([]int, len(cols))
-	fixed := 0
-	flexIdx := -1
-	for i, c := range cols {
-		w := c.width
-		if w == 0 {
-			flexIdx, w = i, 20
-		}
-		widths[i] = w
-		fixed += w
-	}
-	if flexIdx >= 0 {
-		if extra := m.width - fixed - len(cols); extra > 0 {
-			content := len([]rune(cols[flexIdx].title))
-			for _, r := range m.usageRows {
-				if l := len([]rune(cols[flexIdx].cell(m, r))); l > content {
-					content = l
-				}
-			}
-			if need := content + 2 - widths[flexIdx]; need < extra {
-				if need < 0 {
-					need = 0
-				}
-				extra = need
-			}
-			widths[flexIdx] += extra
-		}
-	}
-	return widths
+	return houseWidths(m, cols, 20, m.usageRows)
 }
 
 func (m *Model) usageColumnAt(x int) (int, bool) {
-	widths := m.usageWidths(m.usageColumns())
-	pos := 0
-	for i, w := range widths {
-		if x >= pos && x < pos+w {
-			return i, true
-		}
-		pos += w + 1
-	}
-	return 0, false
+	return houseColumnAt(m.usageWidths(m.usageColumns()), x)
 }
 
 // usageListView renders the table in the house style.
 func (m Model) usageListView() string {
 	cols := m.usageColumns()
-	widths := m.usageWidths(cols)
-	var b strings.Builder
-	head := ""
-	for i, c := range cols {
-		title := c.title
-		if m.usageSortCol == i {
-			if m.usageSortAsc {
-				title += " ↑"
-			} else {
-				title += " ↓"
-			}
-		}
-		cell := padTo(title, widths[i])
-		if c.right {
-			cell = padLeft(title, widths[i])
-		}
-		head += cell + " "
-	}
-	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)))
-	b.WriteString("\n")
-	if len(m.usageRows) == 0 {
-		b.WriteString(m.theme.Faint.Render(" no data — Prometheus unreachable or no samples (nothing is estimated)"))
-		b.WriteString("\n")
-	}
-	from := m.usageWin.win
-	to := from + m.usageWin.height
-	if to > len(m.usageRows) {
-		to = len(m.usageRows)
-	}
-	for i := from; i < to; i++ {
-		r := m.usageRows[i]
-		line := ""
-		for j, c := range cols {
-			raw := c.cell(&m, r)
-			var cell string
-			switch {
-			case c.right:
-				cell = padLeft(raw, widths[j])
-			case strings.Contains(raw, "\x1b"):
-				cell = padTo2(raw, widths[j])
-			default:
-				cell = padTo(raw, widths[j])
-			}
-			line += cell + " "
-		}
-		if i == m.usageWin.cursor {
-			line = m.theme.TableSelected.Render(padTo2(line, m.width))
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	for i := to - from; i < m.usageWin.height; i++ {
-		b.WriteString("\n")
-	}
-	return strings.TrimSuffix(b.String(), "\n")
+	return houseTableView(&m, cols, m.usageWidths(cols), m.usageRows,
+		&m.usageWin, m.usageSortCol, m.usageSortAsc,
+		" no data — Prometheus unreachable or no samples (nothing is estimated)")
 }

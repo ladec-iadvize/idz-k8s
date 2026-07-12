@@ -923,69 +923,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case screenTop:
 		return m.handleTopKey(msg)
 	case screenDiag:
-		switch {
-		case hit(msg, m.keys.Open):
-			if m.diagSel >= 0 && m.diagSel < len(m.diagRefs) {
-				return m.openDescribeRef(m.diagRefs[m.diagSel])
-			}
-			return m, nil
-		case hit(msg, m.keys.WarnOnly):
-			m.diagErrOnly = !m.diagErrOnly
-			m.diagSel = 0
-			m.renderDiagView()
-			return m, nil
-		}
-		switch msg.Type {
-		case tea.KeyUp:
-			if m.diagSel > 0 {
-				m.diagSel--
-				m.renderDiagView()
-			}
-			return m, nil
-		case tea.KeyDown:
-			if m.diagSel < len(m.diagRefs)-1 {
-				m.diagSel++
-				m.renderDiagView()
-			}
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.diag, cmd = m.diag.Update(msg)
-		return m, cmd
+		return m.handleFindingsKey(msg, findingsNav{sel: &m.diagSel, refs: m.diagRefs,
+			errOnly: &m.diagErrOnly, rerender: m.renderDiagView, vp: &m.diag})
 	case screenSizing:
 		var cmd tea.Cmd
 		m.sizingVP, cmd = m.sizingVP.Update(msg)
 		return m, cmd
 	case screenPosture:
-		switch {
-		case hit(msg, m.keys.Open):
-			if m.postureSel >= 0 && m.postureSel < len(m.postureRefs) {
-				return m.openDescribeRef(m.postureRefs[m.postureSel])
-			}
-			return m, nil
-		case hit(msg, m.keys.WarnOnly):
-			m.postureErrOnly = !m.postureErrOnly
-			m.postureSel = 0
-			m.renderPostureView()
-			return m, nil
-		}
-		switch msg.Type {
-		case tea.KeyUp:
-			if m.postureSel > 0 {
-				m.postureSel--
-				m.renderPostureView()
-			}
-			return m, nil
-		case tea.KeyDown:
-			if m.postureSel < len(m.postureRefs)-1 {
-				m.postureSel++
-				m.renderPostureView()
-			}
-			return m, nil
-		}
-		var cmd tea.Cmd
-		m.posture, cmd = m.posture.Update(msg)
-		return m, cmd
+		return m.handleFindingsKey(msg, findingsNav{sel: &m.postureSel, refs: m.postureRefs,
+			errOnly: &m.postureErrOnly, rerender: m.renderPostureView, vp: &m.posture})
 	case screenConnectivity:
 		var cmd tea.Cmd
 		m.connectivity, cmd = m.connectivity.Update(msg)

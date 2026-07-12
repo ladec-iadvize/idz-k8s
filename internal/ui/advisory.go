@@ -276,22 +276,8 @@ func postureRef(f model.PostureFinding) objRef {
 }
 
 func (m *Model) renderPostureView() {
-	rows := m.postureAll
-	if m.postureErrOnly {
-		kept := make([]model.PostureFinding, 0, len(rows))
-		for _, f := range rows {
-			if f.Severity >= model.HealthError {
-				kept = append(kept, f)
-			}
-		}
-		rows = kept
-	}
-	if m.postureSel >= len(rows) {
-		m.postureSel = len(rows) - 1
-	}
-	if m.postureSel < 0 {
-		m.postureSel = 0
-	}
+	rows := filterFindings(m.postureAll, m.postureErrOnly,
+		func(f model.PostureFinding) model.HealthLevel { return f.Severity }, &m.postureSel)
 	m.renderPostureContent(rows)
 }
 
@@ -317,33 +303,22 @@ func (m *Model) renderPostureContent(rows []model.PostureFinding) {
 		}
 		byRule[f.Rule] = append(byRule[f.Rule], f)
 	}
-	m.postureRefs, m.postureLines = nil, nil
-	idx := 0
+	groups := make([]findingGroup, 0, len(order))
 	for _, rule := range order {
 		fs := byRule[rule]
 		sort.SliceStable(fs, func(i, j int) bool { return fs[i].Severity > fs[j].Severity })
-		b.WriteString(m.rule(fmt.Sprintf("%s (%d)", rule, len(fs))) + "\n")
+		items := make([]findingItem, 0, len(fs))
 		for _, f := range fs {
 			ref := f.Namespace + "/" + f.Name
 			if f.Container != "" {
 				ref += " [" + f.Container + "]"
 			}
-			m.postureRefs = append(m.postureRefs, postureRef(f))
-			m.postureLines = append(m.postureLines, strings.Count(b.String(), "\n"))
-			line := fmt.Sprintf("  %s %-52s %s", f.Severity.Symbol(), truncate(ref, 52), f.Detail)
-			switch {
-			case idx == m.postureSel:
-				line = m.theme.TableSelected.Render(padTo2(line, m.width))
-			case f.Severity == model.HealthError:
-				line = m.theme.Error.Render(line)
-			case f.Severity == model.HealthWarning:
-				line = m.theme.Warning.Render(line)
-			}
-			b.WriteString(line + "\n")
-			idx++
+			items = append(items, findingItem{level: f.Severity, who: ref, detail: f.Detail,
+				ref: postureRef(f)})
 		}
-		b.WriteString("\n")
+		groups = append(groups, findingGroup{title: rule, items: items})
 	}
+	m.renderFindingGroups(&b, groups, m.postureSel, 52, &m.postureRefs, &m.postureLines)
 	b.WriteString(m.theme.Faint.Render("Enter opens the object · 'w' errors only · ↑/↓ select"))
 	b.WriteString("\n")
 	m.setContent(screenPosture, b.String())

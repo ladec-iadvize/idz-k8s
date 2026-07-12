@@ -633,14 +633,7 @@ func (m Model) listView() string {
 	// Header.
 	head := padTo("", widths[0])
 	for i, c := range cols {
-		title := c.title
-		if m.sortCol == i+1 {
-			if m.sortAsc {
-				title += " ↑"
-			} else {
-				title += " ↓"
-			}
-		}
+		title := sortArrowTitle(c.title, m.sortCol == i+1, m.sortAsc)
 		head += " " + padTo(title, widths[i+1])
 	}
 	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)))
