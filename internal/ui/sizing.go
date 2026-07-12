@@ -284,14 +284,9 @@ func (m Model) sizingGauge(rs model.ResourceSizing, width int) string {
 	return m.coloredGauge(rs.Peak/den, width)
 }
 
-// sizingColumn is one column of the sizing overview table.
-type sizingColumn struct {
-	title string
-	width int // 0 = flexible (WORKLOAD)
-	right bool
-	cell  func(m *Model, a model.SizingAdvice) string // may carry ANSI styling
-	less  func(a, b model.SizingAdvice) bool
-}
+// sizingColumn is one column of the sizing overview table (cells may carry
+// ANSI styling; WORKLOAD is the flex column).
+type sizingColumn = houseColumn[model.SizingAdvice]
 
 // sizingColumns defines the overview: separate, aligned AVG/REQ columns and a
 // titled STATUS per resource — every column is sortable ('s'/'S' or a header
@@ -365,48 +360,12 @@ func (m *Model) sizingColumns() []sizingColumn {
 
 // sizingWidths resolves the overview widths (WORKLOAD absorbs the rest).
 func (m *Model) sizingWidths(cols []sizingColumn) []int {
-	widths := make([]int, len(cols))
-	fixed := 0
-	flexIdx := -1
-	for i, c := range cols {
-		w := c.width
-		if w == 0 {
-			flexIdx, w = i, 14
-		}
-		widths[i] = w
-		fixed += w
-	}
-	if flexIdx >= 0 {
-		if extra := m.width - fixed - len(cols); extra > 0 {
-			content := len([]rune(cols[flexIdx].title))
-			for _, r := range m.sizingRows {
-				if l := len([]rune(cols[flexIdx].cell(m, r))); l > content {
-					content = l
-				}
-			}
-			if need := content + 2 - widths[flexIdx]; need < extra {
-				if need < 0 {
-					need = 0
-				}
-				extra = need
-			}
-			widths[flexIdx] += extra
-		}
-	}
-	return widths
+	return houseWidths(m, cols, 14, m.sizingRows)
 }
 
 // sizingColumnAt maps a header click to a column index.
 func (m *Model) sizingColumnAt(x int) (int, bool) {
-	widths := m.sizingWidths(m.sizingColumns())
-	pos := 0
-	for i, w := range widths {
-		if x >= pos && x < pos+w {
-			return i, true
-		}
-		pos += w + 1
-	}
-	return 0, false
+	return houseColumnAt(m.sizingWidths(m.sizingColumns()), x)
 }
 
 // applySizingFilter rebuilds the visible overview rows from the master set
@@ -460,62 +419,9 @@ func (m *Model) applySizingSort() {
 // sizingListView renders the overview with real, aligned columns.
 func (m Model) sizingListView() string {
 	cols := m.sizingColumns()
-	widths := m.sizingWidths(cols)
-
-	var b strings.Builder
-	head := ""
-	for i, c := range cols {
-		title := c.title
-		if m.sizingSortCol == i {
-			if m.sizingSortAsc {
-				title += " ↑"
-			} else {
-				title += " ↓"
-			}
-		}
-		cell := padTo(title, widths[i])
-		if c.right {
-			cell = padLeft(title, widths[i])
-		}
-		head += cell + " "
-	}
-	b.WriteString(m.theme.TableHeader.Render(padTo(head, m.width)))
-	b.WriteString("\n")
-	if len(m.sizingRows) == 0 {
-		b.WriteString(m.theme.Faint.Render(" observing… (advisory, read-only — nothing is applied)"))
-		b.WriteString("\n")
-	}
-	from := m.sizingWin.win
-	to := from + m.sizingWin.height
-	if to > len(m.sizingRows) {
-		to = len(m.sizingRows)
-	}
-	for i := from; i < to; i++ {
-		r := m.sizingRows[i]
-		line := ""
-		for j, c := range cols {
-			raw := c.cell(&m, r)
-			var cell string
-			switch {
-			case c.right:
-				cell = padLeft(raw, widths[j])
-			case strings.Contains(raw, "\x1b"):
-				cell = padTo2(raw, widths[j]) // styled: pad without truncating
-			default:
-				cell = padTo(raw, widths[j])
-			}
-			line += cell + " "
-		}
-		if i == m.sizingWin.cursor {
-			line = m.theme.TableSelected.Render(padTo2(line, m.width))
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	for i := to - from; i < m.sizingWin.height; i++ {
-		b.WriteString("\n")
-	}
-	return strings.TrimSuffix(b.String(), "\n")
+	return houseTableView(&m, cols, m.sizingWidths(cols), m.sizingRows,
+		&m.sizingWin, m.sizingSortCol, m.sizingSortAsc,
+		" observing… (advisory, read-only — nothing is applied)")
 }
 
 // renderSizing renders the advisory view: observed data first, verdict after —

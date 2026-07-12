@@ -83,13 +83,7 @@ func (m *Model) updateHelmColumns() {
 	widths := m.helmColWidths()
 	cols := make([]table.Column, len(titles))
 	for i, t := range titles {
-		if m.helmSortCol == i {
-			if m.helmSortAsc {
-				t += " ↑"
-			} else {
-				t += " ↓"
-			}
-		}
+		t = sortArrowTitle(t, m.helmSortCol == i, m.helmSortAsc)
 		cols[i] = table.Column{Title: t, Width: widths[i]}
 	}
 	m.helmTable.SetColumns(cols)

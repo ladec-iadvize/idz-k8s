@@ -323,22 +323,8 @@ func (m *Model) renderDiag(rows []model.Diagnostic) {
 // renderDiagView renders from state so selection/filter changes re-render
 // without refetching.
 func (m *Model) renderDiagView() {
-	rows := m.diagAll
-	if m.diagErrOnly {
-		kept := make([]model.Diagnostic, 0, len(rows))
-		for _, d := range rows {
-			if d.Level >= model.HealthError {
-				kept = append(kept, d)
-			}
-		}
-		rows = kept
-	}
-	if m.diagSel >= len(rows) {
-		m.diagSel = len(rows) - 1
-	}
-	if m.diagSel < 0 {
-		m.diagSel = 0
-	}
+	rows := filterFindings(m.diagAll, m.diagErrOnly,
+		func(d model.Diagnostic) model.HealthLevel { return d.Level }, &m.diagSel)
 	m.renderDiagContent(rows)
 }
 
@@ -375,33 +361,21 @@ func (m *Model) renderDiagContent(rows []model.Diagnostic) {
 		}
 		return len(byCat[order[i]]) > len(byCat[order[j]])
 	})
-	m.diagRefs, m.diagLines = nil, nil
-	idx := 0
+	groups := make([]findingGroup, 0, len(order))
 	for _, cat := range order {
 		ds := byCat[cat]
-		b.WriteString(m.rule(fmt.Sprintf("%s (%d)", cat, len(ds))) + "\n")
+		items := make([]findingItem, 0, len(ds))
 		for _, d := range ds {
 			who := d.Namespace + "/" + d.Pod
 			if d.Container != "" {
 				who += " [" + d.Container + "]"
 			}
-			m.diagRefs = append(m.diagRefs, objRef{typeKey: "v1/pods", ns: d.Namespace, name: d.Pod})
-			m.diagLines = append(m.diagLines, strings.Count(b.String(), "\n"))
-			line := fmt.Sprintf("  %s %-45s %s", d.Level.Symbol(), truncate(who, 45), d.Reason)
-			switch {
-			case idx == m.diagSel:
-				line = m.theme.TableSelected.Render(padTo2(line, m.width))
-			case d.Level == model.HealthError:
-				line = m.theme.Error.Render(line)
-			case d.Level == model.HealthWarning:
-				line = m.theme.Warning.Render(line)
-			}
-			b.WriteString(line)
-			b.WriteString("\n")
-			idx++
+			items = append(items, findingItem{level: d.Level, who: who, detail: d.Reason,
+				ref: objRef{typeKey: "v1/pods", ns: d.Namespace, name: d.Pod}})
 		}
-		b.WriteString("\n")
+		groups = append(groups, findingGroup{title: cat, items: items})
 	}
+	m.renderFindingGroups(&b, groups, m.diagSel, 45, &m.diagRefs, &m.diagLines)
 	b.WriteString(m.theme.Faint.Render("Enter opens the pod · 'w' errors only · ↑/↓ select"))
 	b.WriteString("\n")
 	m.setContent(screenDiag, b.String())
