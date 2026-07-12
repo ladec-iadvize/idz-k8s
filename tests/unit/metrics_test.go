@@ -21,10 +21,6 @@ func TestPromQLBuilders(t *testing.T) {
 	if !strings.Contains(q, "container_memory_working_set_bytes") {
 		t.Errorf("memory query wrong: %s", q)
 	}
-	q = metrics.TopPods(15, model.MetricCPU)
-	if !strings.Contains(q, "topk(15") {
-		t.Errorf("top query wrong: %s", q)
-	}
 }
 
 // TestPromQLRangeAndScopeBuilders pins the 1h-sparkline and usage-view

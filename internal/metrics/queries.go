@@ -24,15 +24,6 @@ func PodUsageRange(namespace, pod string, kind model.MetricKind) string {
 	return PodUsage(namespace, pod, kind)
 }
 
-// TopPods returns the instant PromQL for the top-N pods by CPU or memory,
-// labelled by namespace and pod.
-func TopPods(n int, kind model.MetricKind) string {
-	if kind == model.MetricMemory {
-		return fmt.Sprintf(`topk(%d, sum by (namespace,pod) (container_memory_working_set_bytes{container!=""}))`, n)
-	}
-	return fmt.Sprintf(`topk(%d, sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{container!=""}[5m])))`, n)
-}
-
 // ScopeNowByPod builds the instant per-pod usage vector for a whole scope
 // (one namespace when exactNS is set, the cluster otherwise) — the usage
 // view derives pods AND per-workload aggregates from two of these.

@@ -43,14 +43,8 @@ func (c *Client) Topology(ctx context.Context, namespace string) ([]model.Topolo
 		return nil, err
 	}
 
-	podRI := c.Dynamic.Resource(podsGVR)
 	apiNS, pattern := namespaceScope(namespace)
-	var podList *unstructured.UnstructuredList
-	if apiNS != "" {
-		podList, err = podRI.Namespace(apiNS).List(ctx, metav1.ListOptions{})
-	} else {
-		podList, err = podRI.List(ctx, metav1.ListOptions{})
-	}
+	podList, err := c.listGVR(ctx, podsGVR, apiNS, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

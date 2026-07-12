@@ -127,17 +127,8 @@ func (c *Client) EndpointsByService(ctx context.Context, namespace string) (map[
 		return out, nil
 	}
 	// Fallback: legacy v1 Endpoints.
-	ri := c.Dynamic.Resource(endpointsGVR)
 	apiNS, _ := namespaceScope(namespace)
-	var (
-		ul  *unstructured.UnstructuredList
-		err error
-	)
-	if apiNS != "" {
-		ul, err = ri.Namespace(apiNS).List(ctx, metav1.ListOptions{})
-	} else {
-		ul, err = ri.List(ctx, metav1.ListOptions{})
-	}
+	ul, err := c.listGVR(ctx, endpointsGVR, apiNS, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -151,17 +142,8 @@ func (c *Client) EndpointsByService(ctx context.Context, namespace string) (map[
 }
 
 func (c *Client) slicesByService(ctx context.Context, namespace string) (map[string][2]int, error) {
-	ri := c.Dynamic.Resource(endpointSlicesGVR)
 	apiNS, _ := namespaceScope(namespace)
-	var (
-		ul  *unstructured.UnstructuredList
-		err error
-	)
-	if apiNS != "" {
-		ul, err = ri.Namespace(apiNS).List(ctx, metav1.ListOptions{})
-	} else {
-		ul, err = ri.List(ctx, metav1.ListOptions{})
-	}
+	ul, err := c.listGVR(ctx, endpointSlicesGVR, apiNS, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

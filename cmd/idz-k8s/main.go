@@ -47,7 +47,7 @@ func main() {
 			if configPath == "" {
 				configPath = config.DefaultPath()
 			}
-			log := telemetry.New(os.Stderr, false)
+			log := telemetry.New(os.Stderr)
 
 			cfg, err := config.Load(configPath)
 			if err != nil {
@@ -107,7 +107,11 @@ func main() {
 			if !noMouse {
 				opts = append(opts, tea.WithMouseCellMotion())
 			}
-			_ = noColor // lipgloss honors NO_COLOR; flag reserved for explicit override
+			if noColor {
+				// Same path as the NO_COLOR env convention — lipgloss reads it
+				// on first render; symbols carry meaning without color (FR-020).
+				_ = os.Setenv("NO_COLOR", "1")
+			}
 			p := tea.NewProgram(m, opts...)
 			_, err = p.Run()
 			return err

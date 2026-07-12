@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,17 @@ func (c *Client) List(ctx context.Context, t model.ResourceType, namespace strin
 	return c.ListSelected(ctx, t, namespace, "")
 }
 
+// listGVR LISTs a resource, scoped to a namespace when one is given — the
+// shared boilerplate behind every direct-LIST read path (list is the only
+// verb it can issue).
+func (c *Client) listGVR(ctx context.Context, res schema.GroupVersionResource, namespace string, opts metav1.ListOptions) (*unstructured.UnstructuredList, error) {
+	ri := c.Dynamic.Resource(res)
+	if namespace != "" {
+		return ri.Namespace(namespace).List(ctx, opts)
+	}
+	return ri.List(ctx, opts)
+}
+
 // ListSelected is List restricted to a label selector (e.g. the pods managed
 // by a Deployment). An empty selector lists everything.
 func (c *Client) ListSelected(ctx context.Context, t model.ResourceType, namespace, labelSelector string) ([]model.ResourceObject, error) {
@@ -50,18 +62,11 @@ func (c *Client) ListSelected(ctx context.Context, t model.ResourceType, namespa
 	if objs, ok := c.cachedList(t, namespace, labelSelector); ok {
 		return objs, nil
 	}
-	ri := c.Dynamic.Resource(GVR(t))
-	lopts := metav1.ListOptions{LabelSelector: labelSelector}
 	apiNS, pattern := namespaceScope(namespace)
-	var (
-		ul  *unstructured.UnstructuredList
-		err error
-	)
-	if t.Namespaced && apiNS != "" {
-		ul, err = ri.Namespace(apiNS).List(ctx, lopts)
-	} else {
-		ul, err = ri.List(ctx, lopts)
+	if !t.Namespaced {
+		apiNS = "" // cluster-scoped: namespace is meaningless
 	}
+	ul, err := c.listGVR(ctx, gvr(t), apiNS, metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		return nil, err
 	}
@@ -146,38 +151,16 @@ func Age(created time.Time, now time.Time) string {
 		if d < 0 {
 			d = 0
 		}
-		return itoa(int(d.Seconds())) + "s"
+		return strconv.Itoa(int(d.Seconds())) + "s"
 	case d < 5*time.Minute:
 		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
 	case d < time.Hour:
-		return itoa(int(d.Minutes())) + "m"
+		return strconv.Itoa(int(d.Minutes())) + "m"
 	case d < 24*time.Hour:
-		return itoa(int(d.Hours())) + "h"
+		return strconv.Itoa(int(d.Hours())) + "h"
 	default:
-		return itoa(int(d.Hours()/24)) + "d"
+		return strconv.Itoa(int(d.Hours()/24)) + "d"
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var b [20]byte
-	i := len(b)
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
 }
 
 // PodResources sums the CPU (cores) and memory (bytes) requests and limits
@@ -225,12 +208,7 @@ func parseQuantity(s string, cpu bool) float64 {
 // StatefulSet, DaemonSet, Job) or spec.selector for Services. Returns the
 // selector in "k=v,k=v" form. ok is false when the object has none.
 func PodSelector(raw map[string]interface{}) (string, bool) {
-	// Controllers: spec.selector.matchLabels
-	if ml, found, _ := unstructured.NestedStringMap(raw, "spec", "selector", "matchLabels"); found && len(ml) > 0 {
-		return joinSelector(ml), true
-	}
-	// Services: spec.selector is a plain map
-	if sel, found, _ := unstructured.NestedStringMap(raw, "spec", "selector"); found && len(sel) > 0 {
+	if sel, ok := PodSelectorLabels(raw); ok {
 		return joinSelector(sel), true
 	}
 	return "", false
@@ -276,7 +254,7 @@ func joinSelector(m map[string]string) string {
 // GetObject fetches one object (read-only GET) as a model.ResourceObject —
 // used to jump from a finding/event to the object it references.
 func (c *Client) GetObject(ctx context.Context, t model.ResourceType, namespace, name string) (model.ResourceObject, error) {
-	ri := c.Dynamic.Resource(GVR(t))
+	ri := c.Dynamic.Resource(gvr(t))
 	var (
 		u   *unstructured.Unstructured
 		err error
@@ -296,7 +274,7 @@ func (c *Client) GetObject(ctx context.Context, t model.ResourceType, namespace,
 // found=false when the object does not exist (e.g. a chart resource that was
 // deleted — useful to spot drift in the Helm release view).
 func (c *Client) GetObjectStatus(ctx context.Context, t model.ResourceType, namespace, name string) (model.StatusSummary, bool, error) {
-	ri := c.Dynamic.Resource(GVR(t))
+	ri := c.Dynamic.Resource(gvr(t))
 	var (
 		u   *unstructured.Unstructured
 		err error

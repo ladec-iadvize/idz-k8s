@@ -162,7 +162,7 @@ func (c *Client) UsingCache(t model.ResourceType) bool {
 	if c == nil || c.Dynamic == nil {
 		return false
 	}
-	_, synced := c.cacheFor().forGVR(GVR(t))
+	_, synced := c.cacheFor().forGVR(gvr(t))
 	return synced
 }
 
@@ -181,7 +181,7 @@ func (c *Client) cachedList(t model.ResourceType, namespace, labelSelector strin
 		}
 		sel = parsed
 	}
-	gi, synced := c.cacheFor().forGVR(GVR(t))
+	gi, synced := c.cacheFor().forGVR(gvr(t))
 	if !synced {
 		return nil, false
 	}

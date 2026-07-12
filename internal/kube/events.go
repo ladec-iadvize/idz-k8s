@@ -18,17 +18,8 @@ var eventsGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: 
 // (US5, read-only). Cluster events have limited retention, so this is a window,
 // not a complete history — the view labels it as such.
 func (c *Client) Events(ctx context.Context, namespace string) ([]model.Event, error) {
-	ri := c.Dynamic.Resource(eventsGVR)
 	apiNS, pattern := namespaceScope(namespace)
-	var (
-		ul  *unstructured.UnstructuredList
-		err error
-	)
-	if apiNS != "" {
-		ul, err = ri.Namespace(apiNS).List(ctx, metav1.ListOptions{})
-	} else {
-		ul, err = ri.List(ctx, metav1.ListOptions{})
-	}
+	ul, err := c.listGVR(ctx, eventsGVR, apiNS, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

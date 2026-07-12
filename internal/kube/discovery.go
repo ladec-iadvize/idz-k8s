@@ -97,7 +97,7 @@ func canList(verbs []string) bool {
 	return false
 }
 
-// GVR builds the schema.GroupVersionResource for a resource type.
-func GVR(t model.ResourceType) schema.GroupVersionResource {
+// gvr builds the schema.GroupVersionResource for a resource type.
+func gvr(t model.ResourceType) schema.GroupVersionResource {
 	return schema.GroupVersionResource{Group: t.Group, Version: t.Version, Resource: t.Resource}
 }

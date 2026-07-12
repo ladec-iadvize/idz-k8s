@@ -29,14 +29,15 @@ func TestTypePickerTypeToFilterAndSelect(t *testing.T) {
 	if m.screen != screenPicker {
 		t.Fatalf("picker did not open, screen=%d", m.screen)
 	}
-	t.Logf("picker options=%v selectedRow=%v", m.pickerOpts, m.picker.SelectedRow())
+	selRow, _ := m.pickerWin.Selected()
+	t.Logf("picker options=%v selectedRow=%v", m.pickerOpts, selRow)
 
 	// Type-to-filter: typing "stateful" narrows to the statefulsets entry (k9s-style).
 	for _, r := range "stateful" {
 		mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = mi.(Model)
 	}
-	rows := m.picker.SelectedRow()
+	rows, _ := m.pickerWin.Selected()
 	t.Logf("after typing 'stateful': selectedRow=%v", rows)
 	if len(rows) == 0 || rows[0] != "apps/v1/statefulsets" {
 		t.Fatalf("type-to-filter did not narrow to statefulsets, got %v", rows)
@@ -57,12 +58,12 @@ func TestTypePickerTypeToFilterAndSelect(t *testing.T) {
 		mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = mi.(Model)
 	}
-	if got := len(m.picker.Rows()); got != 1 {
+	if got := m.pickerWin.Len(); got != 1 {
 		t.Fatalf("expected 1 row after filtering 'pods', got %d", got)
 	}
 	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyBackspace})
 	m = mi.(Model)
-	if got := len(m.picker.Rows()); got < 1 {
+	if got := m.pickerWin.Len(); got < 1 {
 		t.Fatalf("backspace should widen results, got %d rows", got)
 	}
 }

@@ -77,9 +77,9 @@ func Default() Theme {
 	}
 }
 
-// Light returns a palette tuned for light terminal backgrounds: darker
+// light returns a palette tuned for light terminal backgrounds: darker
 // foregrounds, soft chip backgrounds — same structure, same symbols.
-func Light() Theme {
+func light() Theme {
 	return Theme{
 		Title:     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")),
 		StatusBar: lipgloss.NewStyle().Foreground(lipgloss.Color("25")),
@@ -117,12 +117,12 @@ func ForName(name string) Theme {
 	case "dark":
 		return Default()
 	case "light":
-		return Light()
+		return light()
 	default: // auto, none, unknown
 		if lipgloss.HasDarkBackground() {
 			return Default()
 		}
-		return Light()
+		return light()
 	}
 }
 
