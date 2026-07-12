@@ -224,7 +224,7 @@ func TestThemeForName(t *testing.T) {
 // not rely on faint defaults — both palettes define an explicit, readable
 // description color, distinct per theme.
 func TestHelpStylesAreReadable(t *testing.T) {
-	dark, light := theme.Default(), theme.Light()
+	dark, light := theme.ForName("dark"), theme.ForName("light")
 	if dark.HelpDesc.GetForeground() == nil || light.HelpDesc.GetForeground() == nil {
 		t.Fatal("help description colors must be explicit, not faint defaults")
 	}
