@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -10,31 +11,44 @@ import (
 
 // TestHelmPackageNeverConstructsMutatingActions is a source-level guard for
 // the Helm read-only invariant (FR-029/SC-017): the helm package must never
-// reference an install/upgrade/rollback/uninstall action.
+// reference an install/upgrade/rollback/uninstall action, nor mutate release
+// storage. The walk is recursive so restructuring internal/helm into
+// sub-packages cannot silently drop files out of the guard.
 func TestHelmPackageNeverConstructsMutatingActions(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	helmDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "internal", "helm")
-	entries, err := os.ReadDir(helmDir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	forbidden := []string{
 		"NewInstall", "NewUpgrade", "NewRollback", "NewUninstall",
 		"action.Install", "action.Upgrade", "action.Rollback", "action.Uninstall",
+		// Storage-level mutations: the same driver object that serves
+		// ListReleases/History also exposes writes — ban them at the source.
+		"Releases.Create", "Releases.Update", "Releases.Delete",
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(helmDir, e.Name()))
+	checked := 0
+	err := filepath.WalkDir(helmDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		checked++
 		src := string(data)
 		for _, f := range forbidden {
 			if strings.Contains(src, f) {
-				t.Errorf("%s references %q — the helm layer must stay read-only", e.Name(), f)
+				t.Errorf("%s references %q — the helm layer must stay read-only", d.Name(), f)
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("no helm source files swept — wrong directory?")
 	}
 }

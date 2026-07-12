@@ -110,15 +110,30 @@ func NewNamespace(name string) *unstructured.Unstructured {
 // inspection (zero-mutation assertion).
 func NewFakeClient(namespace string, objs ...*unstructured.Unstructured) (*kube.Client, *dynamicfake.FakeDynamicClient) {
 	scheme := runtime.NewScheme()
+	// Every kind the app has dedicated columns or drill flows for must be
+	// registered here — the fake dynamic client refuses to LIST an unknown
+	// kind, walling off any integration test on that type.
 	listKinds := map[schema.GroupVersionResource]string{
 		podsGVR: "PodList",
-		{Group: "", Version: "v1", Resource: "secrets"}:                          "SecretList",
-		{Group: "", Version: "v1", Resource: "namespaces"}:                       "NamespaceList",
-		{Group: "", Version: "v1", Resource: "nodes"}:                            "NodeList",
-		{Group: "", Version: "v1", Resource: "events"}:                           "EventList",
-		{Group: "", Version: "v1", Resource: "endpoints"}:                        "EndpointsList",
-		{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}:   "EndpointSliceList",
-		{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}: "NetworkPolicyList",
+		{Group: "", Version: "v1", Resource: "secrets"}:                             "SecretList",
+		{Group: "", Version: "v1", Resource: "namespaces"}:                          "NamespaceList",
+		{Group: "", Version: "v1", Resource: "nodes"}:                               "NodeList",
+		{Group: "", Version: "v1", Resource: "events"}:                              "EventList",
+		{Group: "", Version: "v1", Resource: "endpoints"}:                           "EndpointsList",
+		{Group: "", Version: "v1", Resource: "services"}:                            "ServiceList",
+		{Group: "", Version: "v1", Resource: "configmaps"}:                          "ConfigMapList",
+		{Group: "", Version: "v1", Resource: "persistentvolumeclaims"}:              "PersistentVolumeClaimList",
+		{Group: "", Version: "v1", Resource: "persistentvolumes"}:                   "PersistentVolumeList",
+		{Group: "apps", Version: "v1", Resource: "deployments"}:                     "DeploymentList",
+		{Group: "apps", Version: "v1", Resource: "statefulsets"}:                    "StatefulSetList",
+		{Group: "apps", Version: "v1", Resource: "replicasets"}:                     "ReplicaSetList",
+		{Group: "apps", Version: "v1", Resource: "daemonsets"}:                      "DaemonSetList",
+		{Group: "batch", Version: "v1", Resource: "jobs"}:                           "JobList",
+		{Group: "batch", Version: "v1", Resource: "cronjobs"}:                       "CronJobList",
+		{Group: "autoscaling", Version: "v2", Resource: "horizontalpodautoscalers"}: "HorizontalPodAutoscalerList",
+		{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}:          "IngressList",
+		{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}:      "EndpointSliceList",
+		{Group: "networking.k8s.io", Version: "v1", Resource: "networkpolicies"}:    "NetworkPolicyList",
 	}
 	runtimeObjs := make([]runtime.Object, 0, len(objs))
 	for _, o := range objs {

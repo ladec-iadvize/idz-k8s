@@ -3,6 +3,7 @@ package unit
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -94,6 +95,27 @@ func TestHealthFallback(t *testing.T) {
 		if l.Label() == "" {
 			t.Fatalf("health %d has empty label", l)
 		}
+	}
+}
+
+// TestConfigSchemaIsAllowlisted: the keyword grep below can only catch a
+// field whose NAME contains a banned word — never a secret VALUE. This
+// value-level guard forces every new Config field through a conscious
+// "this can never hold secret material" decision.
+func TestConfigSchemaIsAllowlisted(t *testing.T) {
+	allowed := map[string]bool{
+		"SchemaVersion": true, "RefreshIntervalSeconds": true, "PrometheusURL": true,
+		"Theme": true, "LastContext": true, "LastNamespace": true, "LastType": true,
+		"ViewPrefs": true, "SavedViews": true,
+	}
+	tp := reflect.TypeOf(config.Config{})
+	for i := 0; i < tp.NumField(); i++ {
+		if name := tp.Field(i).Name; !allowed[name] {
+			t.Errorf("new Config field %q: confirm it can never hold secret material (FR-015/Principle IV), then allowlist it here", name)
+		}
+	}
+	if tp.NumField() != len(allowed) {
+		t.Errorf("Config has %d fields, allowlist has %d — remove stale entries", tp.NumField(), len(allowed))
 	}
 }
 

@@ -59,37 +59,55 @@ func TestDiagCategoryFolding(t *testing.T) {
 	}
 }
 
-// TestSearchWorksOnEveryContentView: the same '/' flow works on a non-detail
-// view (posture here) — commit, hits, Esc clears then Esc leaves.
+// TestSearchWorksOnEveryContentView: the same '/' flow — commit, hits, Esc
+// clears then Esc leaves — must work on EVERY content viewport (invariant 0).
+// The screens are discovered through vpFor so a new content view is swept
+// automatically (the old version only exercised posture, despite its name).
 func TestSearchWorksOnEveryContentView(t *testing.T) {
-	m := plainModel(t)
-	m.screen = screenPosture
-	m.renderPosture([]model.PostureFinding{
-		{Rule: "privileged container", Severity: model.HealthError, Namespace: "demo", Name: "bad", Container: "app", Detail: "securityContext.privileged: true"},
-	})
-	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
-	m = asModel(t, mi)
-	if !m.searchTyping {
-		t.Fatal("'/' must open the search on the posture view")
+	// Discover every screen backed by a content viewport.
+	probe := plainModel(t)
+	var contentScreens []screen
+	for sc := screen(0); sc < screen(64); sc++ {
+		if probe.vpFor(sc) != nil {
+			contentScreens = append(contentScreens, sc)
+		}
 	}
-	for _, r := range "privileged" {
-		mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	if len(contentScreens) < 10 {
+		t.Fatalf("only %d content screens discovered — vpFor changed shape?", len(contentScreens))
+	}
+
+	for _, sc := range contentScreens {
+		m := plainModel(t)
+		m.screen = sc
+		m.setContent(sc, "alpha\nsomething privileged here\nomega")
+
+		mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 		m = asModel(t, mi)
-	}
-	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	m = asModel(t, mi)
-	if len(m.searchHits) == 0 || m.searchScreen != screenPosture {
-		t.Fatalf("hits=%v screen=%d", m.searchHits, m.searchScreen)
-	}
-	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
-	m = asModel(t, mi)
-	if m.searchQuery != "" || m.screen != screenPosture {
-		t.Fatal("first Esc must clear and stay")
-	}
-	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
-	m = asModel(t, mi)
-	if m.screen != screenList {
-		t.Fatal("second Esc must leave")
+		if !m.searchTyping {
+			t.Errorf("screen %d: '/' must open the search", sc)
+			continue
+		}
+		for _, r := range "privileged" {
+			mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+			m = asModel(t, mi)
+		}
+		mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+		m = asModel(t, mi)
+		if len(m.searchHits) == 0 || m.searchScreen != sc {
+			t.Errorf("screen %d: hits=%v searchScreen=%d", sc, m.searchHits, m.searchScreen)
+			continue
+		}
+		mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+		m = asModel(t, mi)
+		if m.searchQuery != "" || m.screen != sc {
+			t.Errorf("screen %d: first Esc must clear and stay (query=%q screen=%d)", sc, m.searchQuery, m.screen)
+			continue
+		}
+		mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEscape})
+		m = asModel(t, mi)
+		if m.screen == sc {
+			t.Errorf("screen %d: second Esc must leave the view", sc)
+		}
 	}
 }
 
