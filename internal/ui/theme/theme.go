@@ -41,6 +41,9 @@ type Theme struct {
 	Section  lipgloss.Style // section titles inside sub-views
 	YamlKey  lipgloss.Style // YAML keys in detail/values views
 	Position lipgloss.Style // "12-38/842" footer position
+
+	// Modals (picker, help): rounded border tinted like the app badge.
+	ModalBorder lipgloss.Style
 }
 
 // Default returns the default theme. lipgloss automatically drops color on
@@ -69,6 +72,8 @@ func Default() Theme {
 		Section:  lipgloss.NewStyle().Background(lipgloss.Color("237")).Foreground(lipgloss.Color("117")).Bold(true).Padding(0, 1),
 		YamlKey:  lipgloss.NewStyle().Foreground(lipgloss.Color("75")),
 		Position: lipgloss.NewStyle().Foreground(lipgloss.Color("81")),
+
+		ModalBorder: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(0, 1),
 	}
 }
 
@@ -98,6 +103,8 @@ func Light() Theme {
 		Section:  lipgloss.NewStyle().Background(lipgloss.Color("253")).Foreground(lipgloss.Color("25")).Bold(true).Padding(0, 1),
 		YamlKey:  lipgloss.NewStyle().Foreground(lipgloss.Color("26")),
 		Position: lipgloss.NewStyle().Foreground(lipgloss.Color("25")),
+
+		ModalBorder: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("61")).Padding(0, 1),
 	}
 }
 
@@ -117,6 +124,38 @@ func ForName(name string) Theme {
 		}
 		return Light()
 	}
+}
+
+// iAdvize brand green — the mint of the logo — and a darker shade for depth.
+// Brand colors are theme-independent by nature (used by the --kikoo banner).
+var (
+	KikooGreen     = lipgloss.NewStyle().Foreground(lipgloss.Color("#3DDFA4")).Bold(true)
+	KikooDarkGreen = lipgloss.NewStyle().Foreground(lipgloss.Color("#1FA97A"))
+)
+
+// podLogPalette holds visually distinct colors for merged-log pod prefixes.
+var podLogPalette = []lipgloss.Style{
+	lipgloss.NewStyle().Foreground(lipgloss.Color("39")),  // blue
+	lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
+	lipgloss.NewStyle().Foreground(lipgloss.Color("135")), // purple
+	lipgloss.NewStyle().Foreground(lipgloss.Color("42")),  // green
+	lipgloss.NewStyle().Foreground(lipgloss.Color("214")), // yellow
+	lipgloss.NewStyle().Foreground(lipgloss.Color("45")),  // cyan
+	lipgloss.NewStyle().Foreground(lipgloss.Color("197")), // pink
+	lipgloss.NewStyle().Foreground(lipgloss.Color("190")), // lime
+}
+
+// PodPrefix picks a stable color for a pod name (same pod → same color for
+// the whole session, no state needed).
+func PodPrefix(pod string) lipgloss.Style {
+	h := 0
+	for _, r := range pod {
+		h = h*31 + int(r)
+	}
+	if h < 0 {
+		h = -h
+	}
+	return podLogPalette[h%len(podLogPalette)]
 }
 
 // Status renders a health as "<symbol> <label>", colored, with the symbol as a

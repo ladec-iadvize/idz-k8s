@@ -839,7 +839,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.Pod != "" {
 				// Merged multi-pod stream: color-code each pod's prefix so
 				// interleaved lines are attributable at a glance.
-				line = podPrefixStyle(msg.Pod).Render("["+msg.Pod+"]") + " " + msg.Text
+				line = theme.PodPrefix(msg.Pod).Render("["+msg.Pod+"]") + " " + msg.Text
 			}
 			// Accumulate in a real buffer — NEVER in the viewport's rendered
 			// View(), which is windowed/padded and destroys the content.
@@ -998,177 +998,141 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m.delegate(msg)
 }
 
+// editAction is editText's verdict on one key of a text-typing mode.
+type editAction int
+
+const (
+	editTyping editAction = iota // text possibly changed, stay in the mode
+	editCommit                   // Enter: leave the mode, keep the text
+	editCancel                   // Esc: leave the mode (callers clear the text)
+)
+
+// editText applies one key to a typing-mode buffer: Backspace deletes the
+// last RUNE (never a byte — 'é' is 2 bytes, FR "widths in runes" applies to
+// input too), runes/space append. Every typing mode shares this so the
+// Enter-commits / Esc-cancels contract stays consistent (invariant 0).
+func editText(s *string, msg tea.KeyMsg) (act editAction, changed bool) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		return editCommit, false
+	case tea.KeyEscape:
+		return editCancel, false
+	case tea.KeyBackspace:
+		if *s != "" {
+			r := []rune(*s)
+			*s = string(r[:len(r)-1])
+			return editTyping, true
+		}
+	case tea.KeyRunes, tea.KeySpace:
+		*s += string(msg.Runes)
+		return editTyping, true
+	}
+	return editTyping, false
+}
+
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// View-name typing mode captures ALL keys (Enter saves, Esc cancels).
+	// Typing modes capture ALL keys BEFORE the global shortcuts (typing "q"
+	// or "m" must never quit the app or toggle the mouse).
+
+	// View-name typing mode (Enter saves, Esc cancels).
 	if m.viewNaming {
-		switch msg.Type {
-		case tea.KeyEnter:
+		switch act, _ := editText(&m.viewName, msg); act {
+		case editCommit:
 			m.viewNaming = false
 			m.saveCurrentView(strings.TrimSpace(m.viewName))
-			return m, nil
-		case tea.KeyEscape:
+		case editCancel:
 			m.viewNaming = false
-			return m, nil
-		case tea.KeyBackspace:
-			if m.viewName != "" {
-				m.viewName = m.viewName[:len(m.viewName)-1]
-			}
-			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			m.viewName += string(msg.Runes)
-			return m, nil
 		}
 		return m, nil
 	}
 
-	// Custom-column typing mode captures ALL keys (Enter adds, Esc cancels).
+	// Custom-column typing mode (Enter adds, Esc cancels).
 	if m.fieldNaming {
-		switch msg.Type {
-		case tea.KeyEnter:
+		switch act, _ := editText(&m.fieldInput, msg); act {
+		case editCommit:
 			m.fieldNaming = false
 			m.addCustomColumn(strings.TrimSpace(m.fieldInput))
-			return m, nil
-		case tea.KeyEscape:
+		case editCancel:
 			m.fieldNaming = false
-			return m, nil
-		case tea.KeyBackspace:
-			if m.fieldInput != "" {
-				m.fieldInput = m.fieldInput[:len(m.fieldInput)-1]
-			}
-			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			m.fieldInput += string(msg.Runes)
-			return m, nil
 		}
 		return m, nil
 	}
 
-	// Viewport search typing mode captures ALL keys (Enter searches).
+	// Viewport search typing mode (Enter searches, Esc cancels).
 	if m.searchTyping {
-		switch msg.Type {
-		case tea.KeyEnter:
+		switch act, _ := editText(&m.searchInput, msg); act {
+		case editCommit:
 			m.searchTyping = false
 			m.searchQuery = strings.TrimSpace(m.searchInput)
 			m.searchScreen = m.screen
 			m.applySearch(true)
-			return m, nil
-		case tea.KeyEscape:
+		case editCancel:
 			m.searchTyping = false
 			m.searchInput = ""
-			return m, nil
-		case tea.KeyBackspace:
-			if m.searchInput != "" {
-				m.searchInput = m.searchInput[:len(m.searchInput)-1]
-			}
-			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			m.searchInput += string(msg.Runes)
-			return m, nil
 		}
 		return m, nil
 	}
 
-	// Events filter typing mode captures ALL keys (so 'q', 'n', Esc… are text
-	// or edit actions, never global shortcuts). Enter commits, Esc cancels.
+	// Events filter typing mode: Enter commits (query saved), Esc cancels.
 	if m.screen == screenEvents && m.eventsFiltering {
-		switch msg.Type {
-		case tea.KeyEnter:
-			m.eventsFiltering = false // keep the query (saved)
-			m.renderEvents()
-			return m, nil
-		case tea.KeyEscape:
+		act, changed := editText(&m.eventsQuery, msg)
+		switch act {
+		case editCommit:
 			m.eventsFiltering = false
-			m.eventsQuery = "" // cancel
+		case editCancel:
+			m.eventsFiltering = false
+			m.eventsQuery = ""
+		}
+		if changed || act != editTyping {
 			m.renderEvents()
-			return m, nil
-		case tea.KeyBackspace:
-			if m.eventsQuery != "" {
-				m.eventsQuery = m.eventsQuery[:len(m.eventsQuery)-1]
-				m.renderEvents()
-			}
-			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			m.eventsQuery += string(msg.Runes)
-			m.renderEvents()
-			return m, nil
 		}
 		return m, nil
 	}
 
-	// Helm filter typing mode captures ALL keys, like the events filter.
+	// Helm filter typing mode (query visible as a chip).
 	if m.screen == screenHelm && m.helmFiltering {
-		switch msg.Type {
-		case tea.KeyEnter:
-			m.helmFiltering = false // keep the query (visible as a chip)
-			m.renderHelm()
-			return m, nil
-		case tea.KeyEscape:
+		act, changed := editText(&m.helmQuery, msg)
+		switch act {
+		case editCommit:
+			m.helmFiltering = false
+		case editCancel:
 			m.helmFiltering = false
 			m.helmQuery = ""
+		}
+		if changed || act != editTyping {
 			m.renderHelm()
-			return m, nil
-		case tea.KeyBackspace:
-			if m.helmQuery != "" {
-				m.helmQuery = m.helmQuery[:len(m.helmQuery)-1]
-				m.renderHelm()
-			}
-			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			m.helmQuery += string(msg.Runes)
-			m.renderHelm()
-			return m, nil
 		}
 		return m, nil
 	}
 
-	// Sizing-overview filter typing mode (same behavior as the helm list).
+	// Sizing-overview filter typing mode.
 	if m.screen == screenSizingList && m.sizingFiltering {
-		switch msg.Type {
-		case tea.KeyEnter:
+		act, changed := editText(&m.sizingQuery, msg)
+		switch act {
+		case editCommit:
 			m.sizingFiltering = false
-			m.applySizingFilter()
-			return m, nil
-		case tea.KeyEscape:
+		case editCancel:
 			m.sizingFiltering = false
 			m.sizingQuery = ""
+		}
+		if changed || act != editTyping {
 			m.applySizingFilter()
-			return m, nil
-		case tea.KeyBackspace:
-			if m.sizingQuery != "" {
-				m.sizingQuery = m.sizingQuery[:len(m.sizingQuery)-1]
-				m.applySizingFilter()
-			}
-			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			m.sizingQuery += string(msg.Runes)
-			m.applySizingFilter()
-			return m, nil
 		}
 		return m, nil
 	}
 
-	// Usage-view filter typing mode (same behavior as the other tables).
+	// Usage-view filter typing mode.
 	if m.screen == screenTop && m.usageTyping {
-		switch msg.Type {
-		case tea.KeyEnter:
+		act, changed := editText(&m.usageFilterQ, msg)
+		switch act {
+		case editCommit:
 			m.usageTyping = false
-			m.applyUsageFilter()
-			return m, nil
-		case tea.KeyEscape:
+		case editCancel:
 			m.usageTyping = false
 			m.usageFilterQ = ""
+		}
+		if changed || act != editTyping {
 			m.applyUsageFilter()
-			return m, nil
-		case tea.KeyBackspace:
-			if m.usageFilterQ != "" {
-				m.usageFilterQ = m.usageFilterQ[:len(m.usageFilterQ)-1]
-				m.applyUsageFilter()
-			}
-			return m, nil
-		case tea.KeyRunes, tea.KeySpace:
-			m.usageFilterQ += string(msg.Runes)
-			m.applyUsageFilter()
-			return m, nil
 		}
 		return m, nil
 	}
@@ -1182,11 +1146,20 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Filtering mode captures typing.
+	// Filtering mode captures typing. Enter commits the filter (kept as a
+	// header chip); Esc cancels and clears it — same contract as every other
+	// filter mode (invariant 0: Esc means clear, never commit).
 	if m.filtering {
 		switch msg.String() {
-		case "enter", "esc":
+		case "enter":
 			m.filtering = false
+			m.filter.Blur()
+			m.applyRows()
+			m.persistViewPref()
+			return m, nil
+		case "esc":
+			m.filtering = false
+			m.filter.SetValue("")
 			m.filter.Blur()
 			m.applyRows()
 			m.persistViewPref()
@@ -1788,8 +1761,9 @@ func (m *Model) navigate(w *winTable, msg tea.KeyMsg) {
 func (m Model) handleScrollKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.screen == screenDetail {
-		// Toggle secret reveal with 'x' on the detail of a Secret.
-		if msg.String() == "x" && strings.EqualFold(m.curType.Kind, "Secret") {
+		// Toggle secret reveal on the detail of a Secret (keys.Reveal — 'x'
+		// also means connectivity on the list; per-screen scoping keeps both).
+		if hit(msg, m.keys.Reveal) && strings.EqualFold(m.curType.Kind, "Secret") {
 			m.revealSecret = !m.revealSecret
 			m.renderDetail()
 			return m, nil
@@ -1864,7 +1838,8 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyBackspace:
 		if m.pickerQuery != "" {
-			m.pickerQuery = m.pickerQuery[:len(m.pickerQuery)-1]
+			r := []rune(m.pickerQuery) // delete the last rune, never a byte
+			m.pickerQuery = string(r[:len(r)-1])
 			m.applyPickerRows()
 		}
 		return m, nil
@@ -2646,7 +2621,9 @@ func (m *Model) renderEvents() {
 	// Section rule with the time labels embedded: ── Timeline ── 11:49 ── …
 	lead := "── "
 	title := "Timeline"
-	gap := timelineLaneWidth + 2 - len(lead) - len(title) - 1
+	// Rune count, not len(): "─" is 3 bytes for 1 cell — byte-counting shoved
+	// the axis 4 columns left of the lane markers.
+	gap := timelineLaneWidth + 2 - len([]rune(lead)) - len(title) - 1
 	if gap < 1 {
 		gap = 1
 	}
@@ -3841,12 +3818,6 @@ func repeatToWidth(pattern string, w int) string {
 	return string(r[:w])
 }
 
-// iAdvize brand green — the mint of the logo — and a darker shade for depth.
-var (
-	kikooGreen     = lipgloss.NewStyle().Foreground(lipgloss.Color("#3DDFA4")).Bold(true)
-	kikooDarkGreen = lipgloss.NewStyle().Foreground(lipgloss.Color("#1FA97A"))
-)
-
 // bannerH returns the banner height: 0 unless kikoo is on AND the terminal
 // is comfortably large (the banner never eats a small screen).
 func (m Model) bannerH() int {
@@ -3866,9 +3837,9 @@ func (m Model) banner() string {
 
 	var b strings.Builder
 	for i, l := range kikooArt {
-		style := kikooGreen
+		style := theme.KikooGreen
 		if i >= len(kikooArt)-2 {
-			style = kikooDarkGreen
+			style = theme.KikooDarkGreen
 		}
 		var plain, styled string
 		if wide {
@@ -3877,11 +3848,11 @@ func (m Model) banner() string {
 			left := repeatToWidth(kikooPattern[i%len(kikooPattern)], fill)
 			right := repeatToWidth(kikooPattern[(i+3)%len(kikooPattern)], m.width-len([]rune(core))-fill)
 			plain = left + core + right
-			styled = kikooDarkGreen.Render(left) +
-				kikooGreen.Render(kikooBubble[i]) + " " +
+			styled = theme.KikooDarkGreen.Render(left) +
+				theme.KikooGreen.Render(kikooBubble[i]) + " " +
 				style.Render(l) + " " +
-				kikooDarkGreen.Render(kikooHelm[i]) +
-				kikooDarkGreen.Render(right)
+				theme.KikooDarkGreen.Render(kikooHelm[i]) +
+				theme.KikooDarkGreen.Render(right)
 		} else {
 			plain = l
 			styled = style.Render(l)
@@ -3900,7 +3871,7 @@ func (m Model) banner() string {
 		pad = 0
 	}
 	b.WriteString(strings.Repeat(" ", pad))
-	b.WriteString(xansi.Truncate(kikooDarkGreen.Render(tag), m.width, ""))
+	b.WriteString(xansi.Truncate(theme.KikooDarkGreen.Render(tag), m.width, ""))
 	b.WriteString("\n\n")
 	return b.String()
 }
@@ -4071,11 +4042,6 @@ func (m Model) modalListRows() int {
 	return r
 }
 
-var modalBorder = lipgloss.NewStyle().
-	Border(lipgloss.RoundedBorder()).
-	BorderForeground(lipgloss.Color("62")).
-	Padding(0, 1)
-
 // pickerModalGeom mirrors pickerModal's layout for mouse hit-testing:
 // x/y of the box and the absolute row of the first option line.
 type modalGeom struct {
@@ -4119,7 +4085,7 @@ func (m Model) pickerModal() (string, modalGeom) {
 		hint = fmt.Sprintf("↑↓ · Enter ok · Esc close · '*' = pattern   %d option(s)", total)
 	}
 	lines = append(lines, m.theme.Faint.Render(padTo(hint, inner)))
-	box := modalBorder.Render(strings.Join(lines, "\n"))
+	box := m.theme.ModalBorder.Render(strings.Join(lines, "\n"))
 
 	boxLines := len(lines) + 2
 	bgLines := m.bodyH + 5 // header+rule+body+rule+footer
@@ -4144,7 +4110,7 @@ func (m Model) inputModal(title, value, hint string) string {
 		padTo("/ "+value+"▏", inner),
 		m.theme.Faint.Render(padTo(hint, inner)),
 	}
-	return modalBorder.Render(strings.Join(lines, "\n"))
+	return m.theme.ModalBorder.Render(strings.Join(lines, "\n"))
 }
 
 // padTo pads/truncates a plain string to an exact display width.
@@ -4418,11 +4384,20 @@ func (m Model) screenKeymap() keymapView {
 			full:  [][]key.Binding{nav, {k.Open, k.Filter, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
 	case screenDetail, screenHelmHist:
-		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
+		short := []key.Binding{k.Up, k.Down, k.Filter, k.SearchNext, k.SearchPrev}
+		actions := []key.Binding{k.Filter, k.SearchNext, k.SearchPrev}
+		if m.screen == screenDetail && strings.EqualFold(m.curType.Kind, "Secret") {
+			// Secret detail: 'x' toggles value reveal (masked by default, FR-015).
+			short = append(short, k.Reveal)
+			actions = append(actions, k.Reveal)
 		}
-	default: // diag, topology, posture, connectivity, access, drift, sizing detail
+		short = append(short, k.Back, k.Quit)
+		actions = append(actions, k.Back, k.Help, k.Quit)
+		return keymapView{
+			short: short,
+			full:  [][]key.Binding{nav, actions},
+		}
+	default: // connectivity, access, drift, sizing detail
 		return keymapView{
 			short: []key.Binding{k.Up, k.Down, k.Filter, k.Back, k.Help, k.Quit},
 			full:  [][]key.Binding{nav, {k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
@@ -6283,28 +6258,3 @@ func maskSecret(raw map[string]interface{}) map[string]interface{} {
 }
 
 func hit(msg tea.KeyMsg, b key.Binding) bool { return key.Matches(msg, b) }
-
-// podLogPalette holds visually distinct colors for merged-log pod prefixes.
-var podLogPalette = []lipgloss.Style{
-	lipgloss.NewStyle().Foreground(lipgloss.Color("39")),  // blue
-	lipgloss.NewStyle().Foreground(lipgloss.Color("208")), // orange
-	lipgloss.NewStyle().Foreground(lipgloss.Color("135")), // purple
-	lipgloss.NewStyle().Foreground(lipgloss.Color("42")),  // green
-	lipgloss.NewStyle().Foreground(lipgloss.Color("214")), // yellow
-	lipgloss.NewStyle().Foreground(lipgloss.Color("45")),  // cyan
-	lipgloss.NewStyle().Foreground(lipgloss.Color("197")), // pink
-	lipgloss.NewStyle().Foreground(lipgloss.Color("190")), // lime
-}
-
-// podPrefixStyle picks a stable color for a pod name (same pod → same color
-// for the whole session, no state needed).
-func podPrefixStyle(pod string) lipgloss.Style {
-	h := 0
-	for _, r := range pod {
-		h = h*31 + int(r)
-	}
-	if h < 0 {
-		h = -h
-	}
-	return podLogPalette[h%len(podLogPalette)]
-}
