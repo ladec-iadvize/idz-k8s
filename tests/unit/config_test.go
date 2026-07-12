@@ -219,3 +219,19 @@ func TestThemeForName(t *testing.T) {
 		}
 	}
 }
+
+// TestHelpStylesAreReadable (owner report 2026-07-12): the help overlay must
+// not rely on faint defaults — both palettes define an explicit, readable
+// description color, distinct per theme.
+func TestHelpStylesAreReadable(t *testing.T) {
+	dark, light := theme.Default(), theme.Light()
+	if dark.HelpDesc.GetForeground() == nil || light.HelpDesc.GetForeground() == nil {
+		t.Fatal("help description colors must be explicit, not faint defaults")
+	}
+	if dark.HelpDesc.GetForeground() == light.HelpDesc.GetForeground() {
+		t.Fatal("help colors must be tuned per background")
+	}
+	if !dark.HelpKey.GetBold() || !light.HelpKey.GetBold() {
+		t.Fatal("shortcut keys must stand out (bold)")
+	}
+}

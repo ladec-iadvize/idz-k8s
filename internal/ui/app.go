@@ -423,6 +423,14 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 	for _, opt := range opts {
 		opt(&m)
 	}
+	// Help overlay: bubbles/help defaults are faint-on-dark and nearly
+	// invisible (owner report 2026-07-12) — style it from the theme AFTER
+	// the options so a WithTheme choice applies.
+	hs := m.help.Styles
+	hs.ShortKey, hs.FullKey = m.theme.HelpKey, m.theme.HelpKey
+	hs.ShortDesc, hs.FullDesc = m.theme.HelpDesc, m.theme.HelpDesc
+	hs.ShortSeparator, hs.FullSeparator = m.theme.Faint, m.theme.Faint
+	m.help.Styles = hs
 	return m
 }
 
@@ -1730,7 +1738,7 @@ func (m Model) footerShort(km keymapView) (string, []clickZone) {
 		}
 		first = false
 		x0 := lipgloss.Width(line)
-		line += m.theme.Position.Render(h.Key) + " " + m.theme.Help.Render(h.Desc)
+		line += m.theme.HelpKey.Render(h.Key) + " " + m.theme.HelpDesc.Render(h.Desc)
 		keys := b.Keys()
 		if len(keys) > 0 {
 			zones = append(zones, clickZone{x0: x0, x1: lipgloss.Width(line), key: keys[0]})

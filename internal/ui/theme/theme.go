@@ -19,6 +19,8 @@ type Theme struct {
 	Title     lipgloss.Style
 	StatusBar lipgloss.Style
 	Help      lipgloss.Style
+	HelpKey   lipgloss.Style // shortcut keys in the help overlay/footer
+	HelpDesc  lipgloss.Style // their descriptions — readable, never faint
 	Selected  lipgloss.Style
 	Highlight lipgloss.Style // inverse video, for timeline marker highlighting
 	Faint     lipgloss.Style
@@ -53,6 +55,8 @@ func Default() Theme {
 		Title:     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")),
 		StatusBar: lipgloss.NewStyle().Foreground(lipgloss.Color("12")),
 		Help:      lipgloss.NewStyle().Faint(true),
+		HelpKey:   lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true),
+		HelpDesc:  lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
 		Selected:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("10")),
 		Highlight: lipgloss.NewStyle().Reverse(true).Bold(true),
 		Faint:     lipgloss.NewStyle().Faint(true),
@@ -84,6 +88,8 @@ func light() Theme {
 		Title:     lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")),
 		StatusBar: lipgloss.NewStyle().Foreground(lipgloss.Color("25")),
 		Help:      lipgloss.NewStyle().Faint(true),
+		HelpKey:   lipgloss.NewStyle().Foreground(lipgloss.Color("25")).Bold(true),
+		HelpDesc:  lipgloss.NewStyle().Foreground(lipgloss.Color("238")),
 		Selected:  lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("28")),
 		Highlight: lipgloss.NewStyle().Reverse(true).Bold(true),
 		Faint:     lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
