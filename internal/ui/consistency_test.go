@@ -480,7 +480,7 @@ func TestKikooBannerGeometry(t *testing.T) {
 		t.Fatalf("banner missing on a large terminal")
 	}
 	// Wide terminals get the bubble logo, the helm and the pattern flanks.
-	for _, want := range []string{"╭─────────╮", "⎈", "○"} {
+	for _, want := range []string{"▄█████████▄", "⎈", "○"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("wide banner missing %q", want)
 		}
