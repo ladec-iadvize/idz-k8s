@@ -226,12 +226,6 @@ func (m *Model) columnsBase() []listColumn {
 				return fmt.Sprintf("%d/%d", r, d)
 			}
 			return "-"
-		},
-		less: func(a, b model.ResourceObject) bool {
-			ra, da, _ := kube.ReadyCount("", nil) // placeholders; replaced below
-			_ = ra
-			_ = da
-			return false
 		}}
 	// readiness sort needs the kind; bind it here.
 	kind := m.curType.Kind

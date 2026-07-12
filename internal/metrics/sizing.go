@@ -58,28 +58,15 @@ func (c *Client) WorkloadSizing(ctx context.Context, namespace string, pods []st
 	return cpu, mem
 }
 
-// scopeBase is the per-pod usage vector for a whole scope: one namespace when
-// exactNS is set, the entire cluster otherwise (patterns and "all" are
-// filtered client-side by workload matching).
-func scopeBase(exactNS string, kind model.MetricKind) string {
-	matcher := `container!=""`
-	if exactNS != "" {
-		matcher = fmt.Sprintf(`namespace=%q,container!=""`, exactNS)
-	}
-	if kind == model.MetricMemory {
-		return fmt.Sprintf(`sum by (namespace,pod) (container_memory_working_set_bytes{%s})`, matcher)
-	}
-	return fmt.Sprintf(`sum by (namespace,pod) (rate(container_cpu_usage_seconds_total{%s}[5m]))`, matcher)
-}
-
 // ScopeAvgByPod builds the per-pod average usage over the window for a whole
 // scope — with ScopePeakByPod, four queries feed the entire sizing overview
-// table regardless of the workload count.
+// table regardless of the workload count. The scope vector is ScopeNowByPod
+// (queries.go), the same one the usage view builds on.
 func ScopeAvgByPod(exactNS string, kind model.MetricKind, window time.Duration) string {
-	return fmt.Sprintf(`avg_over_time((%s)[%dm:1m])`, scopeBase(exactNS, kind), int(window.Minutes()))
+	return fmt.Sprintf(`avg_over_time((%s)[%dm:1m])`, ScopeNowByPod(exactNS, kind), int(window.Minutes()))
 }
 
 // ScopePeakByPod builds the per-pod peak usage over the window.
 func ScopePeakByPod(exactNS string, kind model.MetricKind, window time.Duration) string {
-	return fmt.Sprintf(`max_over_time((%s)[%dm:1m])`, scopeBase(exactNS, kind), int(window.Minutes()))
+	return fmt.Sprintf(`max_over_time((%s)[%dm:1m])`, ScopeNowByPod(exactNS, kind), int(window.Minutes()))
 }

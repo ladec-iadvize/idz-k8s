@@ -17,17 +17,8 @@ var podsGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "p
 // evicted pods, and per-container CrashLoopBackOff, OOMKilled, non-zero exits,
 // and restart counts. Only "interesting" (non-healthy) items are returned.
 func (c *Client) Diagnostics(ctx context.Context, namespace string) ([]model.Diagnostic, error) {
-	ri := c.Dynamic.Resource(podsGVR)
 	apiNS, pattern := namespaceScope(namespace)
-	var (
-		ul  *unstructured.UnstructuredList
-		err error
-	)
-	if apiNS != "" {
-		ul, err = ri.Namespace(apiNS).List(ctx, metav1.ListOptions{})
-	} else {
-		ul, err = ri.List(ctx, metav1.ListOptions{})
-	}
+	ul, err := c.listGVR(ctx, podsGVR, apiNS, metav1.ListOptions{})
 	if err != nil {
 		return nil, err
 	}

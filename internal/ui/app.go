@@ -114,14 +114,12 @@ type Model struct {
 	keys     keys.KeyMap
 	theme    theme.Theme
 	help     help.Model
-	table    table.Model
 	detail   viewport.Model
 	logsView viewport.Model
 	diag     viewport.Model
 	topo     viewport.Model
 	events   viewport.Model
 	filter   textinput.Model
-	picker   table.Model
 
 	screen      screen
 	pickerKind  pickerKind
@@ -202,7 +200,6 @@ type Model struct {
 	// Sizing recommendations (US6, advisory & read-only): overview table of
 	// every listed workload, Enter → per-workload detail panel.
 	sizingVP   viewport.Model
-	sizingFor  string // e.g. "Deployment/back"
 	sizingRows []model.SizingAdvice
 	sizingObjs []model.ResourceObject // same order as sizingRows
 	sizingWin  winTable
@@ -397,14 +394,12 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		keys:           keys.Default(),
 		theme:          theme.Default(),
 		help:           help.New(),
-		table:          table.New(table.WithFocused(true)),
 		detail:         viewport.New(0, 0),
 		logsView:       viewport.New(0, 0),
 		diag:           viewport.New(0, 0),
 		topo:           viewport.New(0, 0),
 		events:         viewport.New(0, 0),
 		filter:         fi,
-		picker:         table.New(table.WithFocused(true)),
 		helmTable:      table.New(table.WithFocused(true)),
 		helmHist:       viewport.New(0, 0),
 		sizingVP:       viewport.New(0, 0),
@@ -426,8 +421,6 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 	ts.Header = m.theme.TableHeader.BorderStyle(lipgloss.NormalBorder()).BorderBottom(false)
 	ts.Selected = m.theme.TableSelected
 	ts.Cell = lipgloss.NewStyle()
-	m.table.SetStyles(ts)
-	m.picker.SetStyles(ts)
 	m.helmTable.SetStyles(ts)
 
 	for _, opt := range opts {
@@ -1533,7 +1526,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case screenPicker:
 			m.pickerWin.Move(delta)
-			m.pickerWin.Sync(&m.picker)
 			return m, nil
 		default:
 			return m.delegate(msg)
@@ -1702,7 +1694,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		if rel := msg.Y - geom.optTop; rel >= 0 && rel < geom.optRows {
 			if m.pickerWin.ClickVisible(rel) {
-				m.pickerWin.Sync(&m.picker)
 				if m.pickerKind == pickColumns {
 					// Chooser: a single click toggles the column.
 					m.toggleColItem(m.pickerWin.cursor)
@@ -1820,7 +1811,6 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.colItems[i], m.colItems[j] = m.colItems[j], m.colItems[i]
 				m.applyColumnRows()
 				m.pickerWin.Move(j - i)
-				m.pickerWin.Sync(&m.picker)
 			}
 			return m, nil
 		case tea.KeyBackspace, tea.KeyDelete:
@@ -1834,7 +1824,6 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
 		m.navigate(&m.pickerWin, msg)
-		m.pickerWin.Sync(&m.picker)
 		return m, nil
 	case tea.KeyBackspace:
 		if m.pickerQuery != "" {
@@ -1849,9 +1838,9 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.applyPickerRows()
 		return m, nil
 	}
-	var cmd tea.Cmd
-	m.picker, cmd = m.picker.Update(msg)
-	return m, cmd
+	// Every meaningful key is handled above; the picker is rendered straight
+	// from pickerWin, so there is no widget left to delegate to.
+	return m, nil
 }
 
 func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1881,8 +1870,6 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.helmTable, cmd = m.helmTable.Update(msg)
 	case screenHelmHist:
 		m.helmHist, cmd = m.helmHist.Update(msg)
-	case screenPicker:
-		m.picker, cmd = m.picker.Update(msg)
 	}
 	return m, cmd
 }
@@ -1916,7 +1903,6 @@ func (m *Model) goBack() (tea.Model, tea.Cmd) {
 	if m.screen == screenDetail && m.describeReturn != screenList && m.describeReturn != screenDetail {
 		back := m.describeReturn
 		m.describeReturn = screenList
-		m.revealSecret = false
 		m.screen = back
 		m.layout()
 		return m, nil
@@ -2462,9 +2448,7 @@ func (m Model) openKindPicker() (tea.Model, tea.Cmd) {
 	for i, o := range m.pickerOpts {
 		rows[i] = table.Row{o}
 	}
-	m.picker.SetColumns([]table.Column{{Title: "select kind (type to filter)", Width: max(20, m.width-4)}})
 	m.pickerWin.SetRows(rows)
-	m.pickerWin.Sync(&m.picker)
 	m.screen = screenPicker
 	m.layout()
 	return m, nil
@@ -2689,7 +2673,7 @@ func (m *Model) renderEvents() {
 		}
 		for _, e := range l.events {
 			p := pos(e.Time)
-			cells[p].count += maxInt(e.Count, 1)
+			cells[p].count += max(e.Count, 1)
 			cells[p].warning = cells[p].warning || e.Warning()
 		}
 		var row strings.Builder
@@ -2811,13 +2795,6 @@ func marker(count int, sym string) string {
 		return "+"
 	}
 	return string(rune('0' + count))
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func eventBadge(e model.Event) string {
@@ -2971,8 +2948,7 @@ func (m Model) handleHelmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // openHelmDetail opens the release detail (history + resources + values), or
 // only the values when valuesOnly is set ('v' — quick copy-friendly view).
 func (m Model) openHelmDetail(valuesOnly bool) (tea.Model, tea.Cmd) {
-	row, okRow := m.helmWin.Selected()
-	_ = okRow
+	row, _ := m.helmWin.Selected()
 	if len(row) < 2 || m.helm == nil {
 		return m, nil
 	}
@@ -3530,7 +3506,6 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 	}
 	m.pickerOpts = opts
 	m.pickerQuery = ""
-	m.picker.SetColumns([]table.Column{{Title: "select (type to filter)", Width: max(20, m.width-4)}})
 	m.applyPickerRows()
 	m.screen = screenPicker
 	m.layout()
@@ -3583,7 +3558,6 @@ func (m *Model) applyPickerRows() {
 		}
 	}
 	m.pickerWin.SetRows(rows)
-	m.pickerWin.Sync(&m.picker)
 }
 
 func (m Model) namespaceOptions() []string {
@@ -3739,11 +3713,8 @@ func (m *Model) layout() {
 		bodyH = 3
 	}
 	m.bodyH = bodyH
-	m.table.SetHeight(bodyH)
-	m.table.SetWidth(m.width)
 	m.win.SetHeight(bodyH - 1) // -1: the table's own column header
 	m.pickerWin.SetHeight(m.modalListRows())
-	m.pickerWin.Sync(&m.picker)
 	m.helmWin.SetHeight(bodyH - 1)
 	m.helmWin.Sync(&m.helmTable)
 	m.detail.Width, m.detail.Height = m.width, bodyH
@@ -3761,8 +3732,6 @@ func (m *Model) layout() {
 	m.drift.Width, m.drift.Height = m.width, bodyH
 	m.helmTable.SetHeight(bodyH)
 	m.helmTable.SetWidth(m.width)
-	m.picker.SetHeight(bodyH)
-	m.picker.SetWidth(m.width)
 }
 
 // kikooArt is the --kikoo banner (iAdvize green, centered, truncated to the
@@ -4231,7 +4200,7 @@ func (m Model) footer() string {
 	if m.help.ShowAll {
 		return m.help.View(km)
 	}
-	line, _ := m.footerShort("", km)
+	line, _ := m.footerShort(km)
 	if m.width > 0 {
 		// Never wrap: a wrapped footer breaks nothing geometrically (it is the
 		// last line) but looks broken; truncate cleanly.
@@ -4242,7 +4211,7 @@ func (m Model) footer() string {
 
 // footerZones recomputes the clickable label ranges of the shortcut bar.
 func (m Model) footerZones() []clickZone {
-	_, zones := m.footerShort("", m.screenKeymap())
+	_, zones := m.footerShort(m.screenKeymap())
 	return zones
 }
 
@@ -4255,8 +4224,8 @@ type clickZone struct {
 
 // footerShort renders the shortcut bar with per-label click zones. Clicking a
 // label is exactly like pressing its key.
-func (m Model) footerShort(prefix string, km keymapView) (string, []clickZone) {
-	line := prefix
+func (m Model) footerShort(km keymapView) (string, []clickZone) {
+	line := ""
 	var zones []clickZone
 	first := true
 	for _, b := range km.ShortHelp() {
@@ -5035,8 +5004,7 @@ func (m *Model) openSizingUnavailable() (tea.Model, tea.Cmd) {
 func (m *Model) openSizingFor(obj model.ResourceObject, selector string, from screen) (tea.Model, tea.Cmd) {
 	m.screen = screenSizing
 	m.sizingFrom = from
-	m.sizingFor = m.curType.Kind + "/" + obj.Name
-	m.setContent(screenSizing, "observing "+m.sizingFor+" over the last hour…")
+	m.setContent(screenSizing, "observing "+m.curType.Kind+"/"+obj.Name+" over the last hour…")
 	m.layout()
 	return m, m.fetchSizing(obj, selector)
 }
@@ -5886,7 +5854,6 @@ func (m Model) openColumnChooser() (tea.Model, tea.Cmd) {
 	m.pickerReturn = screenList
 	m.pickerQuery = ""
 	// The bubbles table panics on SetRows without columns — always set them.
-	m.picker.SetColumns([]table.Column{{Title: "columns", Width: max(20, m.width-4)}})
 	m.applyColumnRows()
 	m.pickerWin.Home()
 	m.screen = screenPicker
@@ -5910,7 +5877,6 @@ func (m *Model) applyColumnRows() {
 		rows = append(rows, table.Row{chk + label})
 	}
 	m.pickerWin.SetRows(rows)
-	m.pickerWin.Sync(&m.picker)
 }
 
 // toggleColItem flips a column's visibility (NAME stays — every other action
@@ -6052,10 +6018,8 @@ func (m Model) openViewPicker() (tea.Model, tea.Cmd) {
 	m.pickerOpts = opts
 	m.pickerQuery = ""
 	// The bubbles table panics on SetRows without columns — always set them.
-	m.picker.SetColumns([]table.Column{{Title: "views", Width: max(20, m.width-4)}})
 	m.applyPickerRows()
 	m.pickerWin.Home()
-	m.pickerWin.Sync(&m.picker)
 	m.screen = screenPicker
 	m.layout()
 	return m, nil

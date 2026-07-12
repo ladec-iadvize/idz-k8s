@@ -115,6 +115,12 @@ func (c *Client) History(namespace, name string) ([]model.HelmRevision, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading history of %s/%s: %w", namespace, name, err)
 	}
+	return revisionsOf(rels, namespace), nil
+}
+
+// revisionsOf maps stored releases to model revisions, most recent first
+// (shared by History and Detail).
+func revisionsOf(rels []*release.Release, namespace string) []model.HelmRevision {
 	out := make([]model.HelmRevision, 0, len(rels))
 	for _, r := range rels {
 		if namespace != "" && r.Namespace != namespace {
@@ -129,7 +135,7 @@ func (c *Client) History(namespace, name string) ([]model.HelmRevision, error) {
 		out = append(out, rev)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Revision > out[j].Revision })
-	return out, nil
+	return out
 }
 
 // ReleaseDetail is everything the release detail view shows: revision history,
@@ -151,28 +157,20 @@ func (c *Client) Detail(namespace, name string) (ReleaseDetail, error) {
 	if err != nil {
 		return ReleaseDetail{}, fmt.Errorf("reading %s/%s: %w", namespace, name, err)
 	}
-	var det ReleaseDetail
+	det := ReleaseDetail{History: revisionsOf(rels, namespace)}
 	var latest *release.Release
 	for _, r := range rels {
 		if namespace != "" && r.Namespace != namespace {
 			continue
 		}
-		rev := model.HelmRevision{Revision: r.Version}
-		if r.Info != nil {
-			rev.Status = r.Info.Status.String()
-			rev.Updated = r.Info.LastDeployed.Time
-			rev.Description = r.Info.Description
-		}
-		det.History = append(det.History, rev)
 		if latest == nil || r.Version > latest.Version {
 			latest = r
 		}
 	}
-	sort.Slice(det.History, func(i, j int) bool { return det.History[i].Revision > det.History[j].Revision })
 	if latest == nil {
 		return det, fmt.Errorf("release %s/%s not found", namespace, name)
 	}
-	det.Resources = ParseManifestResources(latest.Manifest)
+	det.Resources = parseManifestResources(latest.Manifest)
 	if len(latest.Config) > 0 {
 		if data, err := yaml.Marshal(latest.Config); err == nil {
 			det.Values = string(data)
@@ -181,9 +179,9 @@ func (c *Client) Detail(namespace, name string) (ReleaseDetail, error) {
 	return det, nil
 }
 
-// ParseManifestResources extracts the objects (apiVersion/kind/name) from a
+// parseManifestResources extracts the objects (apiVersion/kind/name) from a
 // rendered multi-document manifest. Documents without kind+name are skipped.
-func ParseManifestResources(manifest string) []model.HelmResource {
+func parseManifestResources(manifest string) []model.HelmResource {
 	var out []model.HelmResource
 	for _, doc := range strings.Split(manifest, "\n---") {
 		var head struct {

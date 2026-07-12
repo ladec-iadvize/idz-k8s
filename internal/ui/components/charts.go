@@ -86,7 +86,7 @@ func FormatMemory(bytes float64) string {
 }
 
 // FormatValue formats a usage value according to its metric kind.
-func FormatValue(kind model.MetricKind, v float64) string {
+func formatValue(kind model.MetricKind, v float64) string {
 	if kind == model.MetricMemory {
 		return FormatMemory(v)
 	}
@@ -115,9 +115,9 @@ func UsageLine(label string, u model.Usage, width int) string {
 		if u.Limit > 0 {
 			kind = "lim"
 		}
-		ref = fmt.Sprintf("%s/%s %s", FormatValue(u.Kind, u.Current), FormatValue(u.Kind, denom), kind)
+		ref = fmt.Sprintf("%s/%s %s", formatValue(u.Kind, u.Current), formatValue(u.Kind, denom), kind)
 	} else {
-		ref = FormatValue(u.Kind, u.Current) + " used, " + ref
+		ref = formatValue(u.Kind, u.Current) + " used, " + ref
 	}
 	spark := Sparkline(seriesValues(u.Series))
 	return fmt.Sprintf("%-7s %s %s%s  %s", label, Gauge(frac, width), ref, pct, spark)

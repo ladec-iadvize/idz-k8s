@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/iadvize/idz-k8s/internal/config"
@@ -72,7 +71,6 @@ func TestSnapshotRender(t *testing.T) {
 	nm.pickerKind = pickNamespace
 	nm.pickerQuery = ""
 	nm.pickerOpts = []string{allNamespacesLabel, "default", "demo", "kube-system", "prod"}
-	nm.picker.SetColumns([]table.Column{{Title: "select (type to filter)", Width: 60}})
 	nm.applyPickerRows()
 	nm.screen = screenPicker
 	nm.layout()

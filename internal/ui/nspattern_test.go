@@ -3,7 +3,6 @@ package ui
 import (
 	"testing"
 
-	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/iadvize/idz-k8s/internal/config"
@@ -20,8 +19,6 @@ func TestNamespacePickerGlobBecomesSelectablePattern(t *testing.T) {
 	m.layout()
 
 	// Open the picker with a fixed option list (no live cluster in tests).
-	// Columns must be set before any SetRows (bubbles table invariant).
-	m.picker.SetColumns([]table.Column{{Title: "select", Width: 60}})
 	m.pickerKind = pickNamespace
 	m.pickerReturn = screenList
 	m.pickerOpts = []string{allNamespacesLabel, "staging-front", "prod"}

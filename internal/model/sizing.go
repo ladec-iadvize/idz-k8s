@@ -16,9 +16,10 @@ const (
 	SizingUnder // under-provisioned / at risk: at/above request or near the limit
 )
 
-// Sizing thresholds (single source of truth, used by tests and the UI copy).
+// Sizing thresholds — single source of truth for EvaluateSizing.
+// SizingLimitFrac is also referenced by the UI's at-risk highlight.
 const (
-	SizingOverFrac  = 0.5 // peak below 50% of the request → over-provisioned
+	sizingOverFrac  = 0.5 // peak below 50% of the request → over-provisioned
 	SizingLimitFrac = 0.9 // peak at ≥90% of the limit → at risk (OOM/throttling)
 )
 
@@ -53,7 +54,7 @@ func EvaluateSizing(rs ResourceSizing) ResourceSizing {
 		rs.Verdict = SizingUnder
 	case rs.Avg >= rs.Request:
 		rs.Verdict = SizingUnder
-	case rs.Peak < SizingOverFrac*rs.Request:
+	case rs.Peak < sizingOverFrac*rs.Request:
 		rs.Verdict = SizingOver
 	default:
 		rs.Verdict = SizingOK

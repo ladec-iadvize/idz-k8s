@@ -65,7 +65,7 @@ func TestPrometheusTopN(t *testing.T) {
 	srv := stubPrometheus(t)
 	defer srv.Close()
 	c, _ := metrics.NewClient(srv.URL)
-	rows := c.TopN(context.Background(), metrics.TopPods(15, model.MetricCPU), model.MetricCPU)
+	rows := c.TopN(context.Background(), metrics.ScopeNowByPod("", model.MetricCPU), model.MetricCPU)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 top rows, got %d", len(rows))
 	}
