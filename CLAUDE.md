@@ -12,7 +12,9 @@ changing anything.
    gauges/verdicts/rule() headers share one visual language, marks (Space)
    scope the analysis views, Esc means clear-then-back. When adding a view,
    reuse the established patterns — and when you SPOT an inconsistency,
-   report it to the owner instead of leaving it.
+   report it to the owner instead of leaving it. Analysis views open ONLY
+   from the '>' palette (no dedicated shortcuts); navigation keys
+   (':'/'n'/'c'/'/') are global across views (owner decision 2026-07-12).
 
 1. **Strictly read-only** (FR-012, SC-006). Never wire a mutating Kubernetes
    verb (`create/update/patch/delete/eviction/exec`) or a mutating Helm action

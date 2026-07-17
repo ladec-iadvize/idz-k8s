@@ -124,9 +124,10 @@ func TestOpenEventsPresetsKindFromCurrentView(t *testing.T) {
 	// Browsing deployments → 'v' pre-sets kind:[Deployment].
 	m.screen = screenList
 	m.curType = model.ResourceType{Group: "apps", Version: "v1", Resource: "deployments", Kind: "Deployment", Namespaced: true}
-	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	mi, _ := m.openEvents() // reached via the '>' palette since 2026-07-12
+	m = asModel(t, mi)
 	if m.screen != screenEvents {
-		t.Fatalf("'v' should open events, got screen=%d", m.screen)
+		t.Fatalf("events view should open, got screen=%d", m.screen)
 	}
 	if m.eventsKind != "Deployment" {
 		t.Fatalf("kind should be pre-set to Deployment, got %q", m.eventsKind)

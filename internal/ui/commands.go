@@ -44,6 +44,12 @@ func (m Model) loadTypes() tea.Cmd {
 	}
 }
 
+// searchNavActive: an active viewport search claims 'n' for match
+// navigation; the namespace picker owns 'n' everywhere else.
+func (m Model) searchNavActive() bool {
+	return m.searchQuery != "" && len(m.searchHits) > 0 && m.screen == m.searchScreen
+}
+
 // waitForChange blocks on the client's coalesced watch signal and turns it
 // into a message (same pattern as the log stream). One waiter at a time.
 func (m Model) waitForChange() tea.Cmd {
