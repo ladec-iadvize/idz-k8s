@@ -60,40 +60,6 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.gotoOwner()
 	case hit(msg, m.keys.Logs):
 		return m.openLogs()
-	case hit(msg, m.keys.Namespace):
-		return m.openPicker(pickNamespace)
-	case hit(msg, m.keys.Context):
-		return m.openPicker(pickContext)
-	case hit(msg, m.keys.Jump):
-		return m.openPicker(pickType)
-	case hit(msg, m.keys.Top):
-		// Owner decision 2026-07-09 (rev.): usage reads pods, so it lives
-		// behind the pods and deployments lists (per-deployment aggregate).
-		if !strings.EqualFold(m.curType.Kind, "Pod") && !strings.EqualFold(m.curType.Kind, "Deployment") {
-			m.statusMsg = "usage: open it from the pods (:po) or deployments (:deploy) list"
-			return m, nil
-		}
-		return m.openTop()
-	case hit(msg, m.keys.Diag):
-		return m.openDiag()
-	case hit(msg, m.keys.Sizing):
-		return m.openSizing()
-	case hit(msg, m.keys.Posture):
-		return m.openPosture()
-	case hit(msg, m.keys.Connectivity):
-		return m.openConnectivity()
-	case hit(msg, m.keys.Access):
-		return m.openAccess()
-	case hit(msg, m.keys.Drift):
-		return m.openDrift()
-	case hit(msg, m.keys.Topology):
-		if !strings.EqualFold(m.curType.Kind, "Node") && !strings.EqualFold(m.curType.Kind, "Deployment") {
-			m.statusMsg = "topology: open it from the deployments (:deploy) or nodes (:no) list"
-			return m, nil
-		}
-		return m.openTopology()
-	case hit(msg, m.keys.Events):
-		return m.openEvents()
 	case hit(msg, m.keys.Mark):
 		m.toggleMark()
 		return m, nil

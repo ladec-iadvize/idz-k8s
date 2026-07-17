@@ -71,8 +71,6 @@ func (m Model) handleEventsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.recentSel, m.recentWin = 0, 0
 		m.renderEvents()
 		return m, nil
-	case hit(msg, m.keys.Namespace):
-		return m.openPicker(pickNamespace)
 	}
 	switch msg.Type {
 	case tea.KeyUp:

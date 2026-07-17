@@ -5,6 +5,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,46 @@ import (
 	"github.com/iadvize/idz-k8s/internal/metrics"
 	"github.com/iadvize/idz-k8s/internal/model"
 )
+
+// paletteEntry is one analysis view reachable from the '>' palette.
+type paletteEntry struct {
+	id, desc string
+	open     func(*Model) (tea.Model, tea.Cmd)
+}
+
+// paletteEntries lists every analysis view — the palette replaces the old
+// per-view shortcuts (owner decision 2026-07-12). Selection-dependent views
+// keep their own hints when nothing suitable is selected.
+var paletteEntries = []paletteEntry{
+	{"topology", "pods across nodes, reserved capacity", func(m *Model) (tea.Model, tea.Cmd) { return m.openTopology() }},
+	{"usage", "live cpu/mem per pod or per deployment", func(m *Model) (tea.Model, tea.Cmd) { return m.openTop() }},
+	{"sizing", "advisory: observed usage vs requests/limits", func(m *Model) (tea.Model, tea.Cmd) { return m.openSizing() }},
+	{"failures", "crashloops, OOM, evictions, unschedulable", func(m *Model) (tea.Model, tea.Cmd) { return m.openDiag() }},
+	{"events", "timeline of the current scope", func(m *Model) (tea.Model, tea.Cmd) { return m.openEvents() }},
+	{"posture", "advisory: best-practice findings", func(m *Model) (tea.Model, tea.Cmd) { return m.openPosture() }},
+	{"connectivity", "NetworkPolicies selecting the selection", func(m *Model) (tea.Model, tea.Cmd) { return m.openConnectivity() }},
+	{"access", "what your credentials can read (RBAC)", func(m *Model) (tea.Model, tea.Cmd) { return m.openAccess() }},
+	{"diff", "selection vs its last-applied configuration", func(m *Model) (tea.Model, tea.Cmd) { return m.openDrift() }},
+	{"helm releases", "read-only release inspector", func(m *Model) (tea.Model, tea.Cmd) { return m.openHelm() }},
+}
+
+// openPalette opens the views palette — same modal as the ':' type picker,
+// type-to-filter included.
+func (m Model) openPalette() (tea.Model, tea.Cmd) {
+	m.pickerKind = pickPalette
+	m.pickerReturn = m.screen
+	m.pickerQuery = ""
+	opts := make([]string, len(paletteEntries))
+	for i, e := range paletteEntries {
+		opts[i] = fmt.Sprintf("%-14s %s", e.id, e.desc)
+	}
+	m.pickerOpts = opts
+	m.applyPickerRows()
+	m.pickerWin.Home()
+	m.screen = screenPicker
+	m.layout()
+	return m, nil
+}
 
 func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Enter selects the highlighted option.
@@ -184,6 +225,8 @@ func (m Model) pickerLabel() string {
 		return "columns — " + m.curType.Key()
 	case pickView:
 		return "views"
+	case pickPalette:
+		return "analysis views (type to filter)"
 	default:
 		return "select"
 	}
@@ -312,6 +355,15 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.applyColumnChoice()
+	case pickPalette:
+		for _, e := range paletteEntries {
+			if strings.HasPrefix(strings.TrimSpace(choice), e.id) {
+				// The view opens over the screen the palette was called from.
+				m.screen = m.pickerReturn
+				return e.open(&m)
+			}
+		}
+		return m.goBack()
 	case pickView:
 		switch choice {
 		case saveViewLabel:

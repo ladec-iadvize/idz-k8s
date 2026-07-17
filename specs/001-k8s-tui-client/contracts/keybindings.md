@@ -35,6 +35,10 @@ mutating bindings** — the tool is read-only. This is the authoritative list th
 
 ## Debug / overview views (all read-only)
 
+**Since 2026-07-12 every analysis view opens from the `>` views palette**
+(type-to-filter, like `:`); the per-view keys below are RETIRED. Navigation
+keys (`:`/`n`/`c`/`/`) are global across views.
+
 | Key | View | Maps to |
 |-----|------|---------|
 | `t` | Topology (pods ↔ nodes) | US4 / FR-013 |

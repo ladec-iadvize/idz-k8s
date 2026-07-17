@@ -128,8 +128,8 @@ func TestSpaceMarksAndScopesEvents(t *testing.T) {
 	if row[0] != "●" {
 		t.Fatalf("marked row should show ●, got %q", row[0])
 	}
-	// 'v' scopes the timeline to the marked resource.
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	// The events view (palette entry) scopes to the marked resource.
+	mi, _ = m.openEvents()
 	m = asModel(t, mi)
 	if m.eventsScope == nil || !m.eventsScope["demo/pod-a"] {
 		t.Fatalf("events should be scoped to the marked resource, got %v", m.eventsScope)
@@ -229,19 +229,19 @@ func TestFooterLabelClickTriggersAction(t *testing.T) {
 	m := listModelForMouse(t, 2)
 	var fz *clickZone
 	for _, z := range m.footerZones() {
-		if z.key == "f" {
+		if z.key == ">" {
 			zz := z
 			fz = &zz
 			break
 		}
 	}
 	if fz == nil {
-		t.Fatal("footer should expose a zone for 'f'")
+		t.Fatal("footer should expose a zone for the '>' palette")
 	}
 	mi, _ := m.Update(click(fz.x0, m.bodyH+4))
 	m = asModel(t, mi)
-	if m.screen != screenDiag {
-		t.Fatalf("clicking the 'f failures' label should open diagnostics, screen=%d", m.screen)
+	if m.screen != screenPicker || m.pickerKind != pickPalette {
+		t.Fatalf("clicking the palette label should open it, screen=%d kind=%d", m.screen, m.pickerKind)
 	}
 }
 

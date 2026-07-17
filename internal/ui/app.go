@@ -58,6 +58,7 @@ const (
 	pickEventKind
 	pickColumns
 	pickView
+	pickPalette
 )
 
 // Sentinel options of the views picker (US8).
@@ -914,6 +915,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.DisableMouse
 	case hit(msg, m.keys.Back):
 		return m.goBack()
+	case hit(msg, m.keys.Palette):
+		// The views palette replaces every per-view shortcut (owner
+		// decision 2026-07-12) and opens from anywhere.
+		return m.openPalette()
+	case hit(msg, m.keys.Jump):
+		return m.openPicker(pickType)
+	case hit(msg, m.keys.Namespace) && !m.searchNavActive():
+		return m.openPicker(pickNamespace)
+	case hit(msg, m.keys.Context):
+		return m.openPicker(pickContext)
 	}
 
 	// Consistent '/' + n/N on every content viewport (owner request).
@@ -1788,28 +1799,12 @@ func (m Model) screenKeymap() keymapView {
 	nav := []key.Binding{k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End, k.Mouse}
 	switch m.screen {
 	case screenList:
-		// Node-oriented views only advertise themselves where they open
-		// (deployments/nodes for topology, nodes for top usage).
-		isNode := strings.EqualFold(m.curType.Kind, "Node")
-		isDeploy := strings.EqualFold(m.curType.Kind, "Deployment")
-		short := []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Diag, k.Events}
-		views := []key.Binding{k.Sort, k.SortDir, k.Diag, k.Events, k.Sizing, k.Posture, k.Connectivity, k.Access, k.Drift}
-		isPod := strings.EqualFold(m.curType.Kind, "Pod")
-		if isNode || isDeploy {
-			short = append(short, k.Topology)
-			views = append(views, k.Topology)
-		}
-		if isPod || isDeploy {
-			short = append(short, k.Top)
-			views = append(views, k.Top)
-		}
-		short = append(short, k.Namespace, k.Context, k.Help, k.Quit)
 		return keymapView{
-			short: short,
+			short: []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Palette, k.Namespace, k.Context, k.Help, k.Quit},
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				views,
+				{k.Sort, k.SortDir, k.Palette, k.Columns, k.Views, k.ResetView},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}

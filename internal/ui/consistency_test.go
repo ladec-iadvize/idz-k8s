@@ -207,35 +207,41 @@ func TestLiveRefreshThrottle(t *testing.T) {
 
 // TestNodeViewsAreContextual (owner decision 2026-07-09): 't' opens only from
 // deployments/nodes, 'u' only from nodes; elsewhere a hint, no screen change.
-func TestNodeViewsAreContextual(t *testing.T) {
+func TestPaletteOpensViewsFromAnywhere(t *testing.T) {
 	m := plainModel(t) // pods list
-	// 'u' passes the gate from pods (rev. 2026-07-09) — without a metrics
-	// client it lands on the explicit unavailable message, NOT the type hint.
-	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
-	m = asModel(t, mi)
-	if !strings.Contains(m.errMsg, "metrics unavailable") {
-		t.Fatalf("'u' on pods must pass the gate (errMsg=%q statusMsg=%q)", m.errMsg, m.statusMsg)
-	}
-	m.errMsg = ""
-	// …but 't' still hints there.
-	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
-	m = asModel(t, mi)
-	if m.screen != screenList || m.statusMsg == "" {
-		t.Fatalf("'t' on pods must hint (screen=%d)", m.screen)
-	}
+	m.types = []model.ResourceType{{Version: "v1", Resource: "pods", Kind: "Pod", Namespaced: true}}
 
-	// 'u' hints on nodes now (usage reads pods).
-	m.curType = model.ResourceType{Version: "v1", Resource: "nodes", Kind: "Node", Namespaced: false}
-	m.statusMsg = ""
-	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("u")})
+	// '>' opens the palette; type-to-filter narrows to topology; Enter opens
+	// it — no dedicated shortcut anymore (owner decision 2026-07-12).
+	mi, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(">")})
 	m = asModel(t, mi)
-	if m.screen != screenList || !strings.Contains(m.statusMsg, "pods") {
-		t.Fatalf("'u' on nodes must hint (screen=%d msg=%q)", m.screen, m.statusMsg)
+	if m.screen != screenPicker || m.pickerKind != pickPalette {
+		t.Fatalf("'>' must open the palette (screen=%d kind=%d)", m.screen, m.pickerKind)
 	}
-	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	for _, r := range "topo" {
+		mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = asModel(t, mi)
+	}
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = asModel(t, mi)
 	if m.screen != screenTopology {
-		t.Fatalf("'t' on nodes must open topology, screen=%d", m.screen)
+		t.Fatalf("palette must open topology, screen=%d", m.screen)
+	}
+
+	// The old dedicated shortcut is gone: 't' does nothing on the list.
+	m.screen = screenList
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	m = asModel(t, mi)
+	if m.screen != screenList {
+		t.Fatalf("'t' must no longer open topology, screen=%d", m.screen)
+	}
+
+	// Navigation keys are global now: ':' works from the topology view.
+	m.screen = screenTopology
+	mi, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})
+	m = asModel(t, mi)
+	if m.screen != screenPicker || m.pickerKind != pickType {
+		t.Fatalf("':' must open the type picker from any view (screen=%d kind=%d)", m.screen, m.pickerKind)
 	}
 }
 

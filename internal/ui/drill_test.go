@@ -126,7 +126,7 @@ func TestEventsFromDrillScopedToItsPods(t *testing.T) {
 	m.objects = []model.ResourceObject{{Type: podType, Namespace: "audience-back", Name: "back-abc12"}}
 	m.applyRows()
 	// Open the timeline from the drilled view.
-	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	mi, _ = m.openEvents() // '>' palette entry since 2026-07-12
 	m = asModel(t, mi)
 	if m.eventsScope == nil || !m.eventsScope["audience-back/back-abc12"] {
 		t.Fatalf("timeline should be scoped to the drilled pods, got %v", m.eventsScope)
