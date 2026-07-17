@@ -97,7 +97,11 @@ Keep it that way — it is what makes everything testable with fakes.
   (see `drillNamespace`).
 - Type-aware list columns live in `internal/ui/listview.go`
   (`columnsForType`) — adding a type is ~15 lines + a cells test in
-  `drill_test.go` (`TestDedicatedColumnsPerType`).
+  `drill_test.go` (`TestDedicatedColumnsPerType`). Default-VISIBLE columns
+  mirror `kubectl get -o wide` (owner decision 2026-07-12); anything extra
+  (usage, karpenter, images…) carries `off: true` — available in the 'C'
+  chooser, never default. User-specific columns belong in the user's
+  viewPrefs, not in code.
 
 ## Testing conventions
 

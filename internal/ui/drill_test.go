@@ -301,8 +301,9 @@ func TestDeploymentListShowsReadyColumn(t *testing.T) {
 	if row[3] != "1/3" {
 		t.Fatalf("READY column = %q, want 1/3", row[3])
 	}
-	if !strings.Contains(row[4], "1/3 ready") {
-		t.Fatalf("status should flag partial readiness, got %q", row[4])
+	// -o wide order: READY, UP-TO-DATE, AVAILABLE, then STATUS.
+	if !strings.Contains(row[6], "1/3 ready") {
+		t.Fatalf("status should flag partial readiness, got %q", row[6])
 	}
 }
 
@@ -409,36 +410,49 @@ func TestRowHealthThresholds(t *testing.T) {
 
 func TestNodeAndHPAColumns(t *testing.T) {
 	m := deploymentModel(t)
-	// Nodes: no NAMESPACE column; PODS READY / INSTANCE / NODEPOOL present.
+	// Nodes: no NAMESPACE column; -o wide defaults visible, karpenter
+	// columns available in the chooser (off by default, 2026-07-12).
 	m.curType = model.ResourceType{Version: "v1", Kind: "Node", Resource: "nodes", Namespaced: false}
 	titles := []string{}
 	for _, c := range m.columnsForType() {
 		titles = append(titles, c.title)
 	}
 	joined := strings.Join(titles, ",")
-	for _, want := range []string{"PODS READY", "INSTANCE", "NODEPOOL"} {
+	for _, want := range []string{"PODS READY", "ROLES", "VERSION", "INTERNAL-IP"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("node columns missing %s: %s", want, joined)
 		}
 	}
-	if strings.Contains(joined, "NAMESPACE") {
-		t.Errorf("cluster-scoped nodes must not show NAMESPACE: %s", joined)
+	for _, banned := range []string{"NAMESPACE", "INSTANCE", "NODEPOOL"} {
+		if strings.Contains(joined, banned) {
+			t.Errorf("%s must not be a default node column: %s", banned, joined)
+		}
 	}
-	// Node cells resolve karpenter/instance labels + pod readiness.
+	// Node cells resolve karpenter/instance labels (via the base set) + pod
+	// readiness + the -o wide fields.
 	m.nodePods = map[string][2]int{"n1": {12, 14}}
 	node := model.ResourceObject{Name: "n1", Raw: map[string]interface{}{
 		"metadata": map[string]interface{}{"labels": map[string]interface{}{
 			"node.kubernetes.io/instance-type": "m6i.2xlarge",
 			"karpenter.sh/nodepool":            "general-arm",
+			"node-role.kubernetes.io/worker":   "",
 		}},
+		"status": map[string]interface{}{
+			"nodeInfo": map[string]interface{}{"kubeletVersion": "v1.33.1"},
+			"addresses": []interface{}{
+				map[string]interface{}{"type": "InternalIP", "address": "10.0.1.2"},
+			},
+		},
 	}}
-	cols := m.columnsForType()
 	got := map[string]string{}
-	for _, c := range cols {
+	for _, c := range m.columnsBase() {
 		got[c.title] = c.cell(&m, node)
 	}
 	if got["PODS READY"] != "12/14" || got["INSTANCE"] != "m6i.2xlarge" || got["NODEPOOL"] != "general-arm" {
 		t.Errorf("node cells wrong: %v", got)
+	}
+	if got["ROLES"] != "worker" || got["VERSION"] != "v1.33.1" || got["INTERNAL-IP"] != "10.0.1.2" {
+		t.Errorf("wide node cells wrong: %v", got)
 	}
 
 	// HPA: targets/min/max/replicas.
