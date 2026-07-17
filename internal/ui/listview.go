@@ -19,6 +19,7 @@ import (
 type listColumn struct {
 	title string
 	width int
+	off   bool // available in the 'C' chooser but hidden by default
 	cell  func(m *Model, o model.ResourceObject) string
 	less  func(a, b model.ResourceObject) bool // optional custom sort
 }
@@ -31,7 +32,15 @@ func (m *Model) columnsForType() []listColumn {
 	cols := m.columnsBase()
 	pref := m.cfg.ViewPrefs[m.curType.Key()]
 	if len(pref.Columns) == 0 {
-		return cols
+		// Defaults mirror `kubectl get -o wide` (owner decision 2026-07-12);
+		// extra columns stay available in the chooser, off by default.
+		on := make([]listColumn, 0, len(cols))
+		for _, c := range cols {
+			if !c.off {
+				on = append(on, c)
+			}
+		}
+		return on
 	}
 	byTitle := make(map[string]listColumn, len(cols))
 	for _, c := range cols {
@@ -63,7 +72,7 @@ func (m *Model) columnsForType() []listColumn {
 		hidden[h] = true
 	}
 	for _, c := range cols {
-		if !seen[c.title] && !hidden[c.title] {
+		if !c.off && !seen[c.title] && !hidden[c.title] {
 			out = append(out, c)
 		}
 	}
@@ -292,7 +301,15 @@ func (m *Model) columnsBase() []listColumn {
 		node := listColumn{title: "NODE", width: 24,
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(kube.PodNode(o.Raw)) },
 			less: func(a, b model.ResourceObject) bool { return kube.PodNode(a.Raw) < kube.PodNode(b.Raw) }}
-		return []listColumn{ns, name, ready, cpuUse, cpuPct, memUse, memPct, restarts, node, status, age}
+		ip := listColumn{title: "IP", width: 15,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructuredString(o.Raw, "status", "podIP")
+				return orDash(v)
+			}}
+		// `kubectl get pods -o wide` order; the live usage columns stay one
+		// 'C' toggle away (personal preferences live in viewPrefs).
+		cpuUse.off, cpuPct.off, memUse.off, memPct.off = true, true, true, true
+		return []listColumn{ns, name, ready, status, restarts, age, ip, node, cpuUse, cpuPct, memUse, memPct}
 
 	case strings.EqualFold(kind, "Node"):
 		pods := listColumn{title: "PODS READY", width: 11,
@@ -322,7 +339,36 @@ func (m *Model) columnsBase() []listColumn {
 				return kube.ObjectLabel(a.Raw, "karpenter.sh/nodepool", "karpenter.sh/provisioner-name") <
 					kube.ObjectLabel(b.Raw, "karpenter.sh/nodepool", "karpenter.sh/provisioner-name")
 			}}
-		return []listColumn{name, pods, instance, pool, status, age}
+		roles := listColumn{title: "ROLES", width: 16,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(nodeRoles(o.Raw)) }}
+		version := listColumn{title: "VERSION", width: 16,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "kubeletVersion")
+				return orDash(v)
+			}}
+		internalIP := listColumn{title: "INTERNAL-IP", width: 15,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(nodeAddress(o.Raw, "InternalIP")) }}
+		externalIP := listColumn{title: "EXTERNAL-IP", width: 15, off: true,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(nodeAddress(o.Raw, "ExternalIP")) }}
+		osImage := listColumn{title: "OS-IMAGE", width: 24, off: true,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "osImage")
+				return orDash(v)
+			}}
+		kernel := listColumn{title: "KERNEL-VERSION", width: 20, off: true,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "kernelVersion")
+				return orDash(v)
+			}}
+		runtime := listColumn{title: "CONTAINER-RUNTIME", width: 22, off: true,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "containerRuntimeVersion")
+				return orDash(v)
+			}}
+		// Karpenter columns are environment-specific: chooser-only defaults.
+		instance.off, pool.off = true, true
+		return []listColumn{name, status, roles, age, version, internalIP, pods,
+			externalIP, osImage, kernel, runtime, instance, pool}
 
 	case strings.EqualFold(kind, "HorizontalPodAutoscaler"):
 		targets := listColumn{title: "TARGETS", width: 22,
@@ -348,7 +394,16 @@ func (m *Model) columnsBase() []listColumn {
 				}
 				return fmt.Sprintf("%d", cur)
 			}}
-		return []listColumn{ns, name, targets, minC, maxC, repl, age}
+		ref := listColumn{title: "REFERENCE", width: 28,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				k, _, _ := unstructuredString(o.Raw, "spec", "scaleTargetRef", "kind")
+				n, _, _ := unstructuredString(o.Raw, "spec", "scaleTargetRef", "name")
+				if n == "" {
+					return "-"
+				}
+				return k + "/" + n
+			}}
+		return []listColumn{ns, name, ref, targets, minC, maxC, repl, age}
 
 	case strings.EqualFold(kind, "Ingress"):
 		class := listColumn{title: "CLASS", width: 14,
@@ -376,7 +431,16 @@ func (m *Model) columnsBase() []listColumn {
 				}
 				return out
 			}}
-		return []listColumn{ns, name, class, hosts, status, age}
+		address := listColumn{title: "ADDRESS", width: 24,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(lbAddress(o.Raw)) }}
+		ports := listColumn{title: "PORTS", width: 8,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				if tls, _, _ := unstructured.NestedSlice(o.Raw, "spec", "tls"); len(tls) > 0 {
+					return "80, 443"
+				}
+				return "80"
+			}}
+		return []listColumn{ns, name, class, hosts, address, ports, status, age}
 
 	case strings.EqualFold(kind, "PersistentVolumeClaim"):
 		capa := listColumn{title: "CAPACITY", width: 9,
@@ -389,7 +453,14 @@ func (m *Model) columnsBase() []listColumn {
 				c, _, _ := unstructured.NestedString(o.Raw, "spec", "storageClassName")
 				return orDash(c)
 			}}
-		return []listColumn{ns, name, capa, class, status, age}
+		volume := listColumn{title: "VOLUME", width: 36,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructuredString(o.Raw, "spec", "volumeName")
+				return orDash(v)
+			}}
+		modes := listColumn{title: "ACCESS MODES", width: 12,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(accessModes(o.Raw)) }}
+		return []listColumn{ns, name, status, volume, capa, modes, class, age}
 
 	case strings.EqualFold(kind, "PersistentVolume"):
 		capa := listColumn{title: "CAPACITY", width: 9,
@@ -449,7 +520,12 @@ func (m *Model) columnsBase() []listColumn {
 				ts, _, _ := unstructured.NestedString(o.Raw, "status", "lastScheduleTime")
 				return relTime(ts, m.now())
 			}}
-		return []listColumn{ns, name, sched, susp, last, status, age}
+		active := listColumn{title: "ACTIVE", width: 6,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				a, _, _ := unstructured.NestedSlice(o.Raw, "status", "active")
+				return fmt.Sprintf("%d", len(a))
+			}}
+		return []listColumn{ns, name, sched, susp, active, last, status, age}
 
 	case strings.EqualFold(kind, "ConfigMap"):
 		data := listColumn{title: "DATA", width: 5,
@@ -482,7 +558,46 @@ func (m *Model) columnsBase() []listColumn {
 				}
 				return t
 			}}
-		return []listColumn{ns, name, svcType, status, age}
+		clusterIP := listColumn{title: "CLUSTER-IP", width: 15,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructuredString(o.Raw, "spec", "clusterIP")
+				return orDash(v)
+			}}
+		extIP := listColumn{title: "EXTERNAL-IP", width: 20,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				if lb := lbAddress(o.Raw); lb != "" {
+					return lb
+				}
+				return "<none>"
+			}}
+		svcPorts := listColumn{title: "PORT(S)", width: 18,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(servicePorts(o.Raw)) }}
+		selector := listColumn{title: "SELECTOR", width: 24, off: true,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				sel, ok := kube.PodSelectorLabels(o.Raw)
+				if !ok {
+					return "-"
+				}
+				return joinSelectorMap(sel)
+			}}
+		return []listColumn{ns, name, svcType, clusterIP, extIP, svcPorts, status, age, selector}
+
+	case strings.EqualFold(kind, "Deployment"):
+		upToDate := listColumn{title: "UP-TO-DATE", width: 10,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructured.NestedInt64(o.Raw, "status", "updatedReplicas")
+				return fmt.Sprintf("%d", v)
+			}}
+		available := listColumn{title: "AVAILABLE", width: 9,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				v, _, _ := unstructured.NestedInt64(o.Raw, "status", "availableReplicas")
+				return fmt.Sprintf("%d", v)
+			}}
+		images := listColumn{title: "IMAGES", width: 40, off: true,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(templateImages(o.Raw)) }}
+		containers := listColumn{title: "CONTAINERS", width: 24, off: true,
+			cell: func(_ *Model, o model.ResourceObject) string { return orDash(templateContainers(o.Raw)) }}
+		return []listColumn{ns, name, ready, upToDate, available, status, age, containers, images}
 
 	default:
 		cols := []listColumn{}
@@ -744,4 +859,137 @@ func usagePctCell(usage float64, hasData bool, request float64) string {
 		return "—"
 	}
 	return fmt.Sprintf("%.0f%%", usage/request*100)
+}
+
+// ---- `-o wide` cell helpers ----
+
+// nodeRoles joins the node-role.kubernetes.io/* label suffixes.
+func nodeRoles(raw map[string]interface{}) string {
+	labels, _, _ := unstructured.NestedStringMap(raw, "metadata", "labels")
+	var roles []string
+	for k := range labels {
+		if r, ok := strings.CutPrefix(k, "node-role.kubernetes.io/"); ok && r != "" {
+			roles = append(roles, r)
+		}
+	}
+	sort.Strings(roles)
+	return strings.Join(roles, ",")
+}
+
+// nodeAddress returns the first node address of the given type.
+func nodeAddress(raw map[string]interface{}, typ string) string {
+	addrs, _, _ := unstructured.NestedSlice(raw, "status", "addresses")
+	for _, a := range addrs {
+		am, ok := a.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if t, _ := am["type"].(string); t == typ {
+			v, _ := am["address"].(string)
+			return v
+		}
+	}
+	return ""
+}
+
+// lbAddress returns the first load-balancer ingress IP or hostname.
+func lbAddress(raw map[string]interface{}) string {
+	ing, _, _ := unstructured.NestedSlice(raw, "status", "loadBalancer", "ingress")
+	for _, i := range ing {
+		im, ok := i.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if v, _ := im["ip"].(string); v != "" {
+			return v
+		}
+		if v, _ := im["hostname"].(string); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// servicePorts renders spec.ports kubectl-style: "80/TCP,443/TCP".
+func servicePorts(raw map[string]interface{}) string {
+	ports, _, _ := unstructured.NestedSlice(raw, "spec", "ports")
+	var out []string
+	for _, p := range ports {
+		pm, ok := p.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		proto, _ := pm["protocol"].(string)
+		if proto == "" {
+			proto = "TCP"
+		}
+		port := ""
+		switch v := pm["port"].(type) {
+		case int64:
+			port = fmt.Sprintf("%d", v)
+		case float64:
+			port = fmt.Sprintf("%d", int64(v))
+		}
+		if np, ok := pm["nodePort"].(int64); ok && np > 0 {
+			port += fmt.Sprintf(":%d", np)
+		}
+		out = append(out, port+"/"+proto)
+	}
+	return strings.Join(out, ",")
+}
+
+// accessModes abbreviates PVC access modes kubectl-style (RWO, ROX, RWX).
+func accessModes(raw map[string]interface{}) string {
+	modes, _, _ := unstructured.NestedStringSlice(raw, "spec", "accessModes")
+	abbr := map[string]string{
+		"ReadWriteOnce": "RWO", "ReadOnlyMany": "ROX",
+		"ReadWriteMany": "RWX", "ReadWriteOncePod": "RWOP",
+	}
+	var out []string
+	for _, m := range modes {
+		if a, ok := abbr[m]; ok {
+			out = append(out, a)
+		} else {
+			out = append(out, m)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// templateContainers / templateImages join the pod template's containers.
+func templateContainers(raw map[string]interface{}) string {
+	return joinTemplateField(raw, "name")
+}
+
+func templateImages(raw map[string]interface{}) string {
+	return joinTemplateField(raw, "image")
+}
+
+func joinTemplateField(raw map[string]interface{}, field string) string {
+	cs, _, _ := unstructured.NestedSlice(raw, "spec", "template", "spec", "containers")
+	var out []string
+	for _, c := range cs {
+		cm, ok := c.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if v, _ := cm[field].(string); v != "" {
+			out = append(out, v)
+		}
+	}
+	return strings.Join(out, ",")
+}
+
+// joinSelectorMap renders a label map compactly ("app=back,tier=web").
+func joinSelectorMap(sel map[string]string) string {
+	keys := make([]string, 0, len(sel))
+	for k := range sel {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, k+"="+sel[k])
+	}
+	return strings.Join(pairs, ",")
 }

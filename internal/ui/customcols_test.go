@@ -288,6 +288,11 @@ func TestPodUsageColumns(t *testing.T) {
 	m.podUsageCPU = map[string]float64{"demo/hot": 0.9, "demo/cold": 0.1, "demo/noreq": 0.2}
 	m.podUsageMem = map[string]float64{"demo/hot": 5e8}
 
+	// Usage columns are chooser-available (off by default since the -o wide
+	// parity, 2026-07-12); enable them via a pref like a user would.
+	m.cfg.ViewPrefs = map[string]config.ViewPref{
+		"v1/pods": {Columns: []string{"NAMESPACE", "NAME", "CPU", "CPU%R", "MEM", "MEM%R"}, Hidden: []string{}},
+	}
 	cols := m.columnsForType()
 	byTitle := map[string]listColumn{}
 	for _, c := range cols {
@@ -342,10 +347,13 @@ func TestNewBaseColumnsSurfaceOnUpdatedBuilds(t *testing.T) {
 	}
 	got := colTitles(m.columnsForType())
 	joined := strings.Join(got, " ")
-	for _, want := range []string{"CPU", "CPU%R", "MEM", "MEM%R"} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("new column %q must surface, got %v", want, got)
-		}
+	// Default-ON base columns unknown to the pref surface (IP is -o wide);
+	// default-OFF ones (usage) stay opt-in via the chooser.
+	if !strings.Contains(joined, "IP") {
+		t.Fatalf("new default column IP must surface, got %v", got)
+	}
+	if strings.Contains(joined, "CPU%R") {
+		t.Fatalf("default-off columns must not auto-surface, got %v", got)
 	}
 	for _, banned := range []string{"NODE", "READY", "RESTARTS"} {
 		for _, c := range got {
@@ -360,8 +368,11 @@ func TestNewBaseColumnsSurfaceOnUpdatedBuilds(t *testing.T) {
 	// second owner report).
 	m.cfg.ViewPrefs["v1/pods"] = config.ViewPref{Columns: []string{"NAMESPACE", "NAME", "STATUS", "AGE"}}
 	got = colTitles(m.columnsForType())
-	if !strings.Contains(strings.Join(got, " "), "CPU%R") {
-		t.Fatalf("legacy pref must surface new columns, got %v", got)
+	if !strings.Contains(strings.Join(got, " "), "IP") {
+		t.Fatalf("legacy pref must surface new default columns, got %v", got)
+	}
+	if strings.Contains(strings.Join(got, " "), "CPU%R") {
+		t.Fatalf("chooser-only columns must stay opt-in for legacy prefs too, got %v", got)
 	}
 	if got[0] != "NAMESPACE" || got[3] != "AGE" {
 		t.Fatalf("saved order must stay first: %v", got)

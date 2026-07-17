@@ -38,7 +38,7 @@ when you see it 💚).
 
 | Key | View |
 |-----|------|
-| (list) | Browse any resource type — built-ins and CRDs — with READY/STATUS/AGE; the **pods list adds live usage columns** (CPU/MEM raw + `%R` of the request, tick-cadence Prometheus, `—` when unknown) |
+| (list) | Browse any resource type — built-ins and CRDs — with READY/STATUS/AGE; default columns mirror **`kubectl get -o wide`** per type (pods add IP/NODE, deployments UP-TO-DATE/AVAILABLE, services CLUSTER-IP/PORT(S), nodes ROLES/VERSION/INTERNAL-IP…); extra columns — live pod usage (CPU/MEM + `%R` of request), karpenter INSTANCE/NODEPOOL, IMAGES, SELECTOR… — are one `Space` away in the `C` chooser |
 | `Enter` | Drill down: a workload/Service opens **its pods**, a node opens **the pods it hosts**; a pod opens its YAML |
 | `y` / `d` | YAML view / describe (conditions + the object's events, messages in full; Services show their backends). Secret values are **masked**; `x` on a Secret's detail reveals/hides them |
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod |

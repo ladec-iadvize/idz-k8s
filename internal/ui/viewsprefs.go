@@ -77,8 +77,9 @@ func (m Model) openColumnChooser() (tea.Model, tea.Cmd) {
 		}
 	}
 	if len(items) == 0 {
+		// No pref: defaults visible, chooser-only (off) columns unchecked.
 		for _, c := range base {
-			items = append(items, colItem{title: c.title, on: true})
+			items = append(items, colItem{title: c.title, on: !c.off})
 			on[c.title] = true
 		}
 	}
@@ -202,9 +203,15 @@ func (m Model) applyColumnChoice() (tea.Model, tea.Cmd) {
 		}
 	}
 	base := m.columnsBase()
-	def := len(titles) == len(base)
+	defaults := make([]listColumn, 0, len(base))
+	for _, c := range base {
+		if !c.off {
+			defaults = append(defaults, c)
+		}
+	}
+	def := len(titles) == len(defaults)
 	if def {
-		for i, c := range base {
+		for i, c := range defaults {
 			if titles[i] != c.title {
 				def = false
 				break

@@ -148,8 +148,8 @@ func TestChooserDefaultArrangementClearsPref(t *testing.T) {
 	// Apply without touching anything: no pref should be stored.
 	mi, _ = m.handlePickerKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = asModel(t, mi)
-	if _, ok := m.cfg.ViewPrefs["v1/pods"]; ok {
-		t.Fatal("default arrangement must not create a pref entry")
+	if pref, ok := m.cfg.ViewPrefs["v1/pods"]; ok {
+		t.Fatalf("default arrangement must not create a pref entry, got %+v", pref)
 	}
 }
 
