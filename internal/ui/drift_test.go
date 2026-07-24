@@ -40,7 +40,7 @@ func TestOpenDriftStates(t *testing.T) {
 		t.Fatalf("screen=%d", m.screen)
 	}
 	content := m.drift.View()
-	for _, want := range []string{"Diff (read-only)", "Deployment demo/back", "spec.replicas", "3", "5"} {
+	for _, want := range []string{"Diff — Deployment demo/back vs last-applied", "Deployment demo/back", "spec.replicas", "3", "5"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("drift view missing %q:\n%s", want, content)
 		}

@@ -48,7 +48,7 @@ func TestRenderAccessReport(t *testing.T) {
 }
 
 // TestForbiddenListIsAccessNotDisconnection (FR-032): a 403 on list names the
-// type and points to 'a' — it must not trigger the reconnect banner.
+// type and points to the access view — no reconnect banner.
 func TestForbiddenListIsAccessNotDisconnection(t *testing.T) {
 	m := accessModel(t)
 	forbidden := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "", errors.New("RBAC denied"))
@@ -57,7 +57,7 @@ func TestForbiddenListIsAccessNotDisconnection(t *testing.T) {
 	if m.disconnected {
 		t.Fatal("a 403 is not a lost connection")
 	}
-	if !strings.Contains(m.errMsg, "forbidden") || !strings.Contains(m.errMsg, "v1/pods") || !strings.Contains(m.errMsg, "'a'") {
+	if !strings.Contains(m.errMsg, "forbidden") || !strings.Contains(m.errMsg, "v1/pods") || !strings.Contains(m.errMsg, "access view") {
 		t.Fatalf("errMsg=%q", m.errMsg)
 	}
 	// A real outage still shows the reconnect banner.

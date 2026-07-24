@@ -27,9 +27,10 @@ func seedRulesReview(t *testing.T, cs interface {
 		})
 }
 
-// TestAccessSummary (FR-032): the server's rules are summarized to their read
-// verbs and the unlistable browsable types are derived — the ONLY create ever
-// issued is the SelfSubjectRulesReview introspection itself.
+// TestAccessSummary (FR-032): every granted verb is reported (read AND
+// write, read-first order; '*' stands alone) and the unlistable browsable
+// types are derived — the ONLY create the access flow itself issues is the
+// SelfSubjectRulesReview introspection.
 func TestAccessSummary(t *testing.T) {
 	client, _ := NewFakeClient("demo")
 	fake := client.Clientset.(interface {
@@ -39,7 +40,7 @@ func TestAccessSummary(t *testing.T) {
 	seedRulesReview(t, fake, []authv1.ResourceRule{
 		{Verbs: []string{"get", "list", "watch", "delete"}, APIGroups: []string{""}, Resources: []string{"pods", "pods/log"}},
 		{Verbs: []string{"*"}, APIGroups: []string{"apps"}, Resources: []string{"deployments"}},
-		{Verbs: []string{"create"}, APIGroups: []string{""}, Resources: []string{"secrets"}}, // write-only: not a read rule
+		{Verbs: []string{"create"}, APIGroups: []string{""}, Resources: []string{"secrets"}}, // write-only rules show too (admin tool)
 	}, false)
 
 	types := []model.ResourceType{
@@ -54,15 +55,18 @@ func TestAccessSummary(t *testing.T) {
 	if rep.Namespace != "demo" || rep.Incomplete {
 		t.Fatalf("report=%+v", rep)
 	}
-	// delete filtered out; '*' expanded; write-only rule dropped.
-	if len(rep.Rules) != 2 {
+	// All three rules show; verbs are ordered read-first; '*' stands alone.
+	if len(rep.Rules) != 3 {
 		t.Fatalf("rules=%+v", rep.Rules)
 	}
-	if got := rep.Rules[0].Verbs; len(got) != 3 {
-		t.Fatalf("read verbs=%v (delete must be filtered)", got)
+	if got := rep.Rules[0].Verbs; len(got) != 4 || got[0] != "get" || got[3] != "delete" {
+		t.Fatalf("verbs=%v (want get/list/watch then delete)", got)
 	}
-	if got := rep.Rules[1].Verbs; len(got) != 3 {
-		t.Fatalf("wildcard verbs=%v (must expand to get/list/watch)", got)
+	if got := rep.Rules[1].Verbs; len(got) != 1 || got[0] != "*" {
+		t.Fatalf("wildcard verbs=%v (must stay '*')", got)
+	}
+	if got := rep.Rules[2].Verbs; len(got) != 1 || got[0] != "create" {
+		t.Fatalf("write-only verbs=%v (must be reported)", got)
 	}
 	// cronjobs has no matching rule → unlistable.
 	if len(rep.Unlistable) != 1 || rep.Unlistable[0] != "batch/v1/cronjobs" {

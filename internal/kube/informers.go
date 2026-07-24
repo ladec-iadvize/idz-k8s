@@ -207,8 +207,8 @@ func (c *Client) cachedList(t model.ResourceType, namespace, labelSelector strin
 		if t.Namespaced && pattern != "" && !MatchNamespace(pattern, u.GetNamespace()) {
 			continue
 		}
-		// Cache objects are shared and MUST NOT be mutated; every read path
-		// in this tool is read-only by construction.
+		// Cache objects are shared and MUST NOT be mutated in place —
+		// admin operations always go through the API, never the cache.
 		out = append(out, toResourceObject(t, u))
 	}
 	sortObjects(out)

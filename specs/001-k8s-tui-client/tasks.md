@@ -342,7 +342,7 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 ### Notes
 
 - [P] = different files, no dependency on incomplete tasks.
-- Read-only is a hard invariant: never wire a mutating K8s verb or Helm action (T011, T064, SC-006).
+- Read-only was a hard invariant until v3 (2026-07-24) — superseded by the confirmation-before-mutation contract: never wire a mutating K8s verb or Helm action (T011, T064, SC-006).
 - Metrics come only from Prometheus; when unavailable show "unavailable", never estimate (constitution data-integrity).
 - P3 backlog (sizing, customizable views, posture, connectivity, access view, diff) is intentionally excluded from v1.
 

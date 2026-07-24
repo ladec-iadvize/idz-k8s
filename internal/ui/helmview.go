@@ -1,6 +1,6 @@
 package ui
 
-// Helm releases view (US12, read-only): list, sorting, detail
+// Helm releases view (US12): list, sorting, detail
 // (manifest/values/history) rendering and key handling.
 
 import (
@@ -130,6 +130,8 @@ func (m Model) handleHelmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case hit(msg, m.keys.Filter):
 		m.helmFiltering = true
 		return m, nil
+	case hit(msg, m.keys.Actions):
+		return m.openActions()
 	case hit(msg, m.keys.Sort):
 		m.helmSortCol++
 		if m.helmSortCol > 6 {
@@ -214,7 +216,7 @@ func typeForManifest(types []model.ResourceType, r model.HelmResource) (model.Re
 // In values-only mode ('v') it renders just the values.
 func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 	var b strings.Builder
-	title := "Helm release — " + msg.ns + "/" + msg.name + " (read-only)"
+	title := "Helm release — " + msg.ns + "/" + msg.name
 	if m.helmValuesOnly {
 		title = "Helm values — " + msg.ns + "/" + msg.name
 	}

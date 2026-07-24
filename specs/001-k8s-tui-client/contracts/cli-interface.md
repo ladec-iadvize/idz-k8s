@@ -1,7 +1,8 @@
 # Contract: CLI Interface
 
-Single binary `idz-k8s`. Thin CLI — a read-only overview tool; most interaction is
-inside the TUI. There is **no** mutating flag or action; being read-only is the
+Single binary `idz-k8s`. Thin CLI — an overview & admin tool; most interaction is
+inside the TUI. v3: admin actions live in the TUI's actions palette, each behind
+an explicit confirmation; the confirmation-before-mutation contract is the
 nature of the tool, not an option.
 
 ## Invocation
@@ -30,8 +31,9 @@ No flags → opens the TUI on the operator's current kubeconfig context/namespac
 
 - Exit code `0` on clean quit; non-zero on fatal startup error (e.g. no reachable
   kubeconfig) with a readable stderr message (FR-016).
-- The tool issues **only read-oriented** operations; there is no code path to
-  create/edit/delete/scale/exec, and no Helm upgrade/rollback/uninstall (FR-012).
+- v3: mutating operations (edit/scale/delete/restart/cordon/suspend/port-forward,
+  Helm rollback/uninstall) exist but each is preceded by an explicit UI
+  confirmation; nothing mutates from a single keypress (FR-012 v3).
 - Unknown resource types, an unreachable/unset Prometheus, limited event
   retention, or a bad config MUST NOT prevent startup; they degrade to defaults /
   "unavailable" states (FR-021, FR-026-analogue).

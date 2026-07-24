@@ -1,6 +1,8 @@
-# Contract: Data Sources (read-only)
+# Contract: Data Sources
 
-The tool reads from three sources, all read-only. It NEVER mutates anything and
+The tool reads from three sources. v3: it also carries admin operations
+(kube: edit/scale/delete/restart/cordon/suspend/port-forward; helm:
+rollback/uninstall), every one behind an explicit UI confirmation. It
 operates strictly within the operator's RBAC (FR-012, FR-018, SC-006). Nothing
 here requires cluster-admin or any write permission.
 
@@ -53,7 +55,8 @@ the storage objects.
 
 - The `ui` layer never calls a data source directly; it consumes `internal/model`,
   which the three source layers populate.
-- A test harness asserts that across all flows the client issues **zero mutating
-  Kubernetes verbs and zero mutating Helm actions** (SC-006).
+- A test harness exercises every admin operation against fakes (right verb,
+  right resource) and the UI tests assert the confirmation gate: **no mutation
+  without its confirmation step** (SC-006 v3).
 - Secret objects are listed/inspected like any resource, but `data` values are
   masked by default and revealed only on explicit request (FR-015).

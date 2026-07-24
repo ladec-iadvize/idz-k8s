@@ -58,6 +58,10 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.openDescribe()
 	case hit(msg, m.keys.Owner):
 		return m, m.gotoOwner()
+	case hit(msg, m.keys.Actions):
+		return m.openActions()
+	case hit(msg, m.keys.Edit):
+		return m, m.startEdit()
 	case hit(msg, m.keys.Logs):
 		return m.openLogs()
 	case hit(msg, m.keys.Mark):
@@ -322,7 +326,7 @@ func (m *Model) exitDrill() tea.Cmd {
 }
 
 // openDescribe shows a describe-style summary (metadata, conditions) plus the
-// object's own events — like `kubectl describe`, read-only.
+// object's own events — like `kubectl describe`.
 func (m *Model) openDescribe() tea.Cmd {
 	obj, found := m.selectedObject()
 	if !found {

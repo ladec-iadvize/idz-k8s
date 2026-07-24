@@ -2,7 +2,7 @@ package model
 
 // PostureFinding is one advisory compliance finding (US13, FR-030): a
 // concrete object/field violating a common security or reliability practice.
-// Advisory and read-only — derived only from observed configuration.
+// Advisory — derived only from observed configuration.
 type PostureFinding struct {
 	Rule      string      // rule label, e.g. "privileged container"
 	Severity  HealthLevel // HealthWarning or HealthError

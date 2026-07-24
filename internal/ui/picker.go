@@ -36,9 +36,9 @@ var paletteEntries = []paletteEntry{
 	{"events", "timeline of the current scope", func(m *Model) (tea.Model, tea.Cmd) { return m.openEvents() }},
 	{"posture", "advisory: best-practice findings", func(m *Model) (tea.Model, tea.Cmd) { return m.openPosture() }},
 	{"connectivity", "NetworkPolicies selecting the selection", func(m *Model) (tea.Model, tea.Cmd) { return m.openConnectivity() }},
-	{"access", "what your credentials can read (RBAC)", func(m *Model) (tea.Model, tea.Cmd) { return m.openAccess() }},
+	{"access", "what your credentials can do (RBAC)", func(m *Model) (tea.Model, tea.Cmd) { return m.openAccess() }},
 	{"diff", "selection vs its last-applied configuration", func(m *Model) (tea.Model, tea.Cmd) { return m.openDrift() }},
-	{"helm releases", "read-only release inspector", func(m *Model) (tea.Model, tea.Cmd) { return m.openHelm() }},
+	{"helm releases", "release inspector — history, values, rollback", func(m *Model) (tea.Model, tea.Cmd) { return m.openHelm() }},
 }
 
 // openPalette opens the views palette — same modal as the ':' type picker,
@@ -227,6 +227,8 @@ func (m Model) pickerLabel() string {
 		return "views"
 	case pickPalette:
 		return "analysis views (type to filter)"
+	case pickAction:
+		return "actions — " + m.actionFor
 	default:
 		return "select"
 	}
@@ -364,6 +366,18 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			}
 		}
 		return m.goBack()
+	case pickAction:
+		for _, e := range m.actionList {
+			// Exact match on the rendered option: several entries may share an
+			// id (e.g. one stop-forward per active tunnel).
+			if choice == fmt.Sprintf("%-14s %s", e.id, e.desc) {
+				// The action runs over the screen the palette was called from
+				// (its confirmation/prompt modal overlays that screen).
+				m.screen = m.pickerReturn
+				return e.run(&m)
+			}
+		}
+		return m.goBack()
 	case pickView:
 		switch choice {
 		case saveViewLabel:
@@ -391,7 +405,8 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			m.errMsg = err.Error()
 			return m.goBack()
 		}
-		m.client.Close() // stop the old context's informer watches
+		m.stopAllForwards() // tunnels belong to the old cluster
+		m.client.Close()    // stop the old context's informer watches
 		m.client = nc
 		m.helm = helm.New(m.kubeconfigPath, choice) // helm reads the new cluster too
 		m.marked = map[string]model.ResourceObject{}

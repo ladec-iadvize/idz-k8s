@@ -1,6 +1,6 @@
 package ui
 
-// Sizing recommendations (US6, FR-023 — advisory, read-only):
+// Sizing recommendations (US6, FR-023 — advisory):
 // overview table machinery, per-workload detail and rendering.
 
 import (
@@ -421,7 +421,7 @@ func (m Model) sizingListView() string {
 	cols := m.sizingColumns()
 	return houseTableView(&m, cols, m.sizingWidths(cols), m.sizingRows,
 		&m.sizingWin, m.sizingSortCol, m.sizingSortAsc,
-		" observing… (advisory, read-only — nothing is applied)")
+		" observing… (advisory — nothing is applied automatically)")
 }
 
 // renderSizing renders the advisory view: observed data first, verdict after —

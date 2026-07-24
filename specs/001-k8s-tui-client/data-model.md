@@ -111,7 +111,7 @@ Bounded by cluster event retention; the timeline shows its visible window.
 
 **Source**: Prometheus only (single source). No metrics-server.
 
-### HelmRelease (FR-029, read-only)
+### HelmRelease (FR-029)
 
 | Field | Type | Notes |
 |-------|------|-------|
@@ -121,7 +121,7 @@ Bounded by cluster event retention; the timeline shows its visible window.
 | status | enum {deployed, failed, pending, superseded, ...} | flagged when failed/pending |
 | history | []{revision, status, updated} | revision history |
 
-**Source**: Helm v3 storage (read). No mutating operations exist.
+**Source**: Helm v3 storage (read); v3 rollback/uninstall via the action package, behind confirmation.
 
 ### ColumnDef
 Column definition for a resource list.
@@ -171,7 +171,7 @@ yields "metrics unavailable" states, never a crash.
 
 ## Validation rules (from requirements)
 
-- Only read verbs are ever issued; zero mutating operations (FR-012, SC-006).
+- v3: mutating verbs are issued only by the admin operations, each behind an explicit UI confirmation (FR-012 v3, SC-006 v3).
 - Refresh interval ≥ 1 s (else default) — FR-006.
 - Secret/sensitive fields masked by default in every view — FR-015.
 - Metrics values shown only when Prometheus provides them; otherwise "unavailable", never estimated — FR-021 + constitution data-integrity.
