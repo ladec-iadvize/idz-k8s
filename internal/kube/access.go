@@ -12,10 +12,10 @@ import (
 )
 
 // AccessSummary asks the API server what the current credentials may do in a
-// namespace (SelfSubjectRulesReview — the ONE allowed "create" in this
-// read-only tool: pure introspection, it grants and changes nothing), keeps
-// the read-relevant rules, and derives which browsable types cannot be
-// listed (FR-032).
+// namespace (SelfSubjectRulesReview — pure introspection, it grants and
+// changes nothing), reports every granted verb (read AND write — the admin
+// actions run under the same credentials), and derives which browsable types
+// cannot be listed (FR-032).
 func (c *Client) AccessSummary(ctx context.Context, namespace string, types []model.ResourceType) (model.AccessReport, error) {
 	if namespace == "" || IsNamespacePattern(namespace) {
 		namespace = "default" // the review is namespace-scoped by design
@@ -30,12 +30,11 @@ func (c *Client) AccessSummary(ctx context.Context, namespace string, types []mo
 	rep.Incomplete = res.Status.Incomplete
 	rep.Evaluation = res.Status.EvaluationError
 	for _, r := range res.Status.ResourceRules {
-		reads := readOnlyVerbs(r.Verbs)
-		if len(reads) == 0 {
-			continue // the tool only ever uses read verbs; the rest is noise here
+		if len(r.Verbs) == 0 {
+			continue
 		}
 		rep.Rules = append(rep.Rules, model.AccessRule{
-			Verbs: reads, Groups: r.APIGroups, Resources: r.Resources, Names: r.ResourceNames,
+			Verbs: canonicalVerbs(r.Verbs), Groups: r.APIGroups, Resources: r.Resources, Names: r.ResourceNames,
 		})
 	}
 	for _, t := range types {
@@ -51,17 +50,29 @@ func (c *Client) AccessSummary(ctx context.Context, namespace string, types []mo
 // access problem ('a' explains), never as a lost connection.
 func IsForbidden(err error) bool { return apierrors.IsForbidden(err) }
 
-// readOnlyVerbs keeps get/list/watch (or the '*' wildcard, expanded).
-func readOnlyVerbs(verbs []string) []string {
-	var out []string
+// canonicalVerbs orders verbs read-first (get/list/watch, then writes) so
+// the access view stays scannable; a '*' wildcard stands alone.
+func canonicalVerbs(verbs []string) []string {
+	rank := map[string]int{"get": 0, "list": 1, "watch": 2, "create": 3, "update": 4, "patch": 5, "delete": 6, "deletecollection": 7}
+	out := make([]string, 0, len(verbs))
 	for _, v := range verbs {
 		if v == "*" {
-			return []string{"get", "list", "watch"}
+			return []string{"*"}
 		}
-		if readVerbs[v] {
-			out = append(out, v)
-		}
+		out = append(out, v)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		ri, iOK := rank[out[i]]
+		rj, jOK := rank[out[j]]
+		switch {
+		case iOK && jOK:
+			return ri < rj
+		case iOK != jOK:
+			return iOK // known verbs first, exotic ones after
+		default:
+			return out[i] < out[j]
+		}
+	})
 	return out
 }
 

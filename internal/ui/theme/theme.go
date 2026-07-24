@@ -30,7 +30,6 @@ type Theme struct {
 
 	// Header identity chips.
 	AppBadge lipgloss.Style // the app name badge
-	ROBadge  lipgloss.Style // "read-only" badge
 	CtxVal   lipgloss.Style // context value
 	NsVal    lipgloss.Style // namespace value
 	TypeVal  lipgloss.Style // resource type value
@@ -65,7 +64,6 @@ func Default() Theme {
 		Warning:   lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
 
 		AppBadge: lipgloss.NewStyle().Background(lipgloss.Color("62")).Foreground(lipgloss.Color("230")).Bold(true).Padding(0, 1),
-		ROBadge:  lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("214")).Padding(0, 1),
 		CtxVal:   lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("153")).Bold(true).Padding(0, 1),
 		NsVal:    lipgloss.NewStyle().Background(lipgloss.Color("22")).Foreground(lipgloss.Color("156")).Bold(true).Padding(0, 1),
 		TypeVal:  lipgloss.NewStyle().Background(lipgloss.Color("54")).Foreground(lipgloss.Color("183")).Bold(true).Padding(0, 1),
@@ -98,7 +96,6 @@ func light() Theme {
 		Warning:   lipgloss.NewStyle().Foreground(lipgloss.Color("130")),
 
 		AppBadge: lipgloss.NewStyle().Background(lipgloss.Color("61")).Foreground(lipgloss.Color("231")).Bold(true).Padding(0, 1),
-		ROBadge:  lipgloss.NewStyle().Background(lipgloss.Color("254")).Foreground(lipgloss.Color("130")).Padding(0, 1),
 		CtxVal:   lipgloss.NewStyle().Background(lipgloss.Color("153")).Foreground(lipgloss.Color("17")).Bold(true).Padding(0, 1),
 		NsVal:    lipgloss.NewStyle().Background(lipgloss.Color("157")).Foreground(lipgloss.Color("22")).Bold(true).Padding(0, 1),
 		TypeVal:  lipgloss.NewStyle().Background(lipgloss.Color("183")).Foreground(lipgloss.Color("53")).Bold(true).Padding(0, 1),

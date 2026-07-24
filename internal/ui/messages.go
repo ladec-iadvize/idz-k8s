@@ -132,3 +132,38 @@ type helmResLive struct {
 	found  bool
 	known  bool // type resolvable via discovery
 }
+
+// ---- v3 admin messages ----
+
+// adminMsg reports the outcome of one confirmed mutation (scale, delete,
+// restart, cordon, suspend, helm rollback/uninstall, edit apply…).
+type adminMsg struct {
+	summary string // e.g. "Deployment/back scaled to 5"
+	err     error
+}
+
+// editOpenMsg: the object's YAML was written to a temp file — hand the
+// terminal to $EDITOR next.
+type editOpenMsg struct {
+	path     string
+	original string // as-written content, to detect a no-op edit
+	t        model.ResourceType
+	ns, name string
+	err      error
+}
+
+// editorClosedMsg: $EDITOR exited; apply the file if it changed.
+type editorClosedMsg struct {
+	path     string
+	original string
+	t        model.ResourceType
+	ns, name string
+	err      error
+}
+
+// forwardMsg: a port-forward attempt finished (started or failed).
+type forwardMsg struct {
+	fw  *kube.PortForward
+	fo  string // display label of the resource it was started from
+	err error
+}

@@ -1,6 +1,6 @@
 package ui
 
-// Advisory read-only views: drift (US16), access/RBAC (US15),
+// Advisory views: drift (US16), access/RBAC (US15),
 // connectivity/NetworkPolicy (US14), posture (US13) and jump-to-ref.
 
 import (
@@ -30,7 +30,7 @@ func (m *Model) openDrift() (tea.Model, tea.Cmd) {
 	subject := m.curType.Kind + " " + obj.Namespace + "/" + obj.Name
 	drifts, hasBaseline := kube.Drift(obj.Raw)
 	var b strings.Builder
-	b.WriteString(m.rule("Diff (read-only) — "+subject+" vs last-applied") + "\n\n")
+	b.WriteString(m.rule("Diff — "+subject+" vs last-applied") + "\n\n")
 	switch {
 	case !hasBaseline:
 		b.WriteString(m.theme.Faint.Render("No baseline: this object has no last-applied configuration annotation\n"+
@@ -288,7 +288,7 @@ func (m *Model) renderPostureContent(rows []model.PostureFinding) {
 	}
 	var b strings.Builder
 	b.WriteString(m.rule(fmt.Sprintf("Posture (advisory) — %s, %d finding(s)", scope, len(rows))) + "\n\n")
-	b.WriteString(m.theme.Faint.Render("Best-practice review of the observed configuration — read-only, nothing is applied.") + "\n\n")
+	b.WriteString(m.theme.Faint.Render("Best-practice review of the observed configuration — advisory, nothing is applied automatically.") + "\n\n")
 	if len(rows) == 0 {
 		b.WriteString(m.theme.Ok.Render("✓ no findings — every rule passes on this scope") + "\n")
 		m.setContent(screenPosture, b.String())

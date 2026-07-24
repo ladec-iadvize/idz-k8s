@@ -1,11 +1,12 @@
-// Package ui implements the read-only Bubble Tea program. For the v1 MVP the
-// US1 screens (list, detail, logs, pickers) are consolidated here; they can be
+// Package ui implements the Bubble Tea program. For the v1 MVP the US1
+// screens (list, detail, logs, pickers) are consolidated here; they can be
 // split into internal/ui/views/ later without touching the data layers.
 package ui
 
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -59,6 +60,7 @@ const (
 	pickColumns
 	pickView
 	pickPalette
+	pickAction
 )
 
 // Sentinel options of the views picker (US8).
@@ -173,7 +175,7 @@ type Model struct {
 
 	recentWin int // first visible row of the events detail window
 
-	// Helm release overview (US12, read-only).
+	// Helm release overview (US12).
 	helmFiltering  bool   // typing a helm filter (Enter commits, Esc cancels)
 	helmQuery      string // committed helm filter (name/namespace/chart)
 	helmSortCol    int    // -1 = storage order
@@ -183,19 +185,19 @@ type Model struct {
 	helmRows       []model.HelmRelease
 	helmValuesOnly bool // 'v': show only the values of a release
 
-	// Posture overview (US13, advisory & read-only).
+	// Posture overview (US13, advisory).
 	posture viewport.Model
 
-	// Per-pod connectivity / NetworkPolicy view (US14, read-only).
+	// Per-pod connectivity / NetworkPolicy view (US14).
 	connectivity viewport.Model
 
-	// Access (RBAC) view (US15, read-only introspection).
+	// Access (RBAC) view (US15, introspection).
 	access viewport.Model
 
-	// Live vs last-applied drift view (US16, read-only).
+	// Live vs last-applied drift view (US16).
 	drift viewport.Model
 
-	// Sizing recommendations (US6, advisory & read-only): overview table of
+	// Sizing recommendations (US6, advisory): overview table of
 	// every listed workload, Enter → per-workload detail panel.
 	sizingVP   viewport.Model
 	sizingRows []model.SizingAdvice
@@ -322,6 +324,20 @@ type Model struct {
 	sizingQuery     string
 	sizingAllRows   []model.SizingAdvice
 	sizingAllObjs   []model.ResourceObject
+
+	// v3 admin: confirmation modal (EVERY mutation goes through it or a
+	// value prompt), the open actions palette, and active port-forwards.
+	confirming   bool
+	confirmTitle string
+	confirmCmd   tea.Cmd
+	promptKind   promptKind
+	promptTitle  string
+	promptInput  string
+	promptHint   string
+	promptAction func(m *Model, value string) (tea.Model, tea.Cmd)
+	actionList   []actionEntry
+	actionFor    string // palette title, e.g. "Deployment/back"
+	forwards     map[string]*kube.PortForward
 }
 
 // colItem is one entry of the column chooser.
@@ -346,7 +362,7 @@ func WithMetrics(mc *metrics.Client) Option {
 	return func(m *Model) { m.metrics = mc }
 }
 
-// WithHelm attaches the read-only Helm release reader (US12).
+// WithHelm attaches the Helm release client (US12; v3 rollback/uninstall).
 func WithHelm(hc *helm.Client) Option {
 	return func(m *Model) { m.helm = hc }
 }
@@ -407,6 +423,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		drift:          viewport.New(0, 0),
 		screen:         screenList,
 		marked:         map[string]model.ResourceObject{},
+		forwards:       map[string]*kube.PortForward{},
 		sortCol:        -1,
 		sizingSortCol:  -1,
 		usageSortCol:   -1,
@@ -490,7 +507,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if kube.IsForbidden(msg.err) {
 				// RBAC denial: an access problem, not a lost connection —
 				// name the type and point to the access view (FR-032).
-				m.errMsg = "forbidden: your credentials cannot list " + m.curType.Key() + " — 'a' shows your access"
+				m.errMsg = "forbidden: your credentials cannot list " + m.curType.Key() + " — the access view ('>') shows your rights"
 				return m, nil
 			}
 			// Keep the last data on screen; the tick keeps retrying (FR-016).
@@ -712,6 +729,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = msg.err.Error()
 		return m, nil
 
+	case adminMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		m.errMsg = ""
+		m.statusMsg = "✓ " + msg.summary
+		// Refresh whatever the mutation touched.
+		switch m.screen {
+		case screenHelm, screenHelmHist:
+			return m, m.fetchHelmRows()
+		default:
+			return m, m.listObjects()
+		}
+
+	case editOpenMsg:
+		if msg.err != nil {
+			m.errMsg = "edit: " + msg.err.Error()
+			return m, nil
+		}
+		// Hand the terminal to the editor; Bubble Tea restores the screen
+		// when the process exits.
+		closed := editorClosedMsg{path: msg.path, original: msg.original, t: msg.t, ns: msg.ns, name: msg.name}
+		return m, tea.ExecProcess(editorCommand(msg.path), func(err error) tea.Msg {
+			closed.err = err
+			return closed
+		})
+
+	case editorClosedMsg:
+		if msg.err != nil {
+			_ = os.Remove(msg.path)
+			m.errMsg = "editor: " + msg.err.Error()
+			return m, nil
+		}
+		m.statusMsg = "⏳ applying " + msg.t.Kind + "/" + msg.name
+		return m, m.applyEdit(msg)
+
+	case forwardMsg:
+		if msg.err != nil {
+			m.errMsg = msg.err.Error()
+			return m, nil
+		}
+		// Replace any previous tunnel to the same pod+port.
+		if old, ok := m.forwards[msg.fw.Key()]; ok {
+			old.Stop()
+		}
+		m.forwards[msg.fw.Key()] = msg.fw
+		m.errMsg = ""
+		m.statusMsg = "⇄ " + msg.fw.Label() + " — stop it from the actions palette ('a')"
+		return m, nil
+
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 
@@ -758,6 +826,16 @@ func editText(s *string, msg tea.KeyMsg) (act editAction, changed bool) {
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Typing modes capture ALL keys BEFORE the global shortcuts (typing "q"
 	// or "m" must never quit the app or toggle the mouse).
+
+	// Confirmation modal (v3 admin): Enter runs, Esc cancels, nothing leaks.
+	if m.confirming {
+		return m.handleConfirmKey(msg)
+	}
+
+	// Value prompt (scale replicas, port-forward ports).
+	if m.promptKind != promptNone {
+		return m.handlePromptKey(msg)
+	}
 
 	// View-name typing mode (Enter saves, Esc cancels).
 	if m.viewNaming {
@@ -898,6 +976,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch {
 	case hit(msg, m.keys.Quit):
+		m.stopAllForwards()
 		return m, tea.Quit
 	case hit(msg, m.keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
@@ -1434,6 +1513,10 @@ func (m Model) View() string {
 	out := b.String()
 
 	switch {
+	case m.confirming:
+		out = overlayCenter(out, m.confirmModal(), m.width)
+	case m.promptKind != promptNone:
+		out = overlayCenter(out, m.inputModal(m.promptTitle, m.promptInput, m.promptHint), m.width)
 	case m.fieldNaming:
 		out = overlayCenter(out, m.inputModal("add column — label key or .field.path",
 			m.fieldInput, "e.g. app · .status.podIP — Enter add · Esc cancel"), m.width)
@@ -1638,7 +1721,7 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 	if sc == screenHelm || sc == screenHelmHist {
 		typeLabel = "helm releases"
 	}
-	// Identity chips: app badge + read-only + colored ctx/ns/type values —
+	// Identity chips: app badge + colored ctx/ns/type values —
 	// friendlier and easier to parse at a glance than a flat line (FR-036).
 	// Each chip is clickable (zones tracked by width): ctx→'c' ns→'n' type→':'.
 	sep := m.theme.Faint.Render(" │ ")
@@ -1657,6 +1740,11 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 	add(m.theme.Faint.Render("ns ")+m.theme.NsVal.Render(ns), "n")
 	add(sep, "")
 	add(m.theme.Faint.Render("type ")+m.theme.TypeVal.Render(typeLabel), ":")
+	if n := len(m.forwards); n > 0 {
+		// Active port-forwards stay visible from every view (stop them via
+		// the actions palette on the forwarded resource).
+		line += "  " + m.theme.Warning.Render(fmt.Sprintf("⇄ %d fwd", n))
+	}
 	switch {
 	case sc == screenTop && (strings.TrimSpace(m.usageFilterQ) != "" || m.usageTyping):
 		line += "  " + m.theme.Warning.Render("filter:"+m.usageFilterQ) + m.theme.Faint.Render(" (/ edit)")
@@ -1800,18 +1888,18 @@ func (m Model) screenKeymap() keymapView {
 	switch m.screen {
 	case screenList:
 		return keymapView{
-			short: []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Sort, k.Logs, k.Palette, k.Namespace, k.Context, k.Help, k.Quit},
+			short: []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Actions, k.Filter, k.Sort, k.Logs, k.Palette, k.Namespace, k.Context, k.Help, k.Quit},
 			full: [][]key.Binding{
 				nav,
 				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
-				{k.Sort, k.SortDir, k.Palette, k.Columns, k.Views, k.ResetView},
+				{k.Actions, k.Edit, k.Sort, k.SortDir, k.Palette, k.Columns, k.Views, k.ResetView},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
 		}
 	case screenHelm:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Open, k.Values, k.Filter, k.Sort, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Open, k.Values, k.Filter, k.Sort, k.SortDir, k.Mouse, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Values, k.Actions, k.Filter, k.Sort, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Values, k.Actions, k.Filter, k.Sort, k.SortDir, k.Mouse, k.Back, k.Help, k.Quit}},
 		}
 	case screenEvents:
 		return keymapView{

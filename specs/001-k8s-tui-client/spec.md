@@ -1,4 +1,4 @@
-# Feature Specification: Kubernetes TUI Overview Client (read-only)
+# Feature Specification: Kubernetes TUI Overview & Admin Client
 
 **Feature Branch**: `001-k8s-tui-client`
 
@@ -22,6 +22,10 @@
 
 - Q: Should the tool perform administrative/mutating actions? → A: No. The tool is strictly read-only — an overview and debugging client. Mutating administration is out of scope and is done in a separate tool (e.g. k9s).
 
+### Session 2026-07-24 (v3 pivot: administration)
+
+- Q: Should the read-only posture be kept? → A: No — owner decision 2026-07-24: the read-only pivot is REVERSED. The tool administers the cluster directly (edit YAML, scale, rolling restart, delete, cordon/uncordon, suspend/resume, port-forward, Helm rollback/uninstall), with no separate opt-in flag. The safety contract replacing "read-only" is: EVERY mutating action requires an explicit confirmation step (confirmation modal or value prompt) before any API call, runs under the operator's own RBAC, and reports its outcome explicitly. This supersedes the 2026-07-05 "opt-in --admin flag" intent and the 2026-07-02 read-only pivot (kept below as history).
+
 ### Session 2026-07-06 (v2 kickoff)
 
 - Q: v2 scope? → A: All six deferred P3 stories — US8 customizable views (first), US6 sizing recommendations, US13 posture, US14 connectivity, US15 access view, US16 read-only diff — plus the shared-informers optimization (ex-T010). Read-only invariant unchanged.
@@ -34,7 +38,7 @@
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Read-only cluster overview & inspection (Priority: P1)
+### User Story 1 - Cluster overview & inspection (Priority: P1)
 
 An operator opens the client to understand the current state of the cluster.
 They browse resource types (pods, deployments, services, nodes, and any CRD),
@@ -42,7 +46,7 @@ drill into a resource to read its details and events, follow a pod's logs, and
 switch the active namespace or cluster context. The client never changes cluster
 state — it only reads.
 
-**Why this priority**: Read-only inspection is the foundation of the overview
+**Why this priority**: Inspection is the foundation of the overview
 tool and the minimum viable product on its own.
 
 **Independent Test**: Point the client at a cluster with existing workloads,
@@ -54,7 +58,7 @@ action anywhere in the interface can modify the cluster.
 1. **Given** a reachable cluster, **When** the operator launches the client, **Then** the current context, active namespace, and a resource list are displayed.
 2. **Given** a resource list, **When** the operator selects a resource, **Then** its details (status, metadata, events) are shown.
 3. **Given** a running pod, **When** the operator opens its logs, **Then** logs stream live and can be paused, scrolled, and filtered.
-4. **Given** any view, **When** the operator looks for a way to modify a resource, **Then** no create/edit/delete/scale/exec affordance exists (read-only).
+4. **Given** any view, **When** the operator triggers an admin action (v3), **Then** it is reachable through the actions palette or its dedicated key and ALWAYS asks for confirmation before touching the cluster.
 5. **Given** several namespaces or contexts, **When** the operator switches them, **Then** the views update to the selected scope.
 
 ---
@@ -175,7 +179,7 @@ data, confirm no recommendation is fabricated.
 2. **Given** usage consistently far below requests, **When** evaluated, **Then** it is flagged as over-provisioned.
 3. **Given** usage near/above limits or evidence of throttling, **When** evaluated, **Then** it is flagged as under-provisioned / at-risk.
 4. **Given** insufficient data or no metrics source, **When** the operator opens sizing, **Then** the tool states that no recommendation can be made — it never invents figures.
-5. **Given** any recommendation, **When** shown, **Then** it is clearly labeled advisory and never applied by the tool (read-only).
+5. **Given** any recommendation, **When** shown, **Then** it is clearly labeled advisory and never applied automatically by the tool.
 
 ---
 
@@ -232,7 +236,7 @@ ownership: `Deployment → ReplicaSet → Pods`, `Service → Endpoints → Pods
 `Ingress → Service`, and up/down an object's owner chain.
 
 **Why this priority**: Relationship navigation resolves frequent "why is my
-service not routing / what owns this pod" questions; read-only and high value.
+service not routing / what owns this pod" questions; high value.
 
 **Independent Test**: Open a Service with no ready backends and confirm the graph
 shows it has zero endpoints and no backing pods.
@@ -272,7 +276,7 @@ and per-node bin-packing (allocatable vs requested vs used) with remaining
 headroom.
 
 **Why this priority**: Complements topology; explains node saturation and why
-new pods will not schedule. Read-only.
+new pods will not schedule.
 
 **Independent Test**: With a Pending pod present, confirm the scheduling view
 shows its unschedulable reason, and a node's allocatable vs requested capacity.
@@ -285,15 +289,15 @@ shows its unschedulable reason, and a node's allocatable vs requested capacity.
 
 ---
 
-### User Story 12 - Helm release overview (read-only) (Priority: P2)
+### User Story 12 - Helm release overview (Priority: P2)
 
 Workloads are deployed via Helm charts. An operator reviews Helm releases: name,
 namespace, chart and version, current revision, status (deployed / failed /
 pending / superseded), and revision history — to debug bad or stuck deploys. The
-tool never upgrades, rolls back, or uninstalls (read-only).
+tool can also roll back or uninstall a release behind an explicit confirmation (v3); install/upgrade stay out of scope.
 
 **Why this priority**: Since deployment is Helm-based, release state is the
-natural unit for debugging "what changed / why did this deploy fail". Read-only
+natural unit for debugging "what changed / why did this deploy fail". Reads come
 inspection complements doing the actual rollback elsewhere.
 
 **Independent Test**: On a Helm-managed workload, confirm its release, current
@@ -304,7 +308,7 @@ exists anywhere.
 
 1. **Given** Helm-managed workloads, **When** opening releases, **Then** installed releases are listed with name, namespace, chart, version, revision, and status.
 2. **Given** a release, **When** viewing its history, **Then** its revisions and per-revision status are shown.
-3. **Given** a failed or pending release, **When** displayed, **Then** it is flagged, and no upgrade/rollback/uninstall affordance exists (read-only).
+3. **Given** a failed or pending release, **When** displayed, **Then** it is flagged; rollback/uninstall (v3) go through the actions palette and its confirmation step.
 
 ---
 
@@ -314,9 +318,9 @@ An operator sees an advisory posture report across workloads, flagging config
 that violates common security/reliability best practices: missing
 requests/limits, privileged containers, running as root, missing liveness/
 readiness probes, images pinned to `latest`, namespaces without a NetworkPolicy,
-and TLS secrets near or past expiry. Findings are advisory and read-only.
+and TLS secrets near or past expiry. Findings are advisory.
 
-**Why this priority**: Turns the read-only overview into a posture lens aligned
+**Why this priority**: Turns the overview into a posture lens aligned
 with the project constitution (performance, security). Valuable but not core to
 day-one debugging.
 
@@ -337,7 +341,7 @@ An operator debugs connectivity for a pod: which NetworkPolicies select it and
 what ingress/egress they allow, or whether it is unrestricted.
 
 **Why this priority**: NetworkPolicy effects are hard to reason about; a per-pod
-summary speeds connectivity debugging. Read-only.
+summary speeds connectivity debugging.
 
 **Independent Test**: On a pod selected by a policy, confirm the policy and its
 allowed peers are listed; on a pod with no policy, confirm it is shown as
@@ -354,7 +358,7 @@ unrestricted.
 ### User Story 15 - Access (RBAC) view (Priority: P3)
 
 An operator sees what their credentials can read and why some resource types are
-inaccessible, so the read-only overview's blind spots are explicit.
+inaccessible, so the overview's blind spots are explicit.
 
 **Why this priority**: Explains "why don't I see X" and sets expectations;
 low effort, complements least-privilege operation.
@@ -369,12 +373,12 @@ summarizes allowed reads and marks a forbidden type as inaccessible with a reaso
 
 ---
 
-### User Story 16 - Read-only manifest diff (Priority: P3)
+### User Story 16 - Manifest drift diff (Priority: P3)
 
 An operator compares an object's live state against its last-applied
 configuration to see drift, without any ability to apply changes.
 
-**Why this priority**: Drift is a common debugging clue; a read-only diff exposes
+**Why this priority**: Drift is a common debugging clue; the diff exposes
 it safely. Niche, hence P3.
 
 **Independent Test**: On an object with a last-applied annotation, confirm the
@@ -384,7 +388,7 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 
 1. **Given** an object with a last-applied annotation, **When** opening diff, **Then** the differences between live and last-applied are shown.
 2. **Given** no such annotation, **When** opening diff, **Then** the tool states no baseline is available.
-3. **Given** the diff, **When** shown, **Then** no apply/edit affordance exists (read-only).
+3. **Given** the diff, **When** shown, **Then** the diff itself offers no apply affordance; fixing drift goes through the edit action and its confirmation (FR-012 v3).
 
 ---
 
@@ -414,28 +418,28 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **FR-009**: Keyboard shortcuts MUST follow common, widely recognized conventions and avoid exotic or hard-to-reach combinations.
 - **FR-010**: The client MUST provide a discoverable, context-aware help overlay listing all shortcuts active in the current view.
 - **FR-011**: The client MUST support mouse interaction: clicking to select, clicking to activate on-screen controls/navigation, and wheel scrolling.
-- **FR-012**: The client MUST be strictly READ-ONLY: it MUST NOT create, edit, delete, scale, evict, cordon/drain, exec into, or otherwise mutate any cluster resource, and MUST issue only read-oriented API operations. No mutating affordance may exist in the interface.
+- **FR-012** *(v3, 2026-07-24 — supersedes the read-only rule)*: The client provides administration actions (edit YAML, scale, rolling restart, delete, cordon/uncordon, suspend/resume CronJobs, port-forward, Helm rollback/uninstall). EVERY mutating action MUST be preceded by an explicit confirmation step — a confirmation modal or a value prompt — and MUST never run from a single keypress. Mutations run strictly under the operator's own RBAC and their outcome (success or error) MUST be reported explicitly.
 - **FR-013**: The client MUST provide a topology view showing which pods are scheduled on which nodes, allowing selection from node→pods and pod→node, and visually distinguishing nodes under resource pressure.
 - **FR-014**: The client MUST provide an events timeline: cluster events ordered in time, filterable by namespace/resource/severity, scopable to a selected resource, with warning/error events visually distinguished, and it MUST indicate the visible window rather than implying completeness beyond event retention.
 - **FR-015**: The client MUST mask sensitive values (e.g. secret contents) by default and reveal them only on explicit operator request; revealing requires no authorization beyond the operator's existing cluster access, and the client MUST NOT gate or audit the reveal action.
 - **FR-016**: The client MUST show the current connection status and handle unreachable clusters, dropped connections, and expired credentials without crashing.
 - **FR-017**: The client MUST remain responsive when browsing namespaces, resource types, topology, or timelines containing large numbers of items.
-- **FR-018**: The client MUST operate strictly within the permissions granted to the operator's credentials and MUST NOT attempt to elevate privileges. (Being read-only, it needs only read access.)
+- **FR-018**: The client MUST operate strictly within the permissions granted to the operator's credentials and MUST NOT attempt to elevate privileges. RBAC denials on admin actions are surfaced explicitly (the access view shows the granted verbs).
 - **FR-019**: The client MUST present visual representations of quantitative cluster data, including resource-usage gauges/bars (CPU/memory vs requests/limits) and time-series trend charts for workloads and nodes, to support debugging. Trend charts source their history from Prometheus (or an equivalent metrics backend) and display a rolling **last-1-hour** window; when no such source is available, trend charts show an explicit "unavailable" state (per FR-021).
 - **FR-020**: The client MUST convey resource health/status with color coding AND a non-color fallback (symbol or label).
 - **FR-021**: Visual elements MUST accurately reflect underlying data and MUST clearly indicate when the data source is unavailable or stale, rather than rendering an empty or misleading visual.
 - **FR-022**: When the terminal lacks color or rich-rendering capability, the client MUST degrade gracefully and keep the same information available in readable text.
-- **FR-023**: The client MUST provide advisory app sizing recommendations derived from observed usage versus configured requests/limits (flagging over-provisioned and under-provisioned / at-risk workloads). Recommendations MUST be based only on real observed data, MUST display the data behind them, MUST NOT be shown when data is insufficient (no fabricated figures), and are advisory only (never applied — read-only).
+- **FR-023**: The client MUST provide advisory app sizing recommendations derived from observed usage versus configured requests/limits (flagging over-provisioned and under-provisioned / at-risk workloads). Recommendations MUST be based only on real observed data, MUST display the data behind them, MUST NOT be shown when data is insufficient (no fabricated figures), and are advisory only (never applied automatically).
 - **FR-024**: Users MUST be able to customize resource views (which columns/fields are shown, their order, default sort and filter).
 - **FR-025**: The client MUST persist view customizations across sessions and restore them on the next launch, MUST allow saving/switching named views and resetting to defaults, and MUST tolerate missing/invalid/outdated customizations by falling back to defaults without failing to start.
 - **FR-026**: The client MUST let the operator navigate object relationships (ownership and routing) — e.g. Deployment→ReplicaSet→Pods, Service→Endpoints→Pods, Ingress→Service — up and down the graph, and MUST make a broken link (e.g. a Service with zero endpoints) visible.
 - **FR-027**: The client MUST surface workload failure diagnostics: per-container restart counts, last termination reason (including OOMKilled and exit codes), and evicted pods with their eviction reason, with failure states visually distinguished.
 - **FR-028**: The client MUST provide a scheduling & capacity view showing the reason each Pending/unschedulable pod cannot be scheduled, and per-node bin-packing (allocatable vs requested vs used, with remaining headroom); "used" is sourced from Prometheus and degrades to "unavailable" when Prometheus is not reachable.
-- **FR-029**: The client MUST provide a read-only Helm release overview: installed releases (name, namespace, chart, version, current revision, status) and per-release revision history, flagging failed/pending/stuck releases. It MUST NOT perform any Helm upgrade, rollback, or uninstall.
-- **FR-030**: The client MUST provide an advisory compliance/posture overview flagging common issues (missing requests/limits, privileged containers, running as root, missing liveness/readiness probes, images pinned to `latest`, namespaces without a NetworkPolicy, TLS secrets near/after expiry). Findings MUST be derived only from observed configuration, MUST reference the concrete object/field, MUST NOT fabricate data, and are advisory only (read-only).
+- **FR-029**: The client MUST provide a Helm release overview: installed releases (name, namespace, chart, version, current revision, status) and per-release revision history, flagging failed/pending/stuck releases. *(v3)* Rollback and uninstall are available under the FR-012 confirmation contract; install and upgrade remain out of scope.
+- **FR-030**: The client MUST provide an advisory compliance/posture overview flagging common issues (missing requests/limits, privileged containers, running as root, missing liveness/readiness probes, images pinned to `latest`, namespaces without a NetworkPolicy, TLS secrets near/after expiry). Findings MUST be derived only from observed configuration, MUST reference the concrete object/field, MUST NOT fabricate data, and are advisory only (never enforced automatically).
 - **FR-031**: The client MUST provide a per-pod connectivity view listing the NetworkPolicies that select it and the ingress/egress they allow, and MUST indicate when a pod is unrestricted by any policy.
-- **FR-032**: The client MUST provide an access (RBAC) view summarizing what the operator's credentials can read, and MUST mark inaccessible resource types with the reason rather than erroring the application.
-- **FR-033**: The client MUST provide a read-only diff between an object's live state and its last-applied configuration (when available), stating when no baseline exists, and MUST NOT offer any apply/edit affordance.
+- **FR-032**: The client MUST provide an access (RBAC) view summarizing what the operator's credentials can do (read AND write verbs, read verbs listed first), and MUST mark inaccessible resource types with the reason rather than erroring the application.
+- **FR-033**: The client MUST provide a diff between an object's live state and its last-applied configuration (when available), stating when no baseline exists. The diff view itself offers no apply affordance; changes go through the edit action (FR-012 v3).
 - **FR-034**: The client MUST be able to tail logs merged across all pods of a selected workload in chronological order (in addition to single-pod logs per FR-005).
 - **FR-035**: The client MUST provide a "top consumers" view (top pods/nodes by CPU/memory), sourced from Prometheus; when Prometheus is not reachable, it shows an explicit "unavailable" state.
 - **FR-036**: The interface MUST be approachable by a general technical audience, not only Kubernetes experts: prefer graphical representations (charts, gauges, timelines, color) over raw text wherever they aid comprehension, keep every capability discoverable from the interface itself (visible menus/selectors, contextual shortcut help), and avoid jargon-only output. Prior kubectl/k9s experience MUST NOT be required to perform the core overview tasks.
@@ -451,9 +455,9 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **Sizing Recommendation**: An advisory assessment (over/under-provisioned/ok) for a workload, derived from Metric Series vs requests/limits, with the supporting data and a confidence/insufficient-data state.
 - **Shortcut**: A keyboard binding scoped to a view, listed in the help overlay.
 - **Saved View**: A named, persisted list arrangement (columns/order/sort/filter) the operator can restore, switch to, or reset.
-- **Helm Release**: A deployed Helm release with name, namespace, chart, chart/app version, current revision, status (deployed/failed/pending/superseded), and a revision history. Read-only.
+- **Helm Release**: A deployed Helm release with name, namespace, chart, chart/app version, current revision, status (deployed/failed/pending/superseded), and a revision history.
 - **Dependency Edge**: A relationship between two objects — owns (owner→owned), routes-to (Service→Endpoints/Pods, Ingress→Service), or selects (policy→pod) — used to build the ownership/connectivity graphs.
-- **Posture Finding**: An advisory assessment against a best-practice rule, with rule id, severity, a reference to the concrete object/field, and an advisory message. Never fabricated; read-only.
+- **Posture Finding**: An advisory assessment against a best-practice rule, with rule id, severity, a reference to the concrete object/field, and an advisory message. Never fabricated; never enforced automatically.
 - **Scheduling Reason**: For a Pending/unschedulable pod, the reason it cannot be scheduled (e.g. insufficient cpu/memory), surfaced in the scheduling & capacity view.
 
 ## Success Criteria *(mandatory)*
@@ -465,7 +469,7 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **SC-003**: Every destination reachable by keyboard is also reachable by mouse and vice versa (100% parity).
 - **SC-004**: A new operator familiar with terminal tools can perform the core overview tasks (browse, inspect, view usage) relying only on in-app help — 90% task completion on first attempt in usability testing.
 - **SC-005**: Resource lists and the topology view remain interactive (no perceptible freeze) with at least 5,000 pods across at least 100 nodes.
-- **SC-006**: The client performs zero mutating API operations under all usage — verifiable by API audit / test harness (100% read-only).
+- **SC-006** *(v3)*: The client performs zero UNCONFIRMED mutating API operations: every mutation is preceded by an explicit confirmation or value prompt — verifiable by test harness (a mutation without its confirmation step is a defect).
 - **SC-007**: The client recovers from a dropped cluster connection and resumes without a restart in at least 95% of transient-disconnection cases.
 - **SC-008**: Sensitive values are masked by default in 100% of views that display them.
 - **SC-009**: An operator can identify an over-utilized or unhealthy workload/node from its visual indicators without reading raw numbers — ≥90% correct identification in usability testing.
@@ -476,24 +480,24 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **SC-014**: An operator can customize a resource list and have it restored after relaunch in 100% of cases, and reset it to defaults in a single action; a corrupted customization never prevents startup.
 - **SC-015**: From a Service with no ready backends, an operator can identify the missing endpoints/pods via the dependency graph in under 20 seconds.
 - **SC-016**: For a crashlooping pod, the last container termination reason (e.g. OOMKilled) is visible within 2 interactions of selecting it.
-- **SC-017**: For a Helm-managed workload, its release status and current revision are discoverable in ≤ 2 interactions, and no Helm mutating operation (upgrade/rollback/uninstall) is possible anywhere (100% read-only).
+- **SC-017**: For a Helm-managed workload, its release status and current revision are discoverable in ≤ 2 interactions, and Helm rollback/uninstall always go through the FR-012 confirmation step (install/upgrade are not offered).
 - **SC-018**: 100% of posture findings reference a concrete object/field; none are fabricated, and none are shown when the underlying configuration cannot be observed.
 - **SC-019**: For a Pending pod, its scheduling reason is visible in the scheduling view within 2 interactions.
 
 ## Assumptions
 
 - The audience is broader than SRE/platform experts: the tool targets a general technical audience (developers, support, anyone operating around the cluster). The interface therefore prioritizes **graphical, self-explanatory presentation** — visual cues, charts, discoverable menus and contextual help — over terse expert-only output; knowing kubectl/k9s must not be a prerequisite.
-- The client reuses the operator's existing Kubernetes credentials and configuration; it needs only read access and inherits the operator's permissions (consistent with the constitution's least-privilege principle).
-- The tool is deliberately read-only and complementary: mutating administration (edit, scale, delete, exec, drain, etc.) is out of scope and performed in a separate tool such as k9s or kubectl.
+- The client reuses the operator's existing Kubernetes credentials and configuration and inherits the operator's permissions — it never elevates privileges (consistent with the constitution's least-privilege principle).
+- *(v3)* The tool administers the cluster directly; exec-into-pod and node drain are the remaining out-of-scope actions (still done via kubectl when needed).
 - Multi-context support relies on contexts already present in the operator's configuration; the client does not create or manage credentials.
 - The primary environment is a standard terminal emulator supporting mouse reporting; graceful degradation is expected where it does not.
 - Localization is out of scope for the first version; the interface default language is English.
 - The interface must render rich visual elements (charts, gauges, topology, color) in a terminal; this constrains the choice of the underlying interface toolkit (deferred to planning) which MUST support these visuals while preserving full keyboard operability and graceful degradation.
 - **Prometheus (or an equivalent) is the single metrics source** for all usage data — instantaneous gauges, per-node "used", top consumers, and the rolling **last-1-hour** trend charts (and later, sizing recommendations). metrics-server is not required. The events timeline depends on cluster event retention. When Prometheus is unreachable or event retention is limited, the tool shows an explicit "unavailable" / limited-window state rather than blocking or fabricating data.
 - View customizations are per-operator, stored locally with the operator's other client settings; team-wide shared views are out of scope for the first version.
-- No client-side audit trail is kept; being read-only, there are no state changes to account for.
-- Workloads are deployed via Helm charts; the tool reads Helm release state (releases, revisions, history, status) read-only and never performs Helm upgrade, rollback, or uninstall — those are done in a separate tool.
-- Ownership, routing, and connectivity graphs are derived from live API objects; relations that depend on annotations (e.g. the read-only diff's last-applied configuration) are shown as unavailable when the annotation is absent.
+- No client-side audit trail is kept; mutations are attributable server-side via the API audit log and the "idz-k8s" field manager.
+- Workloads are deployed via Helm charts; the tool reads Helm release state (releases, revisions, history, status) and *(v3)* can roll back or uninstall a release behind an explicit confirmation. Install/upgrade stay in the deployment pipeline.
+- Ownership, routing, and connectivity graphs are derived from live API objects; relations that depend on annotations (e.g. the diff's last-applied configuration) are shown as unavailable when the annotation is absent.
 - Posture rules cover a common baseline (requests/limits, privileged, run-as-root, probes, `latest` image, NetworkPolicy presence, TLS expiry); the specific rule set can grow later and is intentionally advisory, not enforced.
-- **v1 scope**: the first version delivers the P1 and P2 user stories (US1 inspection, US2 graphical debug views, US3 keyboard, US4 topology, US5 events timeline, US7 mouse, US9 dependency graph, US10 failure diagnostics, US11 scheduling & capacity, US12 Helm overview). The P3 stories — US6 sizing recommendations, US8 customizable views, US13 posture, US14 connectivity/NetworkPolicy, US15 access/RBAC view, US16 read-only diff — are deferred to a later version (backlog), along with their FRs (FR-023, FR-024/FR-025, FR-030, FR-031, FR-032, FR-033) and success criteria (SC-013, SC-014, SC-018).
-- **v3 candidate (owner intent, 2026-07-05)**: an opt-in administration mode (e.g. an explicit `--admin` flag) reviving the pre-pivot administrative user story — scale/restart/delete/edit/exec with a mandatory confirmation step on every mutating action, bounded by the operator's RBAC. Until such a spec change is made, FR-012 (strictly read-only, zero mutating operations) remains in force and is test-enforced; the default mode would stay read-only even then. This would also reopen the positioning-vs-k9s decision.
+- **v1 scope**: the first version delivers the P1 and P2 user stories (US1 inspection, US2 graphical debug views, US3 keyboard, US4 topology, US5 events timeline, US7 mouse, US9 dependency graph, US10 failure diagnostics, US11 scheduling & capacity, US12 Helm overview). The P3 stories — US6 sizing recommendations, US8 customizable views, US13 posture, US14 connectivity/NetworkPolicy, US15 access/RBAC view, US16 drift diff — are deferred to a later version (backlog), along with their FRs (FR-023, FR-024/FR-025, FR-030, FR-031, FR-032, FR-033) and success criteria (SC-013, SC-014, SC-018).
+- **v3 (owner decision, 2026-07-24)**: the administration mode is IN — not as an opt-in flag but as the product itself (see the 2026-07-24 clarification). Every mutating action carries a mandatory confirmation step and is bounded by the operator's RBAC; exec-into-pod and node drain are deferred. The former enforcement tests (zero-mutating-verb sweep, Helm mutating-action grep) are replaced by admin-operation tests plus the UI confirmation-gate tests.

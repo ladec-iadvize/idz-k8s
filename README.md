@@ -1,11 +1,14 @@
-# idz-k8s — read-only Kubernetes overview TUI
+# idz-k8s — Kubernetes overview & admin TUI
 
-`idz-k8s` is a terminal UI to **observe and debug** a Kubernetes cluster. It is
-**strictly read-only**: it never creates, edits, deletes, scales, or execs into
-anything — administration stays in your usual tools (k9s, kubectl). What it
-adds is a graphical, discoverable overview: usage gauges and trend charts,
-a pods↔nodes topology with bin-packing, an events timeline, workload failure
-diagnostics, dependency navigation, and a Helm release inspector.
+`idz-k8s` is a terminal UI to **observe, debug and administer** a Kubernetes
+cluster. It offers a graphical, discoverable overview — usage gauges and trend
+charts, a pods↔nodes topology with bin-packing, an events timeline, workload
+failure diagnostics, dependency navigation, a Helm release inspector — plus
+the day-to-day admin actions (`a` on any selection): edit YAML in `$EDITOR`,
+scale, rolling restart, delete, cordon/uncordon, suspend/resume CronJobs,
+port-forward, Helm rollback/uninstall. **Every mutating action asks for an
+explicit confirmation before touching the cluster** and runs under your own
+RBAC — nothing ever mutates from a single keypress.
 
 It targets a general technical audience: everything is discoverable from the
 interface itself (visible menus, contextual shortcut help, clickable
@@ -42,17 +45,19 @@ when you see it 💚).
 | `Enter` | Drill down: a workload/Service opens **its pods**, a node opens **the pods it hosts**; a pod opens its YAML |
 | `y` / `d` | YAML view / describe (conditions + the object's events, messages in full; Services show their backends). Secret values are **masked**; `x` on a Secret's detail reveals/hides them |
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod |
+| `a` | **Actions palette** (admin): the actions the selection supports — scale, rolling restart, port-forward, cordon/uncordon, suspend/resume, edit, delete; Helm releases get rollback/uninstall. Every mutation asks for confirmation (`Enter` confirm · `Esc` cancel) |
+| `e` | Edit the selection's YAML in `$KUBE_EDITOR`/`$EDITOR` — applied on save (unchanged file = nothing sent) |
 | `> topology` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
 | `> events` | Events **timeline**: a time axis per object, warnings highlighted (`w` = warnings only, `k` = kind filter); the selected event's message shows in full below the list, `Enter` opens the referenced object |
 | `> failures` | Failure diagnostics **grouped by failure type** (CrashLoopBackOff, OOMKilled, evictions, restarts, unschedulable — with the scheduler's reason), error groups first; `↑`/`↓` select, `Enter` opens the pod, `w` errors only |
 | `> usage` | Usage (from the pods or deployments list): **CPU and memory side by side** — values, gauges relative to the top consumer; per-deployment rows aggregate their pods; sortable/filterable like every table |
 | `> connectivity` | Connectivity: which NetworkPolicies select a pod (or a workload's template) and the allowed ingress/egress peers/ports — explicit **unrestricted** and **default-deny** states |
-| `> access` | Access (RBAC): the API server's own answer on what your credentials can read, plus the discovered types you cannot list; a 403 on a list names the type instead of faking a disconnection |
+| `> access` | Access (RBAC): the API server's own answer on what your credentials can do (read and write verbs), plus the discovered types you cannot list; a 403 on a list names the type instead of faking a disconnection |
 | `> posture` | Posture (advisory): best-practice findings by rule — missing requests/limits, privileged/root containers, missing probes, `latest` images, namespaces without NetworkPolicy, TLS certificates near/past expiry; `Enter` opens the referenced object, `w` errors only |
 | `> sizing` | Sizing (advisory): a recap **table of every listed workload** — usage-vs-request gauges and ✓/!/✗ verdicts for CPU & memory, worst first; `Enter` opens the detailed panel (avg/peak gauges vs request/limit). Never applied, never estimated |
-| `> helm releases` | Helm releases (read-only): history, deployed resources with **live state**, values — reachable from the `:` picker like any resource; sortable (`s`/`S`, header click) and filterable like every table |
+| `> helm releases` | Helm releases: history, deployed resources with **live state**, values — reachable from the `:` picker like any resource; sortable (`s`/`S`, header click) and filterable like every table |
 | `o` | Jump to the owner (pod → ReplicaSet → Deployment) |
-| `> diff` | Diff (read-only): live object vs its `last-applied` configuration — drifted fields with both values; explicit no-baseline / no-drift states; nothing can be applied |
+| `> diff` | Diff: live object vs its `last-applied` configuration — drifted fields with both values; explicit no-baseline / no-drift states |
 
 All analysis views live behind the **`>` views palette** — one key, a
 type-to-filter list (like the `:` resource picker), no per-view shortcut to
@@ -188,8 +193,9 @@ are ignored gracefully — they never break startup.
 
 ## Guarantees
 
-- **Zero mutating operations** — enforced by construction (no mutating verb is
-  wired) and by tests that sweep every data path, including the Helm layer.
+- **No mutation without confirmation** — every admin action goes through a
+  confirmation modal or a value prompt (tested), is attributed to the
+  `idz-k8s` field manager, and runs under your own RBAC.
 - Secrets are **masked by default** (explicit reveal only); nothing sensitive
   is ever persisted or logged.
 - Graceful degradation: no color (`NO_COLOR`), no mouse, unreachable
@@ -202,10 +208,10 @@ are ignored gracefully — they never break startup.
 go build ./... && go vet ./... && go test ./...
 ```
 
-- `internal/kube` — read-only client-go layer (discovery incl. CRDs, lists,
-  logs, topology, diagnostics, endpoints)
+- `internal/kube` — client-go layer (discovery incl. CRDs, lists, logs,
+  topology, diagnostics, endpoints, admin operations, port-forward)
 - `internal/metrics` — Prometheus (instant + range queries, autodiscovery proxy)
-- `internal/helm` — Helm release storage reader (read-only)
+- `internal/helm` — Helm release storage reader + rollback/uninstall actions
 - `internal/ui` — Bubble Tea interface (views, theme, keymap, mouse)
 - `specs/001-k8s-tui-client/` — the full spec-kit lifecycle: spec, plan,
   research, contracts, quickstart, tasks

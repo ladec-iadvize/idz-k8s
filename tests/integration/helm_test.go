@@ -34,8 +34,15 @@ func memoryHelm(t *testing.T, rels ...*release.Release) *helmpkg.Client {
 	cfg := &action.Configuration{
 		Releases:   store,
 		KubeClient: &kubefake.PrintingKubeClient{Out: io.Discard},
+		Log:        func(string, ...interface{}) {}, // Rollback/Uninstall call it unconditionally
 	}
-	return helmpkg.NewWithProvider(func(string) (*action.Configuration, error) { return cfg, nil })
+	// Honor the namespace argument like the real driver does: Memory.Get only
+	// sees the pinned namespace, so admin actions need their release's one
+	// ("" keeps the all-namespaces list behavior).
+	return helmpkg.NewWithProvider(func(ns string) (*action.Configuration, error) {
+		mem.SetNamespace(ns)
+		return cfg, nil
+	})
 }
 
 func rel(ns, name string, revision int, status release.Status, chartName, version string) *release.Release {

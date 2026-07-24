@@ -1,7 +1,7 @@
-// Package helm reads Helm release state READ-ONLY (US12, research D6): the
-// releases installed in the cluster and their revision history, straight from
-// Helm's in-cluster storage. No install/upgrade/rollback/uninstall action is
-// ever constructed — the read-only invariant extends to Helm (FR-029, SC-017).
+// Package helm reads Helm release state (US12) — installed releases and
+// their revision history, straight from Helm's in-cluster storage — and
+// carries the v3 admin actions (rollback, uninstall), each behind an
+// explicit confirmation in the UI.
 package helm
 
 import (
@@ -177,6 +177,35 @@ func (c *Client) Detail(namespace, name string) (ReleaseDetail, error) {
 		}
 	}
 	return det, nil
+}
+
+// Rollback rolls a release back (v3 admin action, UI-confirmed).
+// revision 0 targets the previous revision, Helm's default.
+func (c *Client) Rollback(namespace, name string, revision int) error {
+	cfg, err := c.provide(namespace)
+	if err != nil {
+		return err
+	}
+	rb := action.NewRollback(cfg)
+	rb.Version = revision
+	rb.Wait = false
+	if err := rb.Run(name); err != nil {
+		return fmt.Errorf("rolling back %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// Uninstall removes a release (v3 admin action, UI-confirmed).
+func (c *Client) Uninstall(namespace, name string) error {
+	cfg, err := c.provide(namespace)
+	if err != nil {
+		return err
+	}
+	un := action.NewUninstall(cfg)
+	if _, err := un.Run(name); err != nil {
+		return fmt.Errorf("uninstalling %s/%s: %w", namespace, name, err)
+	}
+	return nil
 }
 
 // parseManifestResources extracts the objects (apiVersion/kind/name) from a

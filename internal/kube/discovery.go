@@ -35,7 +35,7 @@ var builtinGroups = map[string]bool{
 
 // ResourceTypes discovers every listable resource type served by the cluster,
 // including CRDs (FR-002). Only types supporting "list" are returned, since the
-// tool is read-only and browses by listing.
+// tool browses by listing.
 func (c *Client) ResourceTypes() ([]model.ResourceType, error) {
 	lists, err := c.Discovery.ServerPreferredResources()
 	// ServerPreferredResources can return partial results with an error when
@@ -49,7 +49,7 @@ func (c *Client) ResourceTypes() ([]model.ResourceType, error) {
 
 // ParseResourceTypes turns discovery output into browsable resource types. It is
 // pure (no client) so the CRD/subresource/verb filtering is unit-testable.
-// Only types supporting "list" are kept, since the read-only tool browses by
+// Only types supporting "list" are kept, since the tool browses by
 // listing; subresources (e.g. pods/log) are skipped.
 func ParseResourceTypes(lists []*metav1.APIResourceList) []model.ResourceType {
 	var out []model.ResourceType

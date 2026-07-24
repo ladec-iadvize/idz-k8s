@@ -23,7 +23,7 @@ func TestRenderPostureGroupsByRule(t *testing.T) {
 		{Rule: "image not pinned (latest)", Severity: model.HealthWarning, Namespace: "demo", Name: "bad", Container: "app", Detail: "image nginx:latest"},
 	})
 	content := m.posture.View()
-	for _, want := range []string{"Posture (advisory)", "2 finding(s)", "privileged container (1)", "demo/bad [app]", "nginx:latest", "read-only"} {
+	for _, want := range []string{"Posture (advisory)", "2 finding(s)", "privileged container (1)", "demo/bad [app]", "nginx:latest", "advisory, nothing is applied automatically"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("posture view missing %q:\n%s", want, content)
 		}

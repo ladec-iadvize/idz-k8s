@@ -1,6 +1,7 @@
 // Package keys defines the single source of truth for keybindings and their
-// help metadata (FR-009 familiar/non-exotic, FR-010 discoverable help). No key
-// performs a mutating action — the tool is read-only (FR-012).
+// help metadata (FR-009 familiar/non-exotic, FR-010 discoverable help).
+// Mutating actions (v3 admin) go through the 'a' actions palette or 'e'
+// edit — and always end in an explicit confirmation before anything runs.
 package keys
 
 import "github.com/charmbracelet/bubbles/key"
@@ -23,6 +24,8 @@ type KeyMap struct {
 	Describe   key.Binding
 	Owner      key.Binding
 	Palette    key.Binding // one entry point for every analysis view
+	Actions    key.Binding // one entry point for every admin action (v3)
+	Edit       key.Binding
 	SearchNext key.Binding
 	SearchPrev key.Binding
 	Mark       key.Binding
@@ -61,6 +64,8 @@ func Default() KeyMap {
 		Describe:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "describe")),
 		Owner:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "owner")),
 		Palette:    key.NewBinding(key.WithKeys(">"), key.WithHelp(">", "views palette")),
+		Actions:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "actions (admin)")),
+		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit yaml")),
 		SearchNext: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next match")),
 		SearchPrev: key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "previous match")),
 		Mark:       key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "mark")),
@@ -94,7 +99,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End},
 		{k.Open, k.Back, k.Filter, k.Jump, k.Mark, k.SearchNext, k.SearchPrev},
-		{k.Logs, k.Yaml, k.Describe, k.Owner, k.Palette},
+		{k.Logs, k.Yaml, k.Describe, k.Owner, k.Palette, k.Actions, k.Edit},
 		{k.Sort, k.SortDir, k.Columns, k.Views, k.ResetView},
 		{k.Kind, k.Namespace, k.Context, k.Values, k.Reveal, k.Pause, k.WarnOnly},
 		{k.Mouse, k.Help, k.Quit},

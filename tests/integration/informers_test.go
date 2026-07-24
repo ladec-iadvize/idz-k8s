@@ -6,8 +6,6 @@ import (
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/iadvize/idz-k8s/internal/kube"
 )
 
 // TestInformerCacheServesAndUpdates (T089): after the first LIST warms the
@@ -44,14 +42,14 @@ func TestInformerCacheServesAndUpdates(t *testing.T) {
 		return err == nil && len(objs) == 2
 	})
 
-	// Read-only invariant: the informer path uses list+watch only (the
-	// create above is the test's own seeding, not the client under test).
+	// Cache invariant: the informer path issues list+watch only — reads are
+	// served from the cache, never per-call GETs (the create above is the
+	// test's own seeding, not the client under test).
 	for _, a := range dyn.Actions() {
-		if a.GetVerb() == "create" {
-			continue // test seeding
-		}
-		if err := kube.AssertReadOnly([]string{a.GetVerb()}); err != nil {
-			t.Fatal(err)
+		switch a.GetVerb() {
+		case "list", "watch", "create":
+		default:
+			t.Fatalf("informer path issued unexpected verb %q", a.GetVerb())
 		}
 	}
 

@@ -55,7 +55,7 @@ access/RBAC view, read-only diff) are **out of v1** (backlog).
 - Locate a pod + open details < 15 s; logs within 3 interactions (SC-001/SC-002).
 
 **Constraints**:
-- **Strictly read-only**: only read-oriented K8s verbs; no Helm upgrade/rollback/uninstall; zero mutating API calls (FR-012, SC-006).
+- ~~Strictly read-only~~ **superseded by v3 (2026-07-24)**: admin operations exist (kube admin.go/portforward.go, helm rollback/uninstall) and every mutation requires an explicit UI confirmation (FR-012 v3, SC-006 v3).
 - 100% keyboard/mouse parity; keyboard-complete without a mouse (FR-008).
 - Runs within the operator's RBAC; needs only read access; no privilege escalation; no secret persistence (FR-015, FR-018).
 - Trend/usage data requires Prometheus; when unreachable, show explicit "unavailable" (FR-019/FR-021).

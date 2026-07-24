@@ -1,5 +1,5 @@
-// Command idz-k8s is a strictly read-only Kubernetes overview/debug TUI.
-// It never mutates cluster state; administration is done in a separate tool.
+// Command idz-k8s is a Kubernetes overview, debugging and administration
+// TUI. Every mutating action goes through an explicit confirmation step.
 package main
 
 import (
@@ -37,8 +37,8 @@ func main() {
 
 	root := &cobra.Command{
 		Use:   "idz-k8s",
-		Short: "Read-only Kubernetes overview & debugging TUI",
-		Long:  "idz-k8s is a strictly read-only terminal client to browse, inspect and debug a Kubernetes cluster. It performs no mutating action.",
+		Short: "Kubernetes overview, debugging & admin TUI",
+		Long:  "idz-k8s is a terminal client to browse, inspect, debug and administer a Kubernetes cluster. Admin actions (edit, scale, delete, port-forward…) always ask for confirmation before touching the cluster.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if showVersion {
 				fmt.Println("idz-k8s", version)

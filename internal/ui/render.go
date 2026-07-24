@@ -512,7 +512,7 @@ func (m Model) banner() string {
 		b.WriteString(xansi.Truncate(styled, m.width, ""))
 		b.WriteString("\n")
 	}
-	tag := "⎈  the read-only Kubernetes overview — powered by iAdvize 💚"
+	tag := "⎈  the Kubernetes overview & admin TUI — powered by iAdvize 💚"
 	pad := (m.width - len([]rune(tag))) / 2
 	if pad < 0 {
 		pad = 0

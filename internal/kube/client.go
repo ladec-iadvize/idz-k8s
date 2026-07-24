@@ -1,6 +1,7 @@
-// Package kube is the read-only Kubernetes access layer. It only ever issues
-// read-oriented verbs (list/get/watch and pods/log). No create/update/patch/
-// delete/exec code path exists here (FR-012, FR-018, SC-006).
+// Package kube is the Kubernetes access layer: discovery, lists (informer
+// cache with direct-LIST fallback), logs, topology, diagnostics — plus the v3
+// admin operations (admin.go, portforward.go), each of which the UI runs only
+// after an explicit confirmation (FR-012 v3).
 package kube
 
 import (
@@ -18,7 +19,7 @@ import (
 	"github.com/iadvize/idz-k8s/internal/model"
 )
 
-// Client bundles the read-only clients built from a kubeconfig context.
+// Client bundles the clients built from a kubeconfig context.
 type Client struct {
 	Dynamic    dynamic.Interface
 	Discovery  discovery.DiscoveryInterface
@@ -44,7 +45,7 @@ type Options struct {
 	Namespace      string // starting namespace; empty → context default
 }
 
-// NewClient builds read-only clients for the selected context.
+// NewClient builds the clients for the selected context.
 func NewClient(opts Options) (*Client, error) {
 	loading := clientcmd.NewDefaultClientConfigLoadingRules()
 	if opts.KubeconfigPath != "" {

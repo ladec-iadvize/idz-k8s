@@ -30,12 +30,12 @@ go build ./cmd/idz-k8s
 
 Each maps to a v1 user story / acceptance criteria in [spec.md](./spec.md).
 
-### V1 — Read-only inspection (US1, SC-001/SC-002/SC-006)
+### V1 — Inspection (US1, SC-001/SC-002/SC-006)
 1. Launch; confirm context, namespace, and a resource list appear.
 2. Select a pod, `Enter` → details (status, metadata, events).
 3. `l` → live logs (pause/scroll/filter); `L` → merged logs across a workload's pods.
 4. Search the whole interface for any create/edit/delete/scale/exec affordance → **none exists**.
-**Expected**: pod detail < 15 s; logs ≤ 3 interactions; zero mutating actions available.
+**Expected**: pod detail < 15 s; logs ≤ 3 interactions; admin actions (v3) only via 'a'/'e' and always behind a confirmation.
 
 ### V2 — Graphical debug views (US2, SC-009/SC-010)
 1. Open a node/workload → CPU/memory gauge + numeric value; a **last-1-hour** trend chart renders.
@@ -76,7 +76,7 @@ Each maps to a v1 user story / acceptance criteria in [spec.md](./spec.md).
 ### V9 — Helm overview (US12, SC-017)
 1. `H` → releases with name/namespace/chart/version/revision/status.
 2. Open a release → revision history; failed/pending flagged.
-3. Confirm **no** upgrade/rollback/uninstall affordance anywhere (read-only).
+3. Confirm rollback/uninstall (v3) are reachable from the actions palette and always ask for confirmation; install/upgrade are not offered.
 
 ### V10 — Resilience (Edge cases, SC-007)
 1. Kill/restore cluster connectivity mid-session → connection status shown; recovers without restart.
@@ -87,6 +87,6 @@ Each maps to a v1 user story / acceptance criteria in [spec.md](./spec.md).
 - Unit: `go test ./internal/...`
 - Integration (fake clientset / envtest, stub Prometheus, fake Helm storage): `go test ./tests/integration/...`
 - TUI (teatest golden/interaction, keyboard/mouse parity): `go test ./tests/tui/...`
-- Read-only guarantee: an integration test asserts **zero mutating verbs/actions** across all flows (SC-006).
+- Confirmation guarantee (v3): integration tests exercise every admin operation against fakes, and UI tests assert **no mutation runs without its confirmation step** (SC-006 v3).
 
 See [research.md](./research.md) D10 for the testing rationale.

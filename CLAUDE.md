@@ -1,6 +1,6 @@
 # CLAUDE.md — working on idz-k8s
 
-Read-only Kubernetes overview TUI (Go + Bubble Tea). This file captures the
+Kubernetes overview & admin TUI (Go + Bubble Tea). This file captures the
 non-negotiable invariants and the traps we already fell into. Read it before
 changing anything.
 
@@ -16,13 +16,17 @@ changing anything.
    from the '>' palette (no dedicated shortcuts); navigation keys
    (':'/'n'/'c'/'/') are global across views (owner decision 2026-07-12).
 
-1. **Strictly read-only** (FR-012, SC-006). Never wire a mutating Kubernetes
-   verb (`create/update/patch/delete/eviction/exec`) or a mutating Helm action
-   (`Install/Upgrade/Rollback/Uninstall`). This is enforced by tests:
-   `TestAllReadFlowsIssueOnlyReadVerbs` sweeps every kube path and
-   `TestHelmPackageNeverConstructsMutatingActions` greps the helm package
-   source. The only allowed `create` is `SelfSubjectRulesReview` (read-only
-   introspection). An opt-in admin mode is a **v3 spec change**, not a patch.
+1. **No mutation without confirmation** (FR-012 v3, SC-006 v3 — the read-only
+   rule was reversed by owner decision 2026-07-24). Admin actions (edit YAML,
+   scale, rolling restart, delete, cordon/uncordon, suspend/resume,
+   port-forward, Helm rollback/uninstall) live in `internal/kube/admin.go`,
+   `portforward.go` and `internal/helm`. EVERY mutating flow must pass through
+   the confirmation modal (`requestConfirm`) or a value prompt before any API
+   call — never wire a mutation to a bare keypress. New admin verbs ship with
+   an operation test (fakes, `tests/integration/admin_test.go`) AND a UI
+   confirmation-gate test (`internal/ui/admin_test.go`). Mutations carry the
+   `idz-k8s` field manager. Exec-into-pod and node drain are still out of
+   scope (a future spec change, not a patch).
 2. **Never fabricate data** (FR-021 + project constitution). When Prometheus
    or any source is unreachable, show an explicit "unavailable" state — never
    estimate, never render an empty chart as if it were data.
@@ -54,10 +58,11 @@ bug fixes ship with the regression test that would have caught them.
 ## Architecture (layering is load-bearing)
 
 ```
-internal/kube     read-only client-go (discovery incl. CRDs, lists via shared-informer cache
-                  with direct-LIST fallback, logs, topology, diagnostics)
+internal/kube     client-go (discovery incl. CRDs, lists via shared-informer cache
+                  with direct-LIST fallback, logs, topology, diagnostics,
+                  admin ops + port-forward — see invariant 1)
 internal/metrics  Prometheus — the ONLY metrics source (instant + 1h range, API-proxy autodiscovery)
-internal/helm     Helm release storage reader (storage access only, no action pkg mutations)
+internal/helm     Helm release storage reader + rollback/uninstall actions (UI-confirmed)
 internal/model    toolkit-agnostic domain types — no client-go, no Bubble Tea imports
 internal/ui       Bubble Tea (app.go state machine, listview.go type-aware lists, theme/, keys/)
 tests/            unit + integration (fakes only) + tui (teatest) — NEVER require a live cluster
