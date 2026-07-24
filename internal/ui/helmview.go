@@ -23,15 +23,7 @@ func (m *Model) openHelm() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.screen = screenHelm
-	m.helmTable.SetColumns([]table.Column{
-		{Title: "NAMESPACE", Width: 22},
-		{Title: "RELEASE", Width: 28},
-		{Title: "CHART", Width: max(16, m.width-100)},
-		{Title: "VERSION", Width: 12},
-		{Title: "REV", Width: 5},
-		{Title: "STATUS", Width: 14},
-		{Title: "UPDATED", Width: 9},
-	})
+	m.updateHelmColumns()
 	m.helmWin.SetRows([]table.Row{{"", "loading helm releases…", "", "", "", "", ""}})
 	m.helmWin.Sync(&m.helmTable)
 	m.layout()
@@ -42,19 +34,41 @@ func (m *Model) openHelm() (tea.Model, tea.Cmd) {
 	}
 }
 
-// helmColWidths returns the helm table's column widths (must stay in sync
-// with openHelm's SetColumns).
+// helmColWidths resolves the helm table's column widths from the visible
+// rows — content-driven like every other table (fitColumns); compact
+// defaults while the list is still loading (placeholder row).
 func (m *Model) helmColWidths() []int {
-	chart := 16
-	for _, r := range m.helmRows {
-		if l := len([]rune(r.Chart)) + 2; l > chart {
-			chart = l
+	titles := []string{"NAMESPACE", "RELEASE", "CHART", "VERSION", "REV", "STATUS", "UPDATED"}
+	if len(m.helmRows) == 0 {
+		return []int{22, 28, 16, 12, 5, 14, 9}
+	}
+	now := time.Now()
+	needs := make([]int, len(titles))
+	mins := make([]int, len(titles))
+	for i, t := range titles {
+		tw := len([]rune(t))
+		if m.helmSortCol == i {
+			tw += 2 // sort arrow
+		}
+		needs[i] = tw
+		mins[i] = colMin(tw)
+	}
+	grow := func(i int, cell string) {
+		if l := len([]rune(cell)); l > needs[i] {
+			needs[i] = l
 		}
 	}
-	if lim := m.width - 100; chart > lim && lim >= 16 {
-		chart = lim
+	for _, r := range m.helmRows {
+		grow(0, r.Namespace)
+		grow(1, r.Name)
+		grow(2, r.Chart)
+		grow(3, r.ChartVersion)
+		grow(4, fmt.Sprintf("%d", r.Revision))
+		grow(5, r.Health().Symbol()+" "+r.Status)
+		grow(6, kube.Age(r.Updated, now))
 	}
-	return []int{22, 28, chart, 12, 5, 14, 9}
+	// -10: the bubbles table needs slack for its own cell padding.
+	return fitColumns(needs, mins, m.width-10)
 }
 
 // helmLess returns the sort order for a helm column index.

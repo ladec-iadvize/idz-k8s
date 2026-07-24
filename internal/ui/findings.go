@@ -94,6 +94,23 @@ type findingGroup struct {
 	items []findingItem
 }
 
+// findingWhoWidth sizes the findings' object column with the terminal
+// (~1/3 of the width) instead of a fixed 45/52 (content-driven layout, v3).
+func (m *Model) findingWhoWidth() int {
+	return clampW(m.width/3, 34, 64)
+}
+
+// clampW bounds a computed width to [lo, hi].
+func clampW(w, lo, hi int) int {
+	if w < lo {
+		return lo
+	}
+	if w > hi {
+		return hi
+	}
+	return w
+}
+
 // renderFindingGroups writes the grouped findings — a rule() header per
 // group, severity-colored lines, the selection highlighted — and records
 // each finding's ref and content line for Enter/mouse clicks.

@@ -14,11 +14,11 @@ import (
 	"github.com/iadvize/idz-k8s/internal/ui/components"
 )
 
-// listColumn is one type-aware column of the main list. width 0 = flexible
-// (absorbs the remaining terminal width).
+// listColumn is one type-aware column of the main list. Widths are content-
+// driven (see listWidths/fitColumns): a column is as wide as its widest
+// visible cell, shrinking proportionally when the terminal is too narrow.
 type listColumn struct {
 	title string
-	width int
 	off   bool // available in the 'C' chooser but hidden by default
 	cell  func(m *Model, o model.ResourceObject) string
 	less  func(a, b model.ResourceObject) bool // optional custom sort
@@ -92,14 +92,14 @@ func customColumn(spec string) listColumn {
 		// meant by "<key>" (no real label key starts that way).
 		k = strings.TrimPrefix(k, ".")
 		k = strings.TrimPrefix(k, "metadata.labels.")
-		return listColumn{title: title, width: 16,
+		return listColumn{title: title,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				return orDash(kube.ObjectLabel(o.Raw, k))
 			}}
 	}
 	path := strings.TrimPrefix(spec, "field:")
 	fields := strings.Split(strings.TrimPrefix(path, "."), ".")
-	return listColumn{title: title, width: 20,
+	return listColumn{title: title,
 		cell: func(_ *Model, o model.ResourceObject) string {
 			return fieldCell(o.Raw, fields)
 		}}
@@ -195,10 +195,10 @@ func resolveField(cur interface{}, fields []string) (interface{}, bool) {
 // kubectl-like, instead of a one-size-fits-all layout (the mark column is
 // implicit at index 0).
 func (m *Model) columnsBase() []listColumn {
-	name := listColumn{title: "NAME", width: 0,
+	name := listColumn{title: "NAME",
 		cell: func(_ *Model, o model.ResourceObject) string { return o.Name },
 		less: func(a, b model.ResourceObject) bool { return a.Name < b.Name }}
-	ns := listColumn{title: "NAMESPACE", width: 28,
+	ns := listColumn{title: "NAMESPACE",
 		cell: func(_ *Model, o model.ResourceObject) string { return o.Namespace },
 		less: func(a, b model.ResourceObject) bool {
 			if a.Namespace != b.Namespace {
@@ -206,7 +206,7 @@ func (m *Model) columnsBase() []listColumn {
 			}
 			return a.Name < b.Name
 		}}
-	status := listColumn{title: "STATUS", width: 18,
+	status := listColumn{title: "STATUS",
 		cell: func(m *Model, o model.ResourceObject) string {
 			st := o.Status
 			if r, d, ok := kube.ReadyCount(m.curType.Kind, o.Raw); ok && d > 0 && r < d {
@@ -226,10 +226,10 @@ func (m *Model) columnsBase() []listColumn {
 			}
 			return a.Status.Reason < b.Status.Reason
 		}}
-	age := listColumn{title: "AGE", width: 8,
+	age := listColumn{title: "AGE",
 		cell: func(m *Model, o model.ResourceObject) string { return kube.Age(o.CreatedAt, m.now()) },
 		less: func(a, b model.ResourceObject) bool { return a.CreatedAt.After(b.CreatedAt) }}
-	ready := listColumn{title: "READY", width: 9,
+	ready := listColumn{title: "READY",
 		cell: func(m *Model, o model.ResourceObject) string {
 			if r, d, ok := kube.ReadyCount(m.curType.Kind, o.Raw); ok {
 				return fmt.Sprintf("%d/%d", r, d)
@@ -254,7 +254,7 @@ func (m *Model) columnsBase() []listColumn {
 		// Live usage columns (owner request 2026-07-09): raw value and % of
 		// the pod's request, fed at tick cadence — "—" when Prometheus has
 		// no sample or no request is set (never estimated).
-		cpuUse := listColumn{title: "CPU", width: 8,
+		cpuUse := listColumn{title: "CPU",
 			cell: func(m *Model, o model.ResourceObject) string {
 				if v, ok := m.podUsageCPU[usageKey(o)]; ok {
 					return components.FormatCPU(v)
@@ -262,18 +262,18 @@ func (m *Model) columnsBase() []listColumn {
 				return "—"
 			},
 		}
-		memUse := listColumn{title: "MEM", width: 9,
+		memUse := listColumn{title: "MEM",
 			cell: func(m *Model, o model.ResourceObject) string {
 				if v, ok := m.podUsageMem[usageKey(o)]; ok {
 					return components.FormatMemory(v)
 				}
 				return "—"
 			}}
-		cpuPct := listColumn{title: "CPU%R", width: 6,
+		cpuPct := listColumn{title: "CPU%R",
 			cell: func(m *Model, o model.ResourceObject) string {
 				return usagePctCell(m.podUsageCPU[usageKey(o)], hasKey(m.podUsageCPU, usageKey(o)), reqCPU(o))
 			}}
-		memPct := listColumn{title: "MEM%R", width: 6,
+		memPct := listColumn{title: "MEM%R",
 			cell: func(m *Model, o model.ResourceObject) string {
 				return usagePctCell(m.podUsageMem[usageKey(o)], hasKey(m.podUsageMem, usageKey(o)), reqMem(o))
 			}}
@@ -290,7 +290,7 @@ func (m *Model) columnsBase() []listColumn {
 		memPct.less = func(a, b model.ResourceObject) bool {
 			return usageFrac(m.podUsageMem[usageKey(a)], reqMem(a)) < usageFrac(m.podUsageMem[usageKey(b)], reqMem(b))
 		}
-		restarts := listColumn{title: "RESTARTS", width: 9,
+		restarts := listColumn{title: "RESTARTS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				if r := kube.PodRestarts(o.Raw); r > 0 {
 					return fmt.Sprintf("%d", r)
@@ -298,10 +298,10 @@ func (m *Model) columnsBase() []listColumn {
 				return "0"
 			},
 			less: func(a, b model.ResourceObject) bool { return kube.PodRestarts(a.Raw) < kube.PodRestarts(b.Raw) }}
-		node := listColumn{title: "NODE", width: 24,
+		node := listColumn{title: "NODE",
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(kube.PodNode(o.Raw)) },
 			less: func(a, b model.ResourceObject) bool { return kube.PodNode(a.Raw) < kube.PodNode(b.Raw) }}
-		ip := listColumn{title: "IP", width: 15,
+		ip := listColumn{title: "IP",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructuredString(o.Raw, "status", "podIP")
 				return orDash(v)
@@ -312,7 +312,7 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, ready, status, restarts, age, ip, node, cpuUse, cpuPct, memUse, memPct}
 
 	case strings.EqualFold(kind, "Node"):
-		pods := listColumn{title: "PODS READY", width: 11,
+		pods := listColumn{title: "PODS READY",
 			cell: func(m *Model, o model.ResourceObject) string {
 				c, ok := m.nodePods[o.Name]
 				if !ok {
@@ -324,14 +324,14 @@ func (m *Model) columnsBase() []listColumn {
 				ca, cb := m.nodePods[a.Name], m.nodePods[b.Name]
 				return readyFrac(ca[0], ca[1]) < readyFrac(cb[0], cb[1])
 			}}
-		instance := listColumn{title: "INSTANCE", width: 14,
+		instance := listColumn{title: "INSTANCE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				return orDash(kube.ObjectLabel(o.Raw, "node.kubernetes.io/instance-type", "beta.kubernetes.io/instance-type"))
 			},
 			less: func(a, b model.ResourceObject) bool {
 				return kube.ObjectLabel(a.Raw, "node.kubernetes.io/instance-type") < kube.ObjectLabel(b.Raw, "node.kubernetes.io/instance-type")
 			}}
-		pool := listColumn{title: "NODEPOOL", width: 18,
+		pool := listColumn{title: "NODEPOOL",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				return orDash(kube.ObjectLabel(o.Raw, "karpenter.sh/nodepool", "karpenter.sh/provisioner-name", "eks.amazonaws.com/nodegroup"))
 			},
@@ -339,28 +339,28 @@ func (m *Model) columnsBase() []listColumn {
 				return kube.ObjectLabel(a.Raw, "karpenter.sh/nodepool", "karpenter.sh/provisioner-name") <
 					kube.ObjectLabel(b.Raw, "karpenter.sh/nodepool", "karpenter.sh/provisioner-name")
 			}}
-		roles := listColumn{title: "ROLES", width: 16,
+		roles := listColumn{title: "ROLES",
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(nodeRoles(o.Raw)) }}
-		version := listColumn{title: "VERSION", width: 16,
+		version := listColumn{title: "VERSION",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "kubeletVersion")
 				return orDash(v)
 			}}
-		internalIP := listColumn{title: "INTERNAL-IP", width: 15,
+		internalIP := listColumn{title: "INTERNAL-IP",
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(nodeAddress(o.Raw, "InternalIP")) }}
-		externalIP := listColumn{title: "EXTERNAL-IP", width: 15, off: true,
+		externalIP := listColumn{title: "EXTERNAL-IP", off: true,
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(nodeAddress(o.Raw, "ExternalIP")) }}
-		osImage := listColumn{title: "OS-IMAGE", width: 24, off: true,
+		osImage := listColumn{title: "OS-IMAGE", off: true,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "osImage")
 				return orDash(v)
 			}}
-		kernel := listColumn{title: "KERNEL-VERSION", width: 20, off: true,
+		kernel := listColumn{title: "KERNEL-VERSION", off: true,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "kernelVersion")
 				return orDash(v)
 			}}
-		runtime := listColumn{title: "CONTAINER-RUNTIME", width: 22, off: true,
+		runtime := listColumn{title: "CONTAINER-RUNTIME", off: true,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructuredString(o.Raw, "status", "nodeInfo", "containerRuntimeVersion")
 				return orDash(v)
@@ -371,22 +371,22 @@ func (m *Model) columnsBase() []listColumn {
 			externalIP, osImage, kernel, runtime, instance, pool}
 
 	case strings.EqualFold(kind, "HorizontalPodAutoscaler"):
-		targets := listColumn{title: "TARGETS", width: 22,
+		targets := listColumn{title: "TARGETS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				_, _, _, _, t := kube.HPAInfo(o.Raw)
 				return t
 			}}
-		minC := listColumn{title: "MIN", width: 5,
+		minC := listColumn{title: "MIN",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				mn, _, _, _, _ := kube.HPAInfo(o.Raw)
 				return fmt.Sprintf("%d", mn)
 			}}
-		maxC := listColumn{title: "MAX", width: 5,
+		maxC := listColumn{title: "MAX",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				_, mx, _, _, _ := kube.HPAInfo(o.Raw)
 				return fmt.Sprintf("%d", mx)
 			}}
-		repl := listColumn{title: "REPLICAS", width: 9,
+		repl := listColumn{title: "REPLICAS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				_, _, cur, des, _ := kube.HPAInfo(o.Raw)
 				if des != 0 && des != cur {
@@ -394,7 +394,7 @@ func (m *Model) columnsBase() []listColumn {
 				}
 				return fmt.Sprintf("%d", cur)
 			}}
-		ref := listColumn{title: "REFERENCE", width: 28,
+		ref := listColumn{title: "REFERENCE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				k, _, _ := unstructuredString(o.Raw, "spec", "scaleTargetRef", "kind")
 				n, _, _ := unstructuredString(o.Raw, "spec", "scaleTargetRef", "name")
@@ -406,12 +406,12 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, ref, targets, minC, maxC, repl, age}
 
 	case strings.EqualFold(kind, "Ingress"):
-		class := listColumn{title: "CLASS", width: 14,
+		class := listColumn{title: "CLASS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				c, _, _ := unstructured.NestedString(o.Raw, "spec", "ingressClassName")
 				return orDash(c)
 			}}
-		hosts := listColumn{title: "HOSTS", width: 42,
+		hosts := listColumn{title: "HOSTS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				rules, _, _ := unstructured.NestedSlice(o.Raw, "spec", "rules")
 				var hs []string
@@ -431,9 +431,9 @@ func (m *Model) columnsBase() []listColumn {
 				}
 				return out
 			}}
-		address := listColumn{title: "ADDRESS", width: 24,
+		address := listColumn{title: "ADDRESS",
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(lbAddress(o.Raw)) }}
-		ports := listColumn{title: "PORTS", width: 8,
+		ports := listColumn{title: "PORTS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				if tls, _, _ := unstructured.NestedSlice(o.Raw, "spec", "tls"); len(tls) > 0 {
 					return "80, 443"
@@ -443,32 +443,32 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, class, hosts, address, ports, status, age}
 
 	case strings.EqualFold(kind, "PersistentVolumeClaim"):
-		capa := listColumn{title: "CAPACITY", width: 9,
+		capa := listColumn{title: "CAPACITY",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				c, _, _ := unstructured.NestedString(o.Raw, "status", "capacity", "storage")
 				return orDash(c)
 			}}
-		class := listColumn{title: "STORAGECLASS", width: 16,
+		class := listColumn{title: "STORAGECLASS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				c, _, _ := unstructured.NestedString(o.Raw, "spec", "storageClassName")
 				return orDash(c)
 			}}
-		volume := listColumn{title: "VOLUME", width: 36,
+		volume := listColumn{title: "VOLUME",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructuredString(o.Raw, "spec", "volumeName")
 				return orDash(v)
 			}}
-		modes := listColumn{title: "ACCESS MODES", width: 12,
+		modes := listColumn{title: "ACCESS MODES",
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(accessModes(o.Raw)) }}
 		return []listColumn{ns, name, status, volume, capa, modes, class, age}
 
 	case strings.EqualFold(kind, "PersistentVolume"):
-		capa := listColumn{title: "CAPACITY", width: 9,
+		capa := listColumn{title: "CAPACITY",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				c, _, _ := unstructured.NestedString(o.Raw, "spec", "capacity", "storage")
 				return orDash(c)
 			}}
-		claim := listColumn{title: "CLAIM", width: 34,
+		claim := listColumn{title: "CLAIM",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				cns, _, _ := unstructured.NestedString(o.Raw, "spec", "claimRef", "namespace")
 				cn, _, _ := unstructured.NestedString(o.Raw, "spec", "claimRef", "name")
@@ -477,7 +477,7 @@ func (m *Model) columnsBase() []listColumn {
 				}
 				return cns + "/" + cn
 			}}
-		class := listColumn{title: "STORAGECLASS", width: 16,
+		class := listColumn{title: "STORAGECLASS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				c, _, _ := unstructured.NestedString(o.Raw, "spec", "storageClassName")
 				return orDash(c)
@@ -485,7 +485,7 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{name, capa, claim, class, status, age}
 
 	case strings.EqualFold(kind, "Job"):
-		compl := listColumn{title: "COMPLETIONS", width: 12,
+		compl := listColumn{title: "COMPLETIONS",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				want := int64(1)
 				if v, found, _ := unstructured.NestedInt64(o.Raw, "spec", "completions"); found {
@@ -494,7 +494,7 @@ func (m *Model) columnsBase() []listColumn {
 				done, _, _ := unstructured.NestedInt64(o.Raw, "status", "succeeded")
 				return fmt.Sprintf("%d/%d", done, want)
 			}}
-		dur := listColumn{title: "DURATION", width: 9,
+		dur := listColumn{title: "DURATION",
 			cell: func(m *Model, o model.ResourceObject) string {
 				start, _, _ := unstructured.NestedString(o.Raw, "status", "startTime")
 				end, _, _ := unstructured.NestedString(o.Raw, "status", "completionTime")
@@ -503,24 +503,24 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, compl, dur, status, age}
 
 	case strings.EqualFold(kind, "CronJob"):
-		sched := listColumn{title: "SCHEDULE", width: 14,
+		sched := listColumn{title: "SCHEDULE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				c, _, _ := unstructured.NestedString(o.Raw, "spec", "schedule")
 				return orDash(c)
 			}}
-		susp := listColumn{title: "SUSPEND", width: 8,
+		susp := listColumn{title: "SUSPEND",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				if v, found, _ := unstructured.NestedBool(o.Raw, "spec", "suspend"); found && v {
 					return "yes"
 				}
 				return "no"
 			}}
-		last := listColumn{title: "LAST RUN", width: 9,
+		last := listColumn{title: "LAST RUN",
 			cell: func(m *Model, o model.ResourceObject) string {
 				ts, _, _ := unstructured.NestedString(o.Raw, "status", "lastScheduleTime")
 				return relTime(ts, m.now())
 			}}
-		active := listColumn{title: "ACTIVE", width: 6,
+		active := listColumn{title: "ACTIVE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				a, _, _ := unstructured.NestedSlice(o.Raw, "status", "active")
 				return fmt.Sprintf("%d", len(a))
@@ -528,7 +528,7 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, sched, susp, active, last, status, age}
 
 	case strings.EqualFold(kind, "ConfigMap"):
-		data := listColumn{title: "DATA", width: 5,
+		data := listColumn{title: "DATA",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				d, _ := o.Raw["data"].(map[string]interface{})
 				b, _ := o.Raw["binaryData"].(map[string]interface{})
@@ -537,12 +537,12 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, data, age}
 
 	case strings.EqualFold(kind, "Secret"):
-		typ := listColumn{title: "TYPE", width: 28,
+		typ := listColumn{title: "TYPE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				t, _ := o.Raw["type"].(string)
 				return orDash(t)
 			}}
-		data := listColumn{title: "DATA", width: 5,
+		data := listColumn{title: "DATA",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				d, _ := o.Raw["data"].(map[string]interface{})
 				return fmt.Sprintf("%d", len(d))
@@ -550,7 +550,7 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, typ, data, age}
 
 	case strings.EqualFold(kind, "Service"):
-		svcType := listColumn{title: "TYPE", width: 13,
+		svcType := listColumn{title: "TYPE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				t, _, _ := unstructuredString(o.Raw, "spec", "type")
 				if t == "" {
@@ -558,21 +558,21 @@ func (m *Model) columnsBase() []listColumn {
 				}
 				return t
 			}}
-		clusterIP := listColumn{title: "CLUSTER-IP", width: 15,
+		clusterIP := listColumn{title: "CLUSTER-IP",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructuredString(o.Raw, "spec", "clusterIP")
 				return orDash(v)
 			}}
-		extIP := listColumn{title: "EXTERNAL-IP", width: 20,
+		extIP := listColumn{title: "EXTERNAL-IP",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				if lb := lbAddress(o.Raw); lb != "" {
 					return lb
 				}
 				return "<none>"
 			}}
-		svcPorts := listColumn{title: "PORT(S)", width: 18,
+		svcPorts := listColumn{title: "PORT(S)",
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(servicePorts(o.Raw)) }}
-		selector := listColumn{title: "SELECTOR", width: 24, off: true,
+		selector := listColumn{title: "SELECTOR", off: true,
 			cell: func(_ *Model, o model.ResourceObject) string {
 				sel, ok := kube.PodSelectorLabels(o.Raw)
 				if !ok {
@@ -583,19 +583,19 @@ func (m *Model) columnsBase() []listColumn {
 		return []listColumn{ns, name, svcType, clusterIP, extIP, svcPorts, status, age, selector}
 
 	case strings.EqualFold(kind, "Deployment"):
-		upToDate := listColumn{title: "UP-TO-DATE", width: 10,
+		upToDate := listColumn{title: "UP-TO-DATE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructured.NestedInt64(o.Raw, "status", "updatedReplicas")
 				return fmt.Sprintf("%d", v)
 			}}
-		available := listColumn{title: "AVAILABLE", width: 9,
+		available := listColumn{title: "AVAILABLE",
 			cell: func(_ *Model, o model.ResourceObject) string {
 				v, _, _ := unstructured.NestedInt64(o.Raw, "status", "availableReplicas")
 				return fmt.Sprintf("%d", v)
 			}}
-		images := listColumn{title: "IMAGES", width: 40, off: true,
+		images := listColumn{title: "IMAGES", off: true,
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(templateImages(o.Raw)) }}
-		containers := listColumn{title: "CONTAINERS", width: 24, off: true,
+		containers := listColumn{title: "CONTAINERS", off: true,
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(templateContainers(o.Raw)) }}
 		return []listColumn{ns, name, ready, upToDate, available, status, age, containers, images}
 
@@ -641,37 +641,33 @@ func (m *Model) rowHealth(o model.ResourceObject) model.HealthLevel {
 	return lvl
 }
 
-// listWidths resolves the widths of the current columns (mark col included at
-// index 0; the flexible column absorbs the remainder).
+// listWidths resolves the widths of the current columns (mark col included
+// at index 0). Content-driven: every column is exactly as wide as its widest
+// visible cell (title included, sort arrow accounted for) so long content
+// shows whenever the terminal has room; under pressure the columns shrink
+// proportionally down to readable minimums (fitColumns). No column stretches
+// past its content — an uncapped column opens a desert (owner report
+// 2026-07-10).
 func (m *Model) listWidths(cols []listColumn) []int {
-	widths := make([]int, 0, len(cols)+1)
-	widths = append(widths, 2) // mark
-	fixed := 2
-	flexIdx := -1
+	needs := make([]int, len(cols))
+	mins := make([]int, len(cols))
 	for i, c := range cols {
-		w := c.width
-		if w == 0 {
-			flexIdx = i + 1
-			w = 20
+		titleW := len([]rune(c.title))
+		if m.sortCol == i+1 {
+			titleW += 2 // sort arrow (" ↑"/" ↓")
 		}
-		widths = append(widths, w)
-		fixed += w
-	}
-	if flexIdx >= 0 {
-		if extra := m.width - fixed - len(cols); extra > 0 {
-			// Cap the flexible column to its longest visible content (+2):
-			// on a wide terminal an uncapped NAME opens a desert between
-			// the name and the next column (owner report 2026-07-10).
-			if need := m.flexContentW + 2 - widths[flexIdx]; need < extra {
-				if need < 0 {
-					need = 0
-				}
-				extra = need
-			}
-			widths[flexIdx] += extra
+		n := titleW
+		if i < len(m.colContentW) && m.colContentW[i] > n {
+			n = m.colContentW[i]
 		}
+		if n < 4 {
+			n = 4
+		}
+		needs[i] = n
+		mins[i] = colMin(titleW)
 	}
-	return widths
+	avail := m.width - 2 - len(cols) // mark column + one gap per column
+	return append([]int{2}, fitColumns(needs, mins, avail)...)
 }
 
 // applyRows rebuilds the visible rows from m.objects: filter, sort, format
@@ -718,19 +714,13 @@ func (m *Model) applyRows() {
 	}
 	m.rowLevels = levels
 	m.rowObjs = kept
-	// Longest content of the flexible column (title included) for listWidths.
-	m.flexContentW = 0
-	flexIdx := -1
-	for i, c := range cols {
-		if c.width == 0 {
-			flexIdx = i
-			m.flexContentW = len([]rune(c.title))
-		}
-	}
-	if flexIdx >= 0 {
-		for _, r := range rows {
-			if l := len([]rune(r[flexIdx+1])); l > m.flexContentW {
-				m.flexContentW = l
+	// Longest visible content per column (rune-counted) — the content-driven
+	// listWidths reads this instead of fixed per-column widths.
+	m.colContentW = make([]int, len(cols))
+	for _, r := range rows {
+		for j := 1; j < len(r) && j-1 < len(cols); j++ {
+			if l := len([]rune(r[j])); l > m.colContentW[j-1] {
+				m.colContentW[j-1] = l
 			}
 		}
 	}

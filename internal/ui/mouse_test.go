@@ -170,7 +170,9 @@ func TestSortCycleAndHeaderClick(t *testing.T) {
 		t.Fatalf("NAME desc should put pod-c first, got %q", row[2])
 	}
 	// Header click on NAME (x within its range) toggles again → asc.
-	x := 2 + 1 + 28 + 1 // inside the NAME column (after the mark and ns columns + gaps)
+	// Widths are content-driven: compute NAME's start instead of hard-coding.
+	widths := m.listWidths(m.columnsForType())
+	x := widths[0] + 1 + widths[1] + 1 // after the mark and ns columns + gaps
 	mi, _ = m.Update(click(x, 2))
 	m = asModel(t, mi)
 	if m.sortCol != 2 || !m.sortAsc {

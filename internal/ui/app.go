@@ -245,9 +245,9 @@ type Model struct {
 	podUsageCPU map[string]float64 // key: ns/name
 	podUsageMem map[string]float64
 
-	// Longest content of the list's flexible column (rune-counted), set by
-	// applyRows — listWidths caps the flex width with it.
-	flexContentW int
+	// Longest visible content per list column (rune-counted), set by
+	// applyRows — listWidths sizes the columns from it (content-driven).
+	colContentW []int
 
 	// Row health per visible row (whole-row coloring) and per-node pod
 	// readiness (Node view column).

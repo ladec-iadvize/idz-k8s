@@ -40,9 +40,13 @@ func (m *Model) openDrift() (tea.Model, tea.Cmd) {
 		b.WriteString(m.theme.Ok.Render("✓ no drift — the live object matches its last-applied configuration") + "\n")
 	default:
 		fmt.Fprintf(&b, "%d drifted field(s) — fields present in the baseline only; server defaults are not drift:\n\n", len(drifts))
-		fmt.Fprintf(&b, "  %s\n", m.theme.Faint.Render(fmt.Sprintf("%-44s %-28s %s", "FIELD", "APPLIED", "LIVE")))
+		// Columns scale with the terminal (content-driven layout, v3): FIELD
+		// gets ~40% of the width, APPLIED/LIVE share the rest.
+		fieldW := clampW(m.width*2/5, 30, 60)
+		valueW := clampW((m.width-fieldW-8)/2, 20, 80)
+		fmt.Fprintf(&b, "  %s\n", m.theme.Faint.Render(fmt.Sprintf("%-*s %-*s %s", fieldW+2, "FIELD", valueW, "APPLIED", "LIVE")))
 		for _, d := range drifts {
-			line := fmt.Sprintf("  ~ %-42s %-28s %s", truncate(d.Path, 42), truncate(d.Applied, 28), truncate(d.Live, 40))
+			line := fmt.Sprintf("  ~ %-*s %-*s %s", fieldW, truncate(d.Path, fieldW), valueW, truncate(d.Applied, valueW), truncate(d.Live, valueW))
 			if d.Live == "<absent>" {
 				line = m.theme.Error.Render(line)
 			} else {
@@ -318,7 +322,7 @@ func (m *Model) renderPostureContent(rows []model.PostureFinding) {
 		}
 		groups = append(groups, findingGroup{title: rule, items: items})
 	}
-	m.renderFindingGroups(&b, groups, m.postureSel, 52, &m.postureRefs, &m.postureLines)
+	m.renderFindingGroups(&b, groups, m.postureSel, m.findingWhoWidth(), &m.postureRefs, &m.postureLines)
 	b.WriteString(m.theme.Faint.Render("Enter opens the object · 'w' errors only · ↑/↓ select"))
 	b.WriteString("\n")
 	m.setContent(screenPosture, b.String())

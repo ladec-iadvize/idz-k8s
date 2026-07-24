@@ -375,7 +375,7 @@ func (m *Model) renderDiagContent(rows []model.Diagnostic) {
 		}
 		groups = append(groups, findingGroup{title: cat, items: items})
 	}
-	m.renderFindingGroups(&b, groups, m.diagSel, 45, &m.diagRefs, &m.diagLines)
+	m.renderFindingGroups(&b, groups, m.diagSel, m.findingWhoWidth(), &m.diagRefs, &m.diagLines)
 	b.WriteString(m.theme.Faint.Render("Enter opens the pod · 'w' errors only · ↑/↓ select"))
 	b.WriteString("\n")
 	m.setContent(screenDiag, b.String())
