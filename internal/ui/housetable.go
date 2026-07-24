@@ -1,55 +1,51 @@
 package ui
 
 // House-style table core shared by the usage ('u') and sizing ('z') views:
-// column model, width resolution (one flex column absorbing the leftover,
-// capped to its content), click→column mapping and the renderer (styled
-// header with sort arrows, right alignment, ANSI-aware padding).
-// listview.go keeps its own machinery (mark column, custom columns).
+// column model, content-driven width resolution (fitColumns), click→column
+// mapping and the renderer (styled header with sort arrows, right alignment,
+// ANSI-aware padding). listview.go keeps its own machinery (mark column,
+// custom columns).
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // houseColumn describes one column of a house-style table (usage, sizing).
+// Widths are content-driven (houseWidths/fitColumns).
 type houseColumn[R any] struct {
 	title string
-	width int // 0 = the flex column absorbing leftover width
 	right bool
 	cell  func(*Model, R) string
 	less  func(a, b R) bool
 }
 
-// houseWidths resolves the column widths: fixed columns keep their declared
-// width, the flex column (width 0, minimum flexMin) absorbs the leftover
-// terminal width, capped to its longest content+2.
-func houseWidths[R any](m *Model, cols []houseColumn[R], flexMin int, rows []R) []int {
-	widths := make([]int, len(cols))
-	fixed := 0
-	flexIdx := -1
+// houseWidths resolves the column widths from the actual content: each
+// column is as wide as its widest visible cell (ANSI-aware — gauges carry
+// color codes), shrinking proportionally under a narrow terminal. sortCol
+// reserves room for the active column's sort arrow (-1 = none).
+func houseWidths[R any](m *Model, cols []houseColumn[R], rows []R, sortCol int) []int {
+	needs := make([]int, len(cols))
+	mins := make([]int, len(cols))
 	for i, c := range cols {
-		w := c.width
-		if w == 0 {
-			flexIdx, w = i, flexMin
+		titleW := len([]rune(c.title))
+		if i == sortCol {
+			titleW += 2 // sort arrow (" ↑"/" ↓")
 		}
-		widths[i] = w
-		fixed += w
-	}
-	if flexIdx >= 0 {
-		if extra := m.width - fixed - len(cols); extra > 0 {
-			content := len([]rune(cols[flexIdx].title))
-			for _, r := range rows {
-				if l := len([]rune(cols[flexIdx].cell(m, r))); l > content {
-					content = l
-				}
+		n := titleW
+		for _, r := range rows {
+			if l := lipgloss.Width(c.cell(m, r)); l > n {
+				n = l
 			}
-			if need := content + 2 - widths[flexIdx]; need < extra {
-				if need < 0 {
-					need = 0
-				}
-				extra = need
-			}
-			widths[flexIdx] += extra
 		}
+		if n < 4 {
+			n = 4
+		}
+		needs[i] = n
+		mins[i] = colMin(titleW)
 	}
-	return widths
+	return fitColumns(needs, mins, m.width-len(cols))
 }
 
 // houseColumnAt maps a header click x to a column index (1-column separators).

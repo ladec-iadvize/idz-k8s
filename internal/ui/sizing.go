@@ -318,7 +318,7 @@ func (m *Model) sizingColumns() []sizingColumn {
 		return format(rs.Request)
 	}
 	return []sizingColumn{
-		{title: "WORKLOAD", width: 0,
+		{title: "WORKLOAD",
 			cell: func(m *Model, a model.SizingAdvice) string {
 				if m.client != nil && (m.client.Namespace == "" || kube.IsNamespacePattern(m.client.Namespace)) {
 					return a.Namespace + "/" + strings.TrimPrefix(a.Workload, m.curType.Kind+"/")
@@ -328,31 +328,31 @@ func (m *Model) sizingColumns() []sizingColumn {
 			less: func(a, b model.SizingAdvice) bool {
 				return a.Namespace+a.Workload < b.Namespace+b.Workload
 			}},
-		{title: "PODS", width: 4, right: true,
+		{title: "PODS", right: true,
 			cell: func(_ *Model, a model.SizingAdvice) string { return fmt.Sprintf("%d", a.Pods) },
 			less: func(a, b model.SizingAdvice) bool { return a.Pods < b.Pods }},
-		{title: "CPU", width: 12,
+		{title: "CPU",
 			cell: func(m *Model, a model.SizingAdvice) string { return m.sizingGauge(a.CPU, 10) },
 			less: func(a, b model.SizingAdvice) bool { return util(a.CPU) < util(b.CPU) }},
-		{title: "AVG", width: 8, right: true,
+		{title: "AVG", right: true,
 			cell: func(_ *Model, a model.SizingAdvice) string { return avgOrDash(a.CPU, components.FormatCPU) },
 			less: func(a, b model.SizingAdvice) bool { return a.CPU.Avg < b.CPU.Avg }},
-		{title: "REQ", width: 8, right: true,
+		{title: "REQ", right: true,
 			cell: func(_ *Model, a model.SizingAdvice) string { return reqOrDash(a.CPU, components.FormatCPU) },
 			less: func(a, b model.SizingAdvice) bool { return a.CPU.Request < b.CPU.Request }},
-		{title: "STATUS", width: 10,
+		{title: "STATUS",
 			cell: func(m *Model, a model.SizingAdvice) string { return m.verdictBadge(a.CPU.Verdict) },
 			less: func(a, b model.SizingAdvice) bool { return sevRank(a.CPU.Verdict) < sevRank(b.CPU.Verdict) }},
-		{title: "MEMORY", width: 12,
+		{title: "MEMORY",
 			cell: func(m *Model, a model.SizingAdvice) string { return m.sizingGauge(a.Memory, 10) },
 			less: func(a, b model.SizingAdvice) bool { return util(a.Memory) < util(b.Memory) }},
-		{title: "AVG", width: 8, right: true,
+		{title: "AVG", right: true,
 			cell: func(_ *Model, a model.SizingAdvice) string { return avgOrDash(a.Memory, components.FormatMemory) },
 			less: func(a, b model.SizingAdvice) bool { return a.Memory.Avg < b.Memory.Avg }},
-		{title: "REQ", width: 8, right: true,
+		{title: "REQ", right: true,
 			cell: func(_ *Model, a model.SizingAdvice) string { return reqOrDash(a.Memory, components.FormatMemory) },
 			less: func(a, b model.SizingAdvice) bool { return a.Memory.Request < b.Memory.Request }},
-		{title: "STATUS", width: 10,
+		{title: "STATUS",
 			cell: func(m *Model, a model.SizingAdvice) string { return m.verdictBadge(a.Memory.Verdict) },
 			less: func(a, b model.SizingAdvice) bool { return sevRank(a.Memory.Verdict) < sevRank(b.Memory.Verdict) }},
 	}
@@ -360,7 +360,7 @@ func (m *Model) sizingColumns() []sizingColumn {
 
 // sizingWidths resolves the overview widths (WORKLOAD absorbs the rest).
 func (m *Model) sizingWidths(cols []sizingColumn) []int {
-	return houseWidths(m, cols, 14, m.sizingRows)
+	return houseWidths(m, cols, m.sizingRows, m.sizingSortCol)
 }
 
 // sizingColumnAt maps a header click to a column index.

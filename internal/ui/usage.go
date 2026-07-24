@@ -93,7 +93,7 @@ func (m *Model) usageColumns() []usageColumn {
 		return format(v)
 	}
 	cols := []usageColumn{
-		{title: "NAME", width: 0,
+		{title: "NAME",
 			cell: func(m *Model, r model.UsageRow) string {
 				if m.client != nil && (m.client.Namespace == "" || kube.IsNamespacePattern(m.client.Namespace)) {
 					return r.Namespace + "/" + r.Name
@@ -103,21 +103,21 @@ func (m *Model) usageColumns() []usageColumn {
 			less: func(a, b model.UsageRow) bool { return a.Namespace+a.Name < b.Namespace+b.Name }},
 	}
 	if m.usageIsAgg {
-		cols = append(cols, usageColumn{title: "PODS", width: 4, right: true,
+		cols = append(cols, usageColumn{title: "PODS", right: true,
 			cell: func(_ *Model, r model.UsageRow) string { return fmt.Sprintf("%d", r.Pods) },
 			less: func(a, b model.UsageRow) bool { return a.Pods < b.Pods }})
 	}
 	cols = append(cols,
-		usageColumn{title: "CPU", width: 9, right: true,
+		usageColumn{title: "CPU", right: true,
 			cell: func(_ *Model, r model.UsageRow) string { return valOrDash(r.CPU, r.HasCPU, components.FormatCPU) },
 			less: func(a, b model.UsageRow) bool { return a.CPU < b.CPU }},
-		usageColumn{title: "", width: 14,
+		usageColumn{title: "",
 			cell: func(m *Model, r model.UsageRow) string { return relGauge(r.CPU, r.HasCPU, maxCPU) },
 			less: func(a, b model.UsageRow) bool { return a.CPU < b.CPU }},
-		usageColumn{title: "MEMORY", width: 9, right: true,
+		usageColumn{title: "MEMORY", right: true,
 			cell: func(_ *Model, r model.UsageRow) string { return valOrDash(r.Mem, r.HasMem, components.FormatMemory) },
 			less: func(a, b model.UsageRow) bool { return a.Mem < b.Mem }},
-		usageColumn{title: "", width: 14,
+		usageColumn{title: "",
 			cell: func(m *Model, r model.UsageRow) string { return relGauge(r.Mem, r.HasMem, maxMem) },
 			less: func(a, b model.UsageRow) bool { return a.Mem < b.Mem }},
 	)
@@ -159,7 +159,7 @@ func (m *Model) applyUsageSort() {
 
 // usageWidths / usageColumnAt delegate to the house table geometry helpers.
 func (m *Model) usageWidths(cols []usageColumn) []int {
-	return houseWidths(m, cols, 20, m.usageRows)
+	return houseWidths(m, cols, m.usageRows, m.usageSortCol)
 }
 
 func (m *Model) usageColumnAt(x int) (int, bool) {

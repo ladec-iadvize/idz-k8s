@@ -77,6 +77,11 @@ Keep it that way — it is what makes everything testable with fakes.
   (list rows start at y=3; picker modal rows via `pickerModal()` geometry).
   Any line added/removed in header/footer/rules shifts offsets in
   `handleMouse` — update them AND the tests together.
+- **Column widths are content-driven** (fitColumns in tablewidths.go, owner
+  request 2026-07-24): every table column hugs its widest visible cell and
+  shrinks proportionally (down to colMin) when the terminal is narrow. Never
+  reintroduce fixed per-column widths, and never hard-code x offsets in
+  geometry tests — compute them from listWidths/houseWidths/helmColWidths.
 - **Nothing may wrap.** Header, status line and footer are truncated to the
   terminal width (`xansi.Truncate`); a wrapped line silently shifts all mouse
   coordinates.
