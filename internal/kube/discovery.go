@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -76,6 +77,7 @@ func ParseResourceTypes(lists []*metav1.APIResourceList) []model.ResourceType {
 				Namespaced: r.Namespaced,
 				IsCRD:      !builtinGroups[gv.Group],
 				ShortNames: r.ShortNames,
+				NoWatch:    !hasVerb(r.Verbs, "watch"),
 			})
 		}
 	}
@@ -88,14 +90,9 @@ func ParseResourceTypes(lists []*metav1.APIResourceList) []model.ResourceType {
 	return out
 }
 
-func canList(verbs []string) bool {
-	for _, v := range verbs {
-		if v == "list" {
-			return true
-		}
-	}
-	return false
-}
+func canList(verbs []string) bool { return hasVerb(verbs, "list") }
+
+func hasVerb(verbs []string, verb string) bool { return slices.Contains(verbs, verb) }
 
 // gvr builds the schema.GroupVersionResource for a resource type.
 func gvr(t model.ResourceType) schema.GroupVersionResource {

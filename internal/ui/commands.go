@@ -79,7 +79,7 @@ func (m Model) listObjects() tea.Cmd {
 			return objectsMsg{objects: objs, err: err}
 		}
 		objs, err := c.ListSelected(ctx, t, ns, sel)
-		stale := c.CacheStale()
+		stale := c.CacheStale(t)
 		// Services get a real status from their backends (one extra LIST).
 		if err == nil && t.Group == "" && t.Resource == "services" {
 			if eps, eerr := c.EndpointsByService(ctx, ns); eerr == nil {

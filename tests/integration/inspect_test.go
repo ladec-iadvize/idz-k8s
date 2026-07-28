@@ -61,9 +61,17 @@ func TestParseResourceTypesFiltersSubresourcesAndFlagsCRDs(t *testing.T) {
 				t.Errorf("pods should not be flagged as CRD")
 			}
 		}
+		if ty.Resource == "pods" && ty.NoWatch {
+			t.Errorf("pods advertise watch — must not be flagged NoWatch")
+		}
 		if ty.Resource == "widgets" {
 			haveWidget = true
 			haveCRDFlag = ty.IsCRD
+			// list+get only (metrics.k8s.io-style): browsable, but the
+			// informer path must know watch is unsupported.
+			if !ty.NoWatch {
+				t.Errorf("widgets have no watch verb — must be flagged NoWatch")
+			}
 		}
 	}
 	if !havePods || !haveWidget {
