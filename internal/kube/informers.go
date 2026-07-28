@@ -36,10 +36,17 @@ type informerCache struct {
 	stop    chan struct{}
 	notify  func() // coalesced change signal for the live-refresh loop
 
-	mu      sync.Mutex
-	byGVR   map[schema.GroupVersionResource]informers.GenericInformer
-	lastErr error
-	errAt   time.Time
+	mu    sync.Mutex
+	byGVR map[schema.GroupVersionResource]informers.GenericInformer
+	// Watch failures are tracked PER TYPE: one broken watch (an RBAC change,
+	// one flaky aggregated API) must only flag the views reading that type,
+	// never brand every view "cluster unreachable".
+	errBy map[schema.GroupVersionResource]watchErr
+}
+
+type watchErr struct {
+	err error
+	at  time.Time
 }
 
 func newInformerCache(f dynamicinformer.DynamicSharedInformerFactory, notify func()) *informerCache {
@@ -48,6 +55,7 @@ func newInformerCache(f dynamicinformer.DynamicSharedInformerFactory, notify fun
 		stop:    make(chan struct{}),
 		notify:  notify,
 		byGVR:   map[schema.GroupVersionResource]informers.GenericInformer{},
+		errBy:   map[schema.GroupVersionResource]watchErr{},
 	}
 }
 
@@ -61,7 +69,7 @@ func (ic *informerCache) forGVR(gvr schema.GroupVersionResource) (informers.Gene
 		// Track watch failures for CacheStale; must be set before start.
 		_ = gi.Informer().SetWatchErrorHandler(func(_ *cache.Reflector, err error) {
 			ic.mu.Lock()
-			ic.lastErr, ic.errAt = err, time.Now()
+			ic.errBy[gvr] = watchErr{err: err, at: time.Now()}
 			ic.mu.Unlock()
 		})
 		// Live refresh: any add/update/delete signals the UI, which then
@@ -78,12 +86,12 @@ func (ic *informerCache) forGVR(gvr schema.GroupVersionResource) (informers.Gene
 	return gi, gi.Informer().HasSynced()
 }
 
-// stale returns the recent watch error, if any.
-func (ic *informerCache) stale() error {
+// stale returns the type's recent watch error, if any.
+func (ic *informerCache) stale(gvr schema.GroupVersionResource) error {
 	ic.mu.Lock()
 	defer ic.mu.Unlock()
-	if ic.lastErr != nil && time.Since(ic.errAt) < staleWindow {
-		return ic.lastErr
+	if we, ok := ic.errBy[gvr]; ok && time.Since(we.at) < staleWindow {
+		return we.err
 	}
 	return nil
 }
@@ -144,22 +152,23 @@ func (c *Client) Close() {
 	}
 }
 
-// CacheStale reports a recent watch failure: the UI keeps showing the cached
-// data but must announce the lost connection rather than fake freshness.
-func (c *Client) CacheStale() error {
+// CacheStale reports a recent watch failure ON THE GIVEN TYPE: the UI keeps
+// showing the cached data but must announce the lost freshness rather than
+// fake it. Other types' watch problems never taint this one's view.
+func (c *Client) CacheStale(t model.ResourceType) error {
 	c.infMu.Lock()
 	inf := c.inf
 	c.infMu.Unlock()
-	if inf == nil {
-		return nil
+	if inf == nil || t.NoWatch {
+		return nil // watchless types are plain LISTs — no freshness signal to lose
 	}
-	return inf.stale()
+	return inf.stale(gvr(t))
 }
 
 // UsingCache reports whether a type's list is currently served from the
 // informer cache (test observability + telemetry).
 func (c *Client) UsingCache(t model.ResourceType) bool {
-	if c == nil || c.Dynamic == nil {
+	if c == nil || c.Dynamic == nil || t.NoWatch {
 		return false
 	}
 	_, synced := c.cacheFor().forGVR(gvr(t))
@@ -171,6 +180,11 @@ func (c *Client) UsingCache(t model.ResourceType) bool {
 // or an unparseable selector).
 func (c *Client) cachedList(t model.ResourceType, namespace, labelSelector string) ([]model.ResourceObject, bool) {
 	if c == nil || c.Dynamic == nil {
+		return nil, false
+	}
+	if t.NoWatch {
+		// list-only APIs (metrics.k8s.io…): an informer's watch would fail in
+		// a retry loop and flag the cache stale — always direct-LIST instead.
 		return nil, false
 	}
 	sel := labels.Everything()

@@ -63,6 +63,11 @@ type ResourceType struct {
 	// ShortNames are the API-advertised aliases (svc, deploy, sts, …) — they
 	// work in the ':' picker exactly like in kubectl, CRDs included.
 	ShortNames []string
+	// NoWatch marks a type whose API supports list but NOT watch (e.g. the
+	// metrics.k8s.io PodMetrics/NodeMetrics): it is browsable via direct
+	// LISTs but must never get a shared informer — the reflector's watch
+	// would fail in a loop and poison the freshness signal.
+	NoWatch bool
 }
 
 // Key returns a stable identifier: <group>/<version>/<resource> (core group empty).

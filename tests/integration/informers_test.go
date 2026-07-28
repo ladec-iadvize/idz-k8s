@@ -76,6 +76,53 @@ func TestInformerCacheServesAndUpdates(t *testing.T) {
 
 // TestInformerCloseIsSafe: Close is idempotent-ish and safe on a client that
 // never started informers.
+// TestWatchlessTypeNeverUsesInformers (owner bug 2026-07-28): a type whose
+// API supports list but not watch (metrics.k8s.io pods…) must be served by
+// direct LISTs — an informer's watch would fail in a retry loop and flag the
+// view "cluster unreachable" while the cluster is fine.
+func TestWatchlessTypeNeverUsesInformers(t *testing.T) {
+	podMetrics := PodsType
+	podMetrics.NoWatch = true // discovery flags it (no "watch" verb)
+
+	client, _ := NewFakeClient("demo", NewPod("demo", "web-1", "Running"))
+	defer client.Close()
+	ctx := context.Background()
+
+	for range 3 {
+		objs, err := client.List(ctx, podMetrics, "demo")
+		if err != nil || len(objs) != 1 {
+			t.Fatalf("watchless type must list directly: objs=%v err=%v", objs, err)
+		}
+	}
+	if client.UsingCache(podMetrics) {
+		t.Fatal("watchless type must never be served from an informer cache")
+	}
+	if err := client.CacheStale(podMetrics); err != nil {
+		t.Fatalf("watchless type has no freshness signal to lose, got %v", err)
+	}
+}
+
+// TestCacheStaleIsPerType: one type's broken watch must not brand every
+// other view "cluster unreachable" (the freshness signal is per type).
+func TestCacheStaleIsPerType(t *testing.T) {
+	client, _ := NewFakeClient("demo", NewPod("demo", "web-1", "Running"))
+	defer client.Close()
+	ctx := context.Background()
+
+	if _, err := client.List(ctx, PodsType, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "cache sync", func() bool { return client.UsingCache(PodsType) })
+	// The pods watch is healthy: no stale error for pods, even though other
+	// types may be failing (simulated by never having synced secrets).
+	if err := client.CacheStale(PodsType); err != nil {
+		t.Fatalf("healthy pods watch reported stale: %v", err)
+	}
+	if err := client.CacheStale(SecretsType); err != nil {
+		t.Fatalf("untouched type must not inherit anyone's watch error: %v", err)
+	}
+}
+
 func TestInformerCloseIsSafe(t *testing.T) {
 	client, _ := NewFakeClient("demo")
 	client.Close() // nothing started: must not panic
