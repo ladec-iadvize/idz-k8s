@@ -16,14 +16,31 @@ import (
 )
 
 func TestFitColumns(t *testing.T) {
-	// Everything fits → every column gets exactly what it needs.
+	// Wider than the content → the leftover stretches every column
+	// proportionally: the table fills the space exactly, nobody shrinks,
+	// and the widest column gets the biggest share (no single-gap desert).
 	needs, mins := []int{10, 30, 8}, []int{4, 8, 4}
-	if got := fitColumns(needs, mins, 60); got[0] != 10 || got[1] != 30 || got[2] != 8 {
-		t.Fatalf("fit: %v", got)
+	got := fitColumns(needs, mins, 60)
+	sum := 0
+	for i, w := range got {
+		if w < needs[i] {
+			t.Fatalf("column %d lost width while stretching: %v", i, got)
+		}
+		sum += w
+	}
+	if sum != 60 {
+		t.Fatalf("stretched widths must fill the space exactly, got %d: %v", sum, got)
+	}
+	if got[1]-needs[1] <= got[0]-needs[0] {
+		t.Fatalf("the widest column must receive the biggest share: %v", got)
+	}
+	// Exactly the content → untouched.
+	if got := fitColumns(needs, mins, 48); got[0] != 10 || got[1] != 30 || got[2] != 8 {
+		t.Fatalf("exact fit must keep the natural widths: %v", got)
 	}
 	// Deficit → proportional shrink, total exactly avail, nothing below min.
-	got := fitColumns(needs, mins, 40)
-	sum := 0
+	got = fitColumns(needs, mins, 40)
+	sum = 0
 	for i, w := range got {
 		if w < mins[i] {
 			t.Fatalf("column %d shrank below its minimum: %v", i, got)
@@ -99,14 +116,35 @@ func TestFluidListShrinksOnNarrowTerminal(t *testing.T) {
 	}
 }
 
-// TestFluidListDropsDeadPadding: a short namespace no longer pays the old
-// fixed 28-rune column — the column hugs its content.
-func TestFluidListDropsDeadPadding(t *testing.T) {
-	m := fluidPodModel(t, 200, "node-1")
-	widths := m.listWidths(m.columnsForType())
-	// widths[1] is NAMESPACE: content "demo" (4) vs title "NAMESPACE" (9).
-	if widths[1] != 9 {
-		t.Fatalf("NAMESPACE must hug max(title, content)=9, got %d (%v)", widths[1], widths)
+// TestFluidListFillsTerminal (owner request 2026-07-28): the columns +
+// separators span the whole terminal — no dead right margin — and the
+// leftover is spread proportionally (the widest column gains the most, so
+// no single gap opens a desert).
+func TestFluidListFillsTerminal(t *testing.T) {
+	node := "ip-10-123-45-67.eu-west-1.compute.internal"
+	m := fluidPodModel(t, 200, node)
+	cols := m.columnsForType()
+	widths := m.listWidths(cols)
+	total := 0
+	for _, w := range widths {
+		total += w + 1 // one separator per column
+	}
+	if total-1 != 200 {
+		t.Fatalf("columns+gaps must span the 200-col terminal, got %d (%v)", total-1, widths)
+	}
+	// NODE (by far the longest content) must stay the widest after the
+	// proportional stretch.
+	var nodeIdx, nsIdx int
+	for i, c := range cols {
+		switch c.title {
+		case "NODE":
+			nodeIdx = i + 1
+		case "NAMESPACE":
+			nsIdx = i + 1
+		}
+	}
+	if widths[nodeIdx] <= widths[nsIdx] || widths[nodeIdx] < len([]rune(node)) {
+		t.Fatalf("NODE must stay the widest and keep its content: %v", widths)
 	}
 }
 

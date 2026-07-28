@@ -270,10 +270,11 @@ func TestApplySavedViewUnknownTypeIsTolerated(t *testing.T) {
 	}
 }
 
-// TestFlexColumnCappedToContent (owner report 2026-07-10): on a wide
-// terminal the NAME column stops at its longest content instead of
-// swallowing the whole width and pushing the other columns to the far right.
-func TestFlexColumnCappedToContent(t *testing.T) {
+// TestStretchIsSharedAcrossColumns (owner reports 2026-07-10 and
+// 2026-07-28): on a wide terminal the table fills the whole width, and the
+// leftover is SHARED proportionally — NAME grows the most (largest content)
+// but never swallows the width alone with one giant gap.
+func TestStretchIsSharedAcrossColumns(t *testing.T) {
 	m := newViewsModel(t)
 	m.width = 400 // very wide terminal
 	m.layout()
@@ -285,14 +286,31 @@ func TestFlexColumnCappedToContent(t *testing.T) {
 	cols := m.columnsForType()
 	widths := m.listWidths(cols)
 	nameIdx := -1
+	total := 0
 	for i, c := range cols {
 		if c.title == "NAME" {
 			nameIdx = i + 1 // +1: mark column
 		}
+		total += widths[i+1] + 1
+	}
+	if total+widths[0] != 400 {
+		t.Fatalf("columns+gaps must span the terminal, got %d (%v)", total+widths[0], widths)
 	}
 	longest := len("sdk-app-service-cfb7d7c8b-5znsw")
-	if w := widths[nameIdx]; w < longest || w > longest+4 {
-		t.Fatalf("NAME width=%d, want ~%d (content-capped, not %d-wide)", w, longest+2, m.width)
+	if w := widths[nameIdx]; w < longest {
+		t.Fatalf("NAME width=%d, must keep its longest content (%d)", w, longest)
+	}
+	if w := widths[nameIdx]; w > m.width/2 {
+		t.Fatalf("NAME width=%d swallows the terminal alone — the stretch must be shared (%v)", w, widths)
+	}
+	// The other columns share the stretch too (nobody stays at its minimum).
+	for i, c := range cols {
+		if i+1 == nameIdx {
+			continue
+		}
+		if widths[i+1] <= len([]rune(c.title)) {
+			t.Fatalf("column %s did not receive its share of the stretch: %v", c.title, widths)
+		}
 	}
 	// Narrow terminal keeps the old behavior (flex absorbs what exists).
 	m.width = 100
