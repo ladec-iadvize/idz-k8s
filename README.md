@@ -16,6 +16,21 @@ controls) — prior kubectl/k9s experience is not required.
 
 ## Install
 
+### Homebrew (recommended)
+
+```bash
+brew tap ladec-iadvize/idz-k8s https://github.com/ladec-iadvize/idz-k8s
+brew install idz-k8s
+```
+
+Update to the latest release:
+
+```bash
+brew update && brew upgrade idz-k8s
+```
+
+### Prebuilt binaries
+
 Prebuilt binaries for Linux/macOS (amd64/arm64) are attached to every
 [release](https://github.com/ladec-iadvize/idz-k8s/releases) — download,
 untar, run. Or build from source:
