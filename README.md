@@ -20,6 +20,7 @@ controls) — prior kubectl/k9s experience is not required.
 
 ```bash
 brew tap ladec-iadvize/idz-k8s https://github.com/ladec-iadvize/idz-k8s
+brew trust ladec-iadvize/idz-k8s   # recent Homebrew requires trusting third-party taps
 brew install idz-k8s
 ```
 
