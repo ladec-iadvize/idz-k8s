@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	xansi "github.com/charmbracelet/x/ansi"
 
 	"github.com/iadvize/idz-k8s/internal/config"
 	"github.com/iadvize/idz-k8s/internal/kube"
@@ -179,5 +180,40 @@ func TestEventsSelectionWalksAllEvents(t *testing.T) {
 	}
 	if m.recentSel != 0 || m.recentWin != 0 {
 		t.Fatalf("selection/window should return to top, got sel=%d win=%d", m.recentSel, m.recentWin)
+	}
+}
+
+// TestEventsViewUsesTerminalWidth (owner report 2026-07-29): lane names were
+// hard-cut at 30 runes and event messages at 60 while half a wide screen sat
+// empty — both now size with the content and the terminal.
+func TestEventsViewUsesTerminalWidth(t *testing.T) {
+	now := time.Now()
+	longName := "stats-presence-collector-auto-worker-58ffd747f8-dqjl8"
+	longMsg := "Successfully pulled image \"824262939987.dkr.ecr.eu-central-1.amazonaws.com/stats-presence-collector:1.2.3\" in 1.2s"
+	m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "",
+		WithInitialType(model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}))
+	m.width, m.height = 220, 40
+	m.layout()
+	m.screen = screenEvents
+	m.eventRows = []model.Event{
+		{Time: now.Add(-1 * time.Minute), Type: "Normal", Reason: "Pulled", ObjKind: "Pod", ObjName: longName, Message: longMsg},
+	}
+	m.renderEvents()
+	view := m.events.View()
+	if !strings.Contains(view, "Pod/"+longName) {
+		t.Fatalf("lane name must show in full on a 220-col terminal:\n%s", view)
+	}
+	if !strings.Contains(view, longMsg) {
+		t.Fatalf("event message must use the available width, not stop at 60 runes:\n%s", view)
+	}
+
+	// A narrow terminal still never overflows its width.
+	m.width = 80
+	m.layout()
+	m.renderEvents()
+	for _, line := range strings.Split(xansi.Strip(m.events.View()), "\n") {
+		if w := len([]rune(line)); w > 80 {
+			t.Fatalf("line exceeds the 80-col terminal (%d): %q", w, line)
+		}
 	}
 }

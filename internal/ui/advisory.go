@@ -91,7 +91,20 @@ func (m *Model) renderAccess(r model.AccessReport) {
 	if len(r.Rules) == 0 {
 		b.WriteString("  " + m.theme.Error.Render("✗ no read access in this namespace") + "\n")
 	}
-	fmt.Fprintf(&b, "  %s\n", m.theme.Faint.Render(fmt.Sprintf("%-18s %-22s %s", "VERBS", "GROUPS", "RESOURCES")))
+	// Columns sized by the content (v3 rules carry write verbs — far wider
+	// than the old fixed 18) and bounded by the terminal.
+	verbsW, groupsW := 10, 10
+	for _, rule := range r.Rules {
+		if n := len([]rune(strings.Join(rule.Verbs, ","))); n > verbsW {
+			verbsW = n
+		}
+		if n := len([]rune(strings.Join(rule.Groups, ","))); n > groupsW {
+			groupsW = n
+		}
+	}
+	verbsW = clampW(verbsW, 10, m.width/3)
+	groupsW = clampW(groupsW, 10, m.width/4)
+	fmt.Fprintf(&b, "  %s\n", m.theme.Faint.Render(fmt.Sprintf("%-*s %-*s %s", verbsW, "VERBS", groupsW, "GROUPS", "RESOURCES")))
 	for _, rule := range r.Rules {
 		groups := strings.Join(rule.Groups, ",")
 		if groups == "" {
@@ -101,7 +114,7 @@ func (m *Model) renderAccess(r model.AccessReport) {
 		if len(rule.Names) > 0 {
 			res += "  (only: " + strings.Join(rule.Names, ", ") + ")"
 		}
-		fmt.Fprintf(&b, "  %-18s %-22s %s\n", strings.Join(rule.Verbs, ","), truncate(groups, 22), res)
+		fmt.Fprintf(&b, "  %-*s %-*s %s\n", verbsW, truncate(strings.Join(rule.Verbs, ","), verbsW), groupsW, truncate(groups, groupsW), res)
 	}
 	b.WriteString("\n")
 	b.WriteString(m.rule(fmt.Sprintf("not listable with these credentials (%d type(s))", len(r.Unlistable))) + "\n")
@@ -177,12 +190,20 @@ func (m *Model) renderDirection(b *strings.Builder, label string, restricted boo
 		return
 	}
 	b.WriteString("  " + m.theme.Ok.Render(fmt.Sprintf("restricted — only the following is allowed (%d rule(s)):", len(rules))) + "\n")
+	// Policy column sized by the content (was a fixed 24).
+	polW := 12
+	for _, r := range rules {
+		if n := len([]rune(r.Policy)); n > polW {
+			polW = n
+		}
+	}
+	polW = clampW(polW, 12, m.width/3)
 	for _, r := range rules {
 		ports := "all ports"
 		if len(r.Ports) > 0 {
 			ports = strings.Join(r.Ports, ", ")
 		}
-		fmt.Fprintf(b, "    ✓ %-24s %s — %s\n", r.Policy, strings.Join(r.Peers, "; "), ports)
+		fmt.Fprintf(b, "    ✓ %-*s %s — %s\n", polW, truncate(r.Policy, polW), strings.Join(r.Peers, "; "), ports)
 	}
 }
 

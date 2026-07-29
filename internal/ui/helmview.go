@@ -260,13 +260,18 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 	b.WriteString(m.rule("History"))
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "  %-5s %-16s %-9s %s\n", "REV", "STATUS", "WHEN", "DESCRIPTION")
+	// DESCRIPTION gets all the remaining terminal width (was cut at 66).
+	descW := m.width - 36
+	if descW < 40 {
+		descW = 40
+	}
 	for i, r := range msg.detail.History {
 		if i >= 8 {
 			b.WriteString(m.theme.Faint.Render(fmt.Sprintf("  … %d older revisions", len(msg.detail.History)-i)))
 			b.WriteString("\n")
 			break
 		}
-		line := fmt.Sprintf("  %-5d %-16s %-9s %s", r.Revision, r.Status, kube.Age(r.Updated, now), truncate(r.Description, 66))
+		line := fmt.Sprintf("  %-5d %-16s %-9s %s", r.Revision, r.Status, kube.Age(r.Updated, now), truncate(r.Description, descW))
 		switch {
 		case r.Status == "failed":
 			b.WriteString(m.theme.Error.Render(line))
@@ -284,8 +289,18 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 	b.WriteString("\n")
 	b.WriteString(m.rule(fmt.Sprintf("Resources (%d, live state)", len(msg.detail.Resources))))
 	b.WriteString("\n")
+	// Name column sized by the content (was a fixed 60), status keeps room.
+	resW := 24
+	for _, r := range msg.detail.Resources {
+		if n := len([]rune(r.Kind + "/" + r.Name)); n > resW {
+			resW = n
+		}
+	}
+	if lim := m.width - 40; resW > lim && lim >= 24 {
+		resW = lim
+	}
 	for i, r := range msg.detail.Resources {
-		label := fmt.Sprintf("  %-60s", truncate(r.Kind+"/"+r.Name, 60))
+		label := fmt.Sprintf("  %-*s", resW, truncate(r.Kind+"/"+r.Name, resW))
 		switch {
 		case i >= len(msg.live) || !msg.live[i].known:
 			b.WriteString(m.theme.Faint.Render(label + " —"))
