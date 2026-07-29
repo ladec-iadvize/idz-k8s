@@ -120,25 +120,31 @@ func TestStreamPodLogsAbandonedReaderDoesNotLeak(t *testing.T) {
 	// their own schedule and made a global before/after diff flaky in CI.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if logProducerGoroutines() == 0 {
+		if n, _ := logProducerGoroutines(); n == 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("log producer goroutines leaked: %d StreamPodLogs frames still alive", logProducerGoroutines())
+	n, stacks := logProducerGoroutines()
+	t.Fatalf("log producer goroutines leaked (%d):\n%s", n, stacks)
 }
 
-// logProducerGoroutines counts live goroutines running StreamPodLogs code.
-func logProducerGoroutines() int {
+// logProducerGoroutines counts live goroutines running StreamPodLogs code
+// (and returns their stacks for the failure message).
+func logProducerGoroutines() (int, string) {
 	buf := make([]byte, 1<<20)
 	n := runtime.Stack(buf, true)
 	count := 0
+	var leaked []string
 	for _, g := range strings.Split(string(buf[:n]), "\n\n") {
-		if strings.Contains(g, "StreamPodLogs") {
+		// Match the kube package symbol, not the bare name — this very
+		// test's own goroutine contains "StreamPodLogs" in its frame.
+		if strings.Contains(g, "kube.(*Client).StreamPodLogs") {
 			count++
+			leaked = append(leaked, g)
 		}
 	}
-	return count
+	return count, strings.Join(leaked, "\n\n")
 }
 
 func TestStreamWorkloadLogsMergesPods(t *testing.T) {
