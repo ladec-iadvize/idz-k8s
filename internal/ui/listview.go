@@ -499,6 +499,11 @@ func (m *Model) columnsBase() []listColumn {
 				start, _, _ := unstructured.NestedString(o.Raw, "status", "startTime")
 				end, _, _ := unstructured.NestedString(o.Raw, "status", "completionTime")
 				return jobDuration(start, end, m.now())
+			},
+			// Rendered durations ("45s", "5m", "2h03m") don't compare as
+			// quantities — order by the real elapsed seconds.
+			less: func(a, b model.ResourceObject) bool {
+				return jobSeconds(a.Raw, m.now()) < jobSeconds(b.Raw, m.now())
 			}}
 		return []listColumn{ns, name, compl, dur, status, age}
 
@@ -519,6 +524,11 @@ func (m *Model) columnsBase() []listColumn {
 			cell: func(m *Model, o model.ResourceObject) string {
 				ts, _, _ := unstructured.NestedString(o.Raw, "status", "lastScheduleTime")
 				return relTime(ts, m.now())
+			},
+			// Rendered ages ("45s", "5m", "3d") don't compare as quantities —
+			// order by the real timestamp (never-ran sorts first ascending).
+			less: func(a, b model.ResourceObject) bool {
+				return rawTime(a.Raw, "status", "lastScheduleTime").Before(rawTime(b.Raw, "status", "lastScheduleTime"))
 			}}
 		active := listColumn{title: "ACTIVE",
 			cell: func(_ *Model, o model.ResourceObject) string {
@@ -683,7 +693,9 @@ func (m *Model) applyRows() {
 		c := cols[m.sortCol-1]
 		less := c.less
 		if less == nil {
-			less = func(a, b model.ResourceObject) bool { return c.cell(m, a) < c.cell(m, b) }
+			// Numeric-aware default: "10" must sort after "2" (owner bug
+			// 2026-07-29 — AVAILABLE looked randomly ordered).
+			less = func(a, b model.ResourceObject) bool { return cellLess(c.cell(m, a), c.cell(m, b)) }
 		}
 		sort.SliceStable(objs, func(i, j int) bool {
 			if m.sortAsc {
@@ -789,6 +801,33 @@ func unstructuredString(raw map[string]interface{}, fields ...string) (string, b
 		cur = next
 	}
 	return "", false, nil
+}
+
+// jobSeconds returns how long a Job ran (or has been running) in seconds —
+// the sort twin of jobDuration (-1 when it never started, sorting first asc).
+func jobSeconds(raw map[string]interface{}, now time.Time) float64 {
+	start, _, _ := unstructured.NestedString(raw, "status", "startTime")
+	st, err := time.Parse(time.RFC3339, start)
+	if err != nil {
+		return -1
+	}
+	end := now
+	if e, _, _ := unstructured.NestedString(raw, "status", "completionTime"); e != "" {
+		if t, err := time.Parse(time.RFC3339, e); err == nil {
+			end = t
+		}
+	}
+	return end.Sub(st).Seconds()
+}
+
+// rawTime parses an RFC3339 field for sorting (zero time when absent/bad).
+func rawTime(raw map[string]interface{}, fields ...string) time.Time {
+	s, _, _ := unstructured.NestedString(raw, fields...)
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 // jobDuration formats how long a Job ran (or has been running).
