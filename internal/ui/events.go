@@ -90,9 +90,23 @@ func (m Model) handleEventsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 const (
-	timelineLaneWidth = 30 // width of the object-name column
+	timelineLaneWidth = 30 // MINIMUM width of the object-name column
 	timelineMaxLanes  = 25 // lanes shown before "+N more"
 )
+
+// timelineLaneW sizes the object-name column with the content (owner report
+// 2026-07-29: lane names truncated at 30 while half the screen sat empty):
+// wide enough for the longest name, bounded to a third of the terminal.
+func timelineLaneW(maxName, width int) int {
+	w := maxName
+	if w < timelineLaneWidth {
+		w = timelineLaneWidth
+	}
+	if lim := width / 3; w > lim && lim >= timelineLaneWidth {
+		w = lim
+	}
+	return w
+}
 
 // renderEvents draws a visual timeline: a time axis, one lane per object, and
 // markers placed proportionally to when each event happened — so you can SEE
@@ -180,21 +194,6 @@ func (m *Model) renderEvents() {
 		start = end.Add(-span)
 	}
 
-	axisW := m.width - timelineLaneWidth - 6
-	if axisW < 20 {
-		axisW = 20
-	}
-	pos := func(t time.Time) int {
-		p := int(float64(t.Sub(start)) / float64(span) * float64(axisW-1))
-		if p < 0 {
-			p = 0
-		}
-		if p >= axisW {
-			p = axisW - 1
-		}
-		return p
-	}
-
 	// Group events into lanes (one per object), most recent activity first.
 	type lane struct {
 		name   string
@@ -217,6 +216,29 @@ func (m *Model) renderEvents() {
 		}
 	}
 	sort.SliceStable(order, func(i, j int) bool { return order[i].latest.After(order[j].latest) })
+
+	// Lane column sized by the content; the axis absorbs the rest.
+	maxName := 0
+	for _, l := range order {
+		if n := len([]rune(l.name)); n > maxName {
+			maxName = n
+		}
+	}
+	laneW := timelineLaneW(maxName, m.width)
+	axisW := m.width - laneW - 6
+	if axisW < 20 {
+		axisW = 20
+	}
+	pos := func(t time.Time) int {
+		p := int(float64(t.Sub(start)) / float64(span) * float64(axisW-1))
+		if p < 0 {
+			p = 0
+		}
+		if p >= axisW {
+			p = axisW - 1
+		}
+		return p
+	}
 
 	// Time labels: start / mid / end above the axis.
 	lbl := func(t time.Time) string { return t.Local().Format("15:04") }
@@ -242,7 +264,7 @@ func (m *Model) renderEvents() {
 	title := "Timeline"
 	// Rune count, not len(): "─" is 3 bytes for 1 cell — byte-counting shoved
 	// the axis 4 columns left of the lane markers.
-	gap := timelineLaneWidth + 2 - len([]rune(lead)) - len(title) - 1
+	gap := laneW + 2 - len([]rune(lead)) - len(title) - 1
 	if gap < 1 {
 		gap = 1
 	}
@@ -312,7 +334,7 @@ func (m *Model) renderEvents() {
 			cells[p].warning = cells[p].warning || e.Warning()
 		}
 		var row strings.Builder
-		name := fmt.Sprintf("%-*s", timelineLaneWidth, truncate(l.name, timelineLaneWidth))
+		name := fmt.Sprintf("%-*s", laneW, truncate(l.name, laneW))
 		if laneSelected {
 			row.WriteString(m.theme.Selected.Render(name))
 		} else {
@@ -355,6 +377,18 @@ func (m *Model) renderEvents() {
 		b.WriteString(m.theme.Faint.Render(fmt.Sprintf("  ↑ %d more recent", m.recentWin)))
 		b.WriteString("\n")
 	}
+	// Object column sized by the content (stable across the sliding window);
+	// each row's message then gets ALL the remaining terminal width (owner
+	// report 2026-07-29: messages cut at 60 columns on a wide screen).
+	objW := 20
+	for _, e := range evs {
+		if n := len([]rune(e.ObjKind + "/" + e.ObjName)); n > objW {
+			objW = n
+		}
+	}
+	if lim := m.width / 3; objW > lim && lim >= 20 {
+		objW = lim
+	}
 	// Record where the detail rows start (content line) for click-to-select.
 	m.recentBaseLine = strings.Count(b.String(), "\n")
 	m.recentShown = winEnd - m.recentWin
@@ -368,8 +402,13 @@ func (m *Model) renderEvents() {
 		if i == m.recentSel {
 			cursor = "▶ "
 		}
-		line := fmt.Sprintf("%s%-4s %s %-34s %s%s — %s",
-			cursor, kube.Age(e.Time, now), eventBadge(e), truncate(e.ObjKind+"/"+e.ObjName, 34), e.Reason, cnt, truncate(e.Message, 60))
+		prefix := fmt.Sprintf("%s%-4s %s %-*s %s%s — ",
+			cursor, kube.Age(e.Time, now), eventBadge(e), objW, truncate(e.ObjKind+"/"+e.ObjName, objW), e.Reason, cnt)
+		msgW := m.width - len([]rune(prefix))
+		if msgW < 20 {
+			msgW = 20
+		}
+		line := prefix + truncate(e.Message, msgW)
 		switch {
 		case i == m.recentSel:
 			b.WriteString(m.theme.Selected.Render(line))
