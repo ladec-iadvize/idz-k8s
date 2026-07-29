@@ -1,5 +1,7 @@
-# Prebuilt binaries for every tag (owner request 2026-07-11): users install
-# from the GitHub release instead of running go build.
+# Prebuilt binaries for every tag (owner request 2026-07-11) and a Homebrew
+# formula committed back to this repo (owner request 2026-07-29): users
+# install with `brew tap ladec-iadvize/idz-k8s https://github.com/ladec-iadvize/idz-k8s
+# && brew install idz-k8s` and update with `brew upgrade` — no go build.
 version: 2
 
 builds:
@@ -23,7 +25,26 @@ changelog:
   use: github
   sort: asc
 
+# NOTE: `brews` is deprecated in favor of macOS-only casks, but a FORMULA is
+# the right vehicle here: it serves Linuxbrew too and avoids the Gatekeeper
+# quarantine dance casks impose on unsigned binaries. Supported for all of
+# goreleaser v2 (the workflow pins "~> v2").
+brews:
+  - name: idz-k8s
+    # The formula lives in THIS repo (Formula/idz-k8s.rb) — no separate tap
+    # repo; the release workflow's GITHUB_TOKEN can push to its own repo.
+    repository:
+      owner: ladec-iadvize
+      name: idz-k8s
+      branch: main
+    directory: Formula
+    commit_msg_template: "docs(brew): formula {{ .Tag }}"
+    homepage: https://github.com/ladec-iadvize/idz-k8s
+    description: "Kubernetes overview, debugging & admin TUI"
+    test: |
+      system "#{bin}/idz-k8s", "--version"
+
 release:
   draft: false
   footer: |
-    Read-only Kubernetes overview TUI — see the [README](https://github.com/ladec-iadvize/idz-k8s#readme) for usage.
+    Kubernetes overview, debugging & admin TUI — see the [README](https://github.com/ladec-iadvize/idz-k8s#readme) for usage and install (Homebrew supported).

@@ -45,6 +45,11 @@ story directly to main. Small doc/bookkeeping commits may go straight to
 main. The merge is done by whoever runs the story (including Claude) once
 CI passes.
 
+Releases: tag `vX.Y.Z` on main → the Release workflow (goreleaser) builds
+the binaries, publishes the GitHub release, and commits the updated
+Homebrew formula (`Formula/idz-k8s.rb`) back to main. Users install/update
+via `brew` (see README) — never tell them to `go build`.
+
 ## Definition of done (every change)
 
 ```bash
