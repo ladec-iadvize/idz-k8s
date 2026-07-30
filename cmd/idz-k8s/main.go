@@ -3,8 +3,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -33,6 +36,8 @@ func main() {
 		themeFlag     string
 		kikoo         bool
 		showVersion   bool
+		loginCmd      string
+		noLogin       bool
 	)
 
 	root := &cobra.Command{
@@ -86,6 +91,24 @@ func main() {
 				return fmt.Errorf("connecting to cluster: %w", err)
 			}
 
+			// Credential preflight (owner request 2026-07-30): when the day's
+			// AWS SSO session expired, run the login interactively NOW —
+			// before the TUI owns the terminal — instead of opening a broken
+			// empty screen. Network problems (VPN off) are not auth problems
+			// and skip this entirely.
+			if !noLogin {
+				cmdStr := loginCmd
+				if cmdStr == "" {
+					cmdStr = cfg.LoginCommand
+				}
+				if renewed, rerr := ensureCredentials(client, cmdStr, kubeconfig, ctxToUse); rerr != nil {
+					log.Warn("credential preflight", "err", rerr)
+				} else if renewed != nil {
+					client.Close()
+					client = renewed
+				}
+			}
+
 			mc, err := metrics.NewClient(cfg.PrometheusURL)
 			if err != nil {
 				log.Warn("prometheus client init failed; metrics will show unavailable", "err", err)
@@ -130,9 +153,53 @@ func main() {
 	f.StringVar(&themeFlag, "theme", "", "theme: auto (follows the terminal background), dark, light")
 	f.BoolVar(&showVersion, "version", false, "print version and exit")
 	f.BoolVar(&kikoo, "kikoo", false, "celebratory ASCII banner (iAdvize green)")
+	f.StringVar(&loginCmd, "login-cmd", "", "command run when credentials are expired (default: derived from the kubeconfig's AWS profile, e.g. 'aws sso login --sso-session …')")
+	f.BoolVar(&noLogin, "no-login", false, "never run a login command automatically")
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// ensureCredentials pings the cluster and, on an auth-shaped failure, runs
+// the login command interactively (browser flow and all), then returns a
+// FRESH client (the old one may cache the failed exec credentials).
+// (nil, nil) = credentials were already fine or the failure is not
+// auth-related (the TUI's own unreachable banner handles it).
+func ensureCredentials(client *kube.Client, loginCmd, kubeconfigPath, contextName string) (*kube.Client, error) {
+	ping := func(c *kube.Client) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		return c.Ping(ctx)
+	}
+	err := ping(client)
+	if err == nil || !kube.IsAuthError(err) {
+		return nil, nil
+	}
+	if loginCmd == "" {
+		loginCmd = kube.LoginCommand(kubeconfigPath, contextName)
+	}
+	if loginCmd == "" {
+		return nil, fmt.Errorf("credentials rejected (%v) and no login command available — set loginCommand in the config or pass --login-cmd", err)
+	}
+	fmt.Fprintf(os.Stderr, "⚠ cluster credentials expired (%v)\n⏳ running: %s\n", err, loginCmd)
+	login := exec.Command("sh", "-c", loginCmd)
+	login.Stdin, login.Stdout, login.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := login.Run(); err != nil {
+		return nil, fmt.Errorf("%q failed: %w", loginCmd, err)
+	}
+	// Fresh client: the exec credential plugin result is cached per client.
+	renewed, err := kube.NewClient(kube.Options{
+		KubeconfigPath: kubeconfigPath, Context: contextName, Namespace: client.Namespace,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := ping(renewed); err != nil {
+		renewed.Close()
+		return nil, fmt.Errorf("still failing after login: %w", err)
+	}
+	fmt.Fprintln(os.Stderr, "✓ credentials renewed")
+	return renewed, nil
 }

@@ -50,6 +50,11 @@ type Config struct {
 	LastType               string              `yaml:"lastType,omitempty"`
 	ViewPrefs              map[string]ViewPref `yaml:"viewPrefs,omitempty"`
 	SavedViews             []SavedView         `yaml:"savedViews,omitempty"`
+	// LoginCommand runs automatically at startup when the cluster rejects
+	// the credentials (e.g. an expired AWS SSO session). Empty = derive it
+	// from the kubeconfig's exec plugin + AWS config (aws sso login …).
+	// A command, never a credential — nothing secret is stored (FR-015).
+	LoginCommand string `yaml:"loginCommand,omitempty"`
 }
 
 // Defaults returns the built-in defaults (FR-006: refresh default ~5s).

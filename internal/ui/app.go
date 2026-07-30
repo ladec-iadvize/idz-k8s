@@ -512,14 +512,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Keep the last data on screen; the tick keeps retrying (FR-016).
 			m.disconnected = true
-			m.errMsg = "cluster unreachable — retrying every " +
-				fmt.Sprintf("%ds", m.cfg.RefreshIntervalSeconds) + " (" + truncate(msg.err.Error(), 60) + ")"
+			if kube.IsAuthError(msg.err) {
+				// Expired day credentials, not a lost network: say so and
+				// point to the fix (relaunching runs the login automatically).
+				m.errMsg = "credentials expired — relaunch idz-k8s (it re-runs the sso login) (" + truncate(msg.err.Error(), 60) + ")"
+			} else {
+				m.errMsg = "cluster unreachable — retrying every " +
+					fmt.Sprintf("%ds", m.cfg.RefreshIntervalSeconds) + " (" + truncate(msg.err.Error(), 60) + ")"
+			}
 		} else {
 			if msg.stale != nil {
 				// Cached data is still shown, but freshness is never faked:
 				// the watch is failing, announce it (FR-016/FR-021 spirit).
 				m.disconnected = true
-				m.errMsg = "cluster unreachable — showing cached data, watch retrying (" + truncate(msg.stale.Error(), 60) + ")"
+				if kube.IsAuthError(msg.stale) {
+					m.errMsg = "credentials expired — relaunch idz-k8s (it re-runs the sso login) (" + truncate(msg.stale.Error(), 60) + ")"
+				} else {
+					m.errMsg = "cluster unreachable — showing cached data, watch retrying (" + truncate(msg.stale.Error(), 60) + ")"
+				}
 			} else if m.disconnected {
 				m.disconnected = false
 				m.statusMsg = "✓ reconnected"
