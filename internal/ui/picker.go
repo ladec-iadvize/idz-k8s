@@ -297,12 +297,18 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 				m.curType = t
 			}
 		}
-		// A type switch is a fresh view: leave any drill and the marked
-		// selection, then restore the type's own saved customization —
-		// filter, sort — instead of a leftover from the previous type (a
-		// saved filter is always visible as a header chip, never invisible).
+		// A type switch leaves any drill and the marked selection and
+		// restores the type's saved customization (sort, columns) — but an
+		// ACTIVE filter follows across types (owner decision 2026-07-30:
+		// "/back" on pods keeps filtering the deployments list; the header
+		// chip keeps it visible, so it can never silently empty a list).
+		// With no active filter, the type's own saved filter comes back.
+		keepFilter := strings.TrimSpace(m.filter.Value())
 		m.resetDrill()
 		m.applyViewPref()
+		if keepFilter != "" {
+			m.filter.SetValue(keepFilter)
+		}
 		m.marked = map[string]model.ResourceObject{}
 		m.statusMsg = ""
 		m.screen = screenList

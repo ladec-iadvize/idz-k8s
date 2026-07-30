@@ -198,9 +198,13 @@ func TestOwnerKeyNoOwner(t *testing.T) {
 	}
 }
 
-func TestTypeSwitchClearsDrillAndFilter(t *testing.T) {
+// TestTypeSwitchClearsDrill: the drill scope is left on a ':' type switch;
+// the ACTIVE text filter now follows (owner decision 2026-07-30 — see
+// TestActiveFilterFollowsTypeSwitch, which replaced the old cleared-filter
+// rule of this test).
+func TestTypeSwitchClearsDrill(t *testing.T) {
 	m := deploymentModel(t)
-	// Drill into the deployment, then walk to owner to set a text filter too.
+	// Drill into the deployment, then set a text filter too.
 	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = asModel(t, mi)
 	m.filter.SetValue("leftover")
@@ -222,8 +226,8 @@ func TestTypeSwitchClearsDrillAndFilter(t *testing.T) {
 	if m.drillSelector != "" || m.drillNamespace != "" {
 		t.Fatalf("drill must be cleared on type switch, got selector=%q ns=%q", m.drillSelector, m.drillNamespace)
 	}
-	if m.filter.Value() != "" {
-		t.Fatalf("text filter must be cleared on type switch, got %q", m.filter.Value())
+	if m.filter.Value() != "leftover" {
+		t.Fatalf("the active filter must follow the type switch, got %q", m.filter.Value())
 	}
 }
 
