@@ -746,6 +746,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.errMsg = ""
 		m.statusMsg = "✓ " + msg.summary
+		if msg.clearMarks {
+			// The bulk action consumed the marked set.
+			m.marked = map[string]model.ResourceObject{}
+		}
 		// Refresh whatever the mutation touched.
 		switch m.screen {
 		case screenHelm, screenHelmHist:

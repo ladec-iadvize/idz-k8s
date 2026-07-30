@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -74,7 +75,9 @@ func (m Model) openActions() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// listActions builds the admin actions for the object under the cursor.
+// listActions builds the admin actions for the object under the cursor —
+// preceded, when resources are marked (Space), by the bulk actions applying
+// to the whole marked set (owner request 2026-07-30).
 func (m *Model) listActions() ([]actionEntry, string) {
 	obj, ok := m.selectedObject()
 	if !ok {
@@ -84,6 +87,7 @@ func (m *Model) listActions() ([]actionEntry, string) {
 	label := kind + "/" + obj.Name
 	t := m.curType
 	var out []actionEntry
+	out = append(out, m.markedActions()...)
 
 	if kindIs(kind, "Deployment", "StatefulSet", "ReplicaSet") {
 		out = append(out, actionEntry{"scale", "set replicas of " + label, func(m *Model) (tea.Model, tea.Cmd) {
@@ -149,6 +153,104 @@ func (m *Model) listActions() ([]actionEntry, string) {
 		}},
 	)
 	return out, label
+}
+
+// markedActions builds the bulk actions applying to every marked resource
+// (owner request 2026-07-30: mark pods with Space, delete them all at once).
+// Marks always belong to the current type (a type switch clears them), so
+// the same kind gating as the single-selection actions applies.
+func (m *Model) markedActions() []actionEntry {
+	if len(m.marked) == 0 {
+		return nil
+	}
+	objs := make([]model.ResourceObject, 0, len(m.marked))
+	for _, o := range m.marked {
+		objs = append(objs, o)
+	}
+	sort.Slice(objs, func(i, j int) bool {
+		if objs[i].Namespace != objs[j].Namespace {
+			return objs[i].Namespace < objs[j].Namespace
+		}
+		return objs[i].Name < objs[j].Name
+	})
+	kind := m.curType.Kind
+	t := m.curType
+	label := fmt.Sprintf("%d marked %s(s)", len(objs), kind)
+	names := make([]string, 0, len(objs))
+	for _, o := range objs {
+		names = append(names, o.Name)
+	}
+	list := truncate(strings.Join(names, ", "), 60)
+
+	var out []actionEntry
+	if kindIs(kind, "Deployment", "StatefulSet", "DaemonSet") {
+		out = append(out, actionEntry{"restart-marked", "rolling restart of " + label, func(m *Model) (tea.Model, tea.Cmd) {
+			return m.requestConfirm("rolling restart of "+label+" — "+list,
+				m.adminBulkCmd(label+" restarted", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+					return cl.RolloutRestart(ctx, t, o.Namespace, o.Name, time.Now())
+				}))
+		}})
+	}
+	if kindIs(kind, "Node") {
+		out = append(out,
+			actionEntry{"cordon-marked", "mark " + label + " unschedulable", func(m *Model) (tea.Model, tea.Cmd) {
+				return m.requestConfirm("cordon "+label+" — "+list,
+					m.adminBulkCmd(label+" cordoned", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+						return cl.SetCordon(ctx, t, o.Name, true)
+					}))
+			}},
+			actionEntry{"uncordon-marked", "mark " + label + " schedulable again", func(m *Model) (tea.Model, tea.Cmd) {
+				return m.requestConfirm("uncordon "+label+" — "+list,
+					m.adminBulkCmd(label+" uncordoned", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+						return cl.SetCordon(ctx, t, o.Name, false)
+					}))
+			}},
+		)
+	}
+	if kindIs(kind, "CronJob") {
+		out = append(out,
+			actionEntry{"suspend-marked", "suspend scheduling of " + label, func(m *Model) (tea.Model, tea.Cmd) {
+				return m.requestConfirm("suspend "+label+" — "+list,
+					m.adminBulkCmd(label+" suspended", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+						return cl.SetSuspend(ctx, t, o.Namespace, o.Name, true)
+					}))
+			}},
+			actionEntry{"resume-marked", "resume scheduling of " + label, func(m *Model) (tea.Model, tea.Cmd) {
+				return m.requestConfirm("resume "+label+" — "+list,
+					m.adminBulkCmd(label+" resumed", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+						return cl.SetSuspend(ctx, t, o.Namespace, o.Name, false)
+					}))
+			}},
+		)
+	}
+	out = append(out, actionEntry{"delete-marked", "⚠ delete " + label, func(m *Model) (tea.Model, tea.Cmd) {
+		return m.requestConfirm("⚠ DELETE "+label+" — "+list,
+			m.adminBulkCmd(label+" deleted", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+				return cl.DeleteObject(ctx, t, o.Namespace, o.Name)
+			}))
+	}})
+	return out
+}
+
+// adminBulkCmd runs one mutation over every marked object, aggregating the
+// failures (partial success is reported, never hidden).
+func (m Model) adminBulkCmd(summary string, objs []model.ResourceObject, fn func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error) tea.Cmd {
+	cl := m.client
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), adminTimeout*2)
+		defer cancel()
+		var failed []string
+		for _, o := range objs {
+			if err := fn(ctx, cl, o); err != nil {
+				failed = append(failed, o.Name+": "+err.Error())
+			}
+		}
+		if len(failed) > 0 {
+			return adminMsg{summary: summary,
+				err: fmt.Errorf("%d/%d failed — %s", len(failed), len(objs), truncate(strings.Join(failed, "; "), 120))}
+		}
+		return adminMsg{summary: summary, clearMarks: true}
+	}
 }
 
 // helmActions builds the admin actions for the selected helm release.
