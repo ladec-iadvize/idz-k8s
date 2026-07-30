@@ -140,6 +140,9 @@ type helmResLive struct {
 type adminMsg struct {
 	summary string // e.g. "Deployment/back scaled to 5"
 	err     error
+	// clearMarks: the mutation consumed the marked set (bulk action) — the
+	// marks are dropped on success so stale dots never linger.
+	clearMarks bool
 }
 
 // editOpenMsg: the object's YAML was written to a temp file — hand the

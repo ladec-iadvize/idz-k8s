@@ -240,3 +240,85 @@ func TestSuggestForwardPorts(t *testing.T) {
 		t.Fatalf("portless suggestion=%q", got)
 	}
 }
+
+// TestBulkDeleteOnMarkedPods (owner request 2026-07-30): mark several pods
+// with Space, open the actions palette — the bulk delete targets ALL of
+// them, still behind the confirmation modal, and consumes the marks.
+func TestBulkDeleteOnMarkedPods(t *testing.T) {
+	podsType := model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+	mkPod := func(name string) map[string]any {
+		return map[string]any{
+			"apiVersion": "v1", "kind": "Pod",
+			"metadata": map[string]any{"name": name, "namespace": "demo"},
+		}
+	}
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{
+			{Version: "v1", Resource: "pods"}: "PodList",
+		},
+		&unstructured.Unstructured{Object: mkPod("web-1")},
+		&unstructured.Unstructured{Object: mkPod("web-2")},
+		&unstructured.Unstructured{Object: mkPod("web-3")})
+	m := New(&kube.Client{Namespace: "demo", Dynamic: dyn}, config.Defaults(), "",
+		WithInitialType(podsType))
+	m.width, m.height = 120, 30
+	m.layout()
+	for _, n := range []string{"web-1", "web-2", "web-3"} {
+		m.objects = append(m.objects, model.ResourceObject{
+			Type: podsType, Namespace: "demo", Name: n, Raw: mkPod(n)})
+	}
+	m.applyRows()
+
+	// Mark web-1 and web-2 (cursor row then next row).
+	m = pressRune(t, m, ' ')
+	m.win.Move(1)
+	m = pressRune(t, m, ' ')
+	if len(m.marked) != 2 {
+		t.Fatalf("expected 2 marked pods, got %d", len(m.marked))
+	}
+
+	m = selectAction(t, m, "delete-marked")
+	if !m.confirming || !strings.Contains(m.confirmTitle, "2 marked Pod(s)") ||
+		!strings.Contains(m.confirmTitle, "web-1") || !strings.Contains(m.confirmTitle, "web-2") {
+		t.Fatalf("bulk delete must confirm with count and names, got %q", m.confirmTitle)
+	}
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if cmd == nil {
+		t.Fatal("Enter must run the bulk mutation")
+	}
+	msg, ok := cmd().(adminMsg)
+	if !ok || msg.err != nil || !msg.clearMarks {
+		t.Fatalf("bulk result: %+v", msg)
+	}
+	mi, _ = m.Update(msg)
+	m = asModel(t, mi)
+	if len(m.marked) != 0 {
+		t.Fatal("a successful bulk action must consume the marks")
+	}
+	objs, err := m.client.List(t.Context(), podsType, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 1 || objs[0].Name != "web-3" {
+		t.Fatalf("both marked pods must be deleted, remaining: %+v", objs)
+	}
+}
+
+// TestBulkActionsMatchKind: marked deployments offer restart-marked, marked
+// pods do not; the single-selection actions stay available below.
+func TestBulkActionsMatchKind(t *testing.T) {
+	m := adminModel(t)
+	m = pressRune(t, m, ' ') // mark the deployment under the cursor
+	m = pressRune(t, m, 'a')
+	opts := pickerOptions(m)
+	for _, want := range []string{"restart-marked", "delete-marked", "scale", "edit"} {
+		if !strings.Contains(opts, want) {
+			t.Fatalf("marked deployment palette missing %q:\n%s", want, opts)
+		}
+	}
+	if strings.Contains(opts, "cordon-marked") || strings.Contains(opts, "suspend-marked") {
+		t.Fatalf("deployment palette must not offer node/cronjob bulk actions:\n%s", opts)
+	}
+}
