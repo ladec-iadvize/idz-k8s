@@ -36,6 +36,19 @@ Prebuilt binaries for Linux/macOS (amd64/arm64) are attached to every
 [release](https://github.com/ladec-iadvize/idz-k8s/releases) — download,
 untar, run. Or build from source:
 
+### Expired AWS SSO credentials
+
+If the cluster rejects your credentials at startup (typically the day's AWS
+SSO session has expired), idz-k8s runs the right login command **for you** —
+derived from the kubeconfig's exec plugin and your AWS config (e.g.
+`aws sso login --sso-session iAdvizeSSO`) — waits for the browser flow, then
+starts normally. No more empty screens.
+
+- override the command: `--login-cmd '…'` or `loginCommand:` in the config file
+- disable entirely: `--no-login`
+- a network failure (VPN down) never triggers a login — only credential
+  errors do
+
 ## Build & run
 
 Requires Go 1.26+ and a kubeconfig with read access.

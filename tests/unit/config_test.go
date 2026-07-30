@@ -107,6 +107,10 @@ func TestConfigSchemaIsAllowlisted(t *testing.T) {
 		"SchemaVersion": true, "RefreshIntervalSeconds": true, "PrometheusURL": true,
 		"Theme": true, "LastContext": true, "LastNamespace": true, "LastType": true,
 		"ViewPrefs": true, "SavedViews": true,
+		// LoginCommand names the COMMAND to run interactively (aws sso
+		// login …) — the credentials it produces live in the AWS cache,
+		// never in this file.
+		"LoginCommand": true,
 	}
 	tp := reflect.TypeOf(config.Config{})
 	for i := 0; i < tp.NumField(); i++ {

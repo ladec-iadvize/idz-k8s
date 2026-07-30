@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,7 +108,6 @@ func TestStreamPodLogsCompletesWithoutError(t *testing.T) {
 // exit — regression for the unguarded terminal sends that blocked forever.
 func TestStreamPodLogsAbandonedReaderDoesNotLeak(t *testing.T) {
 	client, _ := NewFakeClient("demo", NewPod("demo", "web-1", "Running"))
-	before := runtime.NumGoroutine()
 	for i := 0; i < 10; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		ch := client.StreamPodLogs(ctx, "demo", "web-1", "", 10, true)
@@ -115,14 +115,36 @@ func TestStreamPodLogsAbandonedReaderDoesNotLeak(t *testing.T) {
 		cancel()
 		// ch is abandoned here: nobody ever reads the terminal Done line.
 	}
+	// Count ONLY the log-producer goroutines (by stack), not the global
+	// goroutine count — unrelated tests' informers/reflectors wind down on
+	// their own schedule and made a global before/after diff flaky in CI.
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if runtime.NumGoroutine() <= before+2 {
+		if n, _ := logProducerGoroutines(); n == 0 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("log producer goroutines leaked: before=%d now=%d", before, runtime.NumGoroutine())
+	n, stacks := logProducerGoroutines()
+	t.Fatalf("log producer goroutines leaked (%d):\n%s", n, stacks)
+}
+
+// logProducerGoroutines counts live goroutines running StreamPodLogs code
+// (and returns their stacks for the failure message).
+func logProducerGoroutines() (int, string) {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	count := 0
+	var leaked []string
+	for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+		// Match the kube package symbol, not the bare name — this very
+		// test's own goroutine contains "StreamPodLogs" in its frame.
+		if strings.Contains(g, "kube.(*Client).StreamPodLogs") {
+			count++
+			leaked = append(leaked, g)
+		}
+	}
+	return count, strings.Join(leaked, "\n\n")
 }
 
 func TestStreamWorkloadLogsMergesPods(t *testing.T) {
