@@ -66,7 +66,7 @@ const (
 // Sentinel options of the views picker (US8).
 const (
 	saveViewLabel  = "◆ save current view as…"
-	resetViewLabel = "◆ reset current view to defaults"
+	resetViewLabel = "◆ reset view — deployments, all namespaces, no filters"
 )
 
 // addFieldLabel is the column-chooser action row that adds a user-defined
@@ -125,6 +125,9 @@ type Model struct {
 	pickerKind  pickerKind
 	pickerOpts  []string
 	pickerQuery string
+	// Space-marked options of the namespace picker (multi-namespace scope,
+	// owner request 2026-07-31). Keyed by option label.
+	pickerMarked map[string]bool
 
 	width, height int
 	filtering     bool
@@ -1647,7 +1650,11 @@ func (m Model) pickerModal() (string, modalGeom) {
 		lines = append(lines, padTo("▸ "+m.pickerQuery+"▏", inner))
 	}
 	for i := m.pickerWin.win; i < m.pickerWin.win+shown; i++ {
-		txt := padTo(" "+truncate(m.pickerWin.rows[i][0], inner-1), inner)
+		mark := " "
+		if m.pickerKind == pickNamespace && m.pickerMarked[m.pickerWin.rows[i][0]] {
+			mark = "●" // Space-marked: part of the multi-namespace scope
+		}
+		txt := padTo(mark+" "+truncate(m.pickerWin.rows[i][0], inner-2), inner)
 		if i == m.pickerWin.cursor {
 			txt = m.theme.TableSelected.Render(txt)
 		}
@@ -1659,7 +1666,10 @@ func (m Model) pickerModal() (string, modalGeom) {
 		hint = "Enter apply · Esc cancel"
 	}
 	if m.pickerKind == pickNamespace {
-		hint = fmt.Sprintf("↑↓ · Enter ok · Esc close · '*' = pattern   %d option(s)", total)
+		hint = fmt.Sprintf("↑↓ · Space mark (multi) · Enter ok · '*' = pattern   %d option(s)", total)
+		if n := len(m.pickerMarked); n > 0 {
+			hint = fmt.Sprintf("↑↓ · Space mark · Enter = %d marked ns · Esc close   %d option(s)", n, total)
+		}
 	}
 	lines = append(lines, m.theme.Faint.Render(padTo(hint, inner)))
 	box := m.theme.ModalBorder.Render(strings.Join(lines, "\n"))

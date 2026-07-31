@@ -344,11 +344,31 @@ func (m Model) applySavedView(v config.SavedView) (tea.Model, tea.Cmd) {
 }
 
 // resetCurrentView drops every customization of the current type ('R').
-func (m *Model) resetCurrentView() {
+// resetCurrentView returns to the HOME view (owner decision 2026-07-31):
+// the deployments list across ALL namespaces with no filter anywhere. The
+// current type's whole pref is dropped; every other type keeps its saved
+// columns/sort but loses its saved FILTER — those kept resurfacing on type
+// switches and made reset look like it did nothing. Returns the reload cmd.
+func (m *Model) resetCurrentView() tea.Cmd {
 	delete(m.cfg.ViewPrefs, m.curType.Key())
+	for key, pref := range m.cfg.ViewPrefs {
+		pref.Filter = ""
+		m.cfg.ViewPrefs[key] = pref
+	}
 	m.filter.SetValue("")
 	m.sortCol, m.sortAsc = -1, true
+	m.resetDrill()
+	m.marked = map[string]model.ResourceObject{}
+	m.client.Namespace = "" // all namespaces
+	if t, ok := findTypeByKey(m.types, "apps/v1/deployments"); ok {
+		m.curType = t
+	} else if len(m.types) > 0 {
+		m.curType = defaultType(m.types)
+	}
+	m.screen = screenList
+	m.layout()
 	m.applyRows()
 	m.persist()
-	m.statusMsg = "view reset to defaults"
+	m.statusMsg = "view reset — deployments, all namespaces, no filters"
+	return m.listObjects()
 }

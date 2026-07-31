@@ -91,8 +91,7 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case hit(msg, m.keys.Views):
 		return m.openViewPicker()
 	case hit(msg, m.keys.ResetView):
-		m.resetCurrentView()
-		return m, nil
+		return m, m.resetCurrentView()
 	}
 	m.navigate(&m.win, msg)
 	return m, nil
