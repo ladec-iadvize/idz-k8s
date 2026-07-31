@@ -78,14 +78,24 @@ func TestMouseClickSelectsRow(t *testing.T) {
 	}
 }
 
-func TestMouseDoubleClickOpensDetail(t *testing.T) {
+// TestMouseDoubleClickDrillsDown: a double-click is Enter — on a pod that
+// means its containers since the drill chain shipped (owner request
+// 2026-07-31); 'y' still opens the YAML detail.
+func TestMouseDoubleClickDrillsDown(t *testing.T) {
 	m := listModelForMouse(t, 3)
 	mi, _ := m.Update(click(5, 3))
 	m = asModel(t, mi)
 	mi, _ = m.Update(click(5, 3)) // within 500ms in test time
 	m = asModel(t, mi)
+	if m.screen != screenContainers {
+		t.Fatalf("double-click on a pod should open its containers, screen=%d", m.screen)
+	}
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = asModel(t, mi)
 	if m.screen != screenDetail {
-		t.Fatalf("double-click should open the detail, screen=%d", m.screen)
+		t.Fatalf("'y' must still open the YAML detail, screen=%d", m.screen)
 	}
 }
 

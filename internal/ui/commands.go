@@ -65,6 +65,12 @@ func (m Model) waitForChange() tea.Cmd {
 
 func (m Model) listObjects() tea.Cmd {
 	c, t, ns, sel, node := m.client, m.curType, m.client.Namespace, m.drillSelector, m.drillNode
+	// Client-side drill filters: a parent's UID (CronJob → Jobs) or an
+	// explicit name allow-list (Ingress → Services).
+	ownerUID, names := m.drillOwnerUID, m.drillNames
+	if (ownerUID != "" || len(names) > 0) && m.drillNamespace != "" {
+		ns = m.drillNamespace
+	}
 	if sel != "" && m.drillNamespace != "" {
 		// Drilling: query in the workload's namespace so its selector cannot
 		// match same-labelled pods elsewhere. The user's ns filter is untouched.
@@ -80,6 +86,18 @@ func (m Model) listObjects() tea.Cmd {
 		}
 		objs, err := c.ListSelected(ctx, t, ns, sel)
 		stale := c.CacheStale(t)
+		if err == nil && (ownerUID != "" || len(names) > 0) {
+			kept := objs[:0]
+			for _, o := range objs {
+				switch {
+				case ownerUID != "" && !kube.OwnedByUID(o.Raw, ownerUID):
+				case len(names) > 0 && !names[o.Name]:
+				default:
+					kept = append(kept, o)
+				}
+			}
+			objs = kept
+		}
 		// Services get a real status from their backends (one extra LIST).
 		if err == nil && t.Group == "" && t.Resource == "services" {
 			if eps, eerr := c.EndpointsByService(ctx, ns); eerr == nil {

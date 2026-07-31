@@ -34,7 +34,7 @@ func (m *Model) openEvents() (tea.Model, tea.Cmd) {
 		}
 		m.eventsScope = scope
 		m.eventsScopeFor = fmt.Sprintf("%d marked", len(m.marked))
-	} else if (m.drillSelector != "" || m.drillNode != "") && len(m.objects) > 0 {
+	} else if m.drilling() && len(m.objects) > 0 {
 		scope := make(map[string]bool, len(m.objects))
 		for _, o := range m.objects {
 			scope[o.Namespace+"/"+o.Name] = true

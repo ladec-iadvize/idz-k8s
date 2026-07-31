@@ -108,6 +108,18 @@ Keep it that way — it is what makes everything testable with fakes.
   `TestEveryBindingHasHelp` fails on an undiscoverable binding. Per-screen
   visibility is `screenKeymap()`.
 
+## Drill chain (Enter) — owner request 2026-07-31
+
+`Enter` walks DOWN one level; `Esc` pops exactly one (`drillStack` in
+`internal/ui/drill.go`). The chain table (`drillChain`) maps a kind to its
+child type and HOW children are selected: `bySelector` (workloads/Service →
+Pods), `byOwner` (CronJob → Jobs, via ownerReferences UID), `byNode`,
+`byNamespace` (the only drill that moves the user's ns scope — Esc restores
+it), `byNames` (Ingress → its backend Services). Pods are the leaf: they
+open the containers view (`internal/ui/containers.go`). Adding a level is
+one `drillChain` entry + a cells test. Kinds absent from the table keep
+opening the YAML detail.
+
 ## Kubernetes specifics
 
 - Use `discovery.k8s.io/v1 EndpointSlice`, not `v1 Endpoints` (deprecated

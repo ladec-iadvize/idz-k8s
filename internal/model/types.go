@@ -222,6 +222,19 @@ type HelmRevision struct {
 	Description string
 }
 
+// Container is one container of a pod as the containers view shows it
+// (Enter on a pod — the last step of the drill chain, US17). Derived from
+// spec.containers/initContainers plus their status entries.
+type Container struct {
+	Name     string
+	Image    string
+	Init     bool // an init container
+	Ready    bool
+	State    string // Running / Waiting:<reason> / Terminated:<reason> / unknown
+	Restarts int
+	Level    HealthLevel
+}
+
 // Diagnostic is one workload-failure finding (US10): a crashlooping/OOMKilled/
 // evicted/restarting container or pod, derived read-only from pod status.
 type Diagnostic struct {

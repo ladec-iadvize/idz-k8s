@@ -51,6 +51,8 @@ func (m Model) openActions() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenHelm:
 		entries, target = m.helmActions()
+	case screenContainers:
+		entries, target = m.containerActions()
 	default:
 		entries, target = m.listActions()
 	}

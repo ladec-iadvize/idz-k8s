@@ -73,7 +73,7 @@ when you see it 💚).
 | (list) | Browse any resource type — built-ins and CRDs — with READY/STATUS/AGE; default columns mirror **`kubectl get -o wide`** per type (pods add IP/NODE, deployments UP-TO-DATE/AVAILABLE, services CLUSTER-IP/PORT(S), nodes ROLES/VERSION/INTERNAL-IP…); extra columns — live pod usage (CPU/MEM + `%R` of request), karpenter INSTANCE/NODEPOOL, IMAGES, SELECTOR… — are one `Space` away in the `C` chooser |
 | `Enter` | Drill down: a workload/Service opens **its pods**, a node opens **the pods it hosts**; a pod opens its YAML |
 | `y` / `d` | YAML view / describe (conditions + the object's events, messages in full; Services show their backends). Secret values are **masked**; `x` on a Secret's detail reveals/hides them |
-| `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod |
+| `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod; in the containers view: that container's logs |
 | `a` | **Actions palette** (admin): the actions the selection supports — scale, rolling restart, port-forward, **shell into the pod** (bash, sh fallback), cordon/uncordon, suspend/resume, **trigger a CronJob now**, edit, delete; Helm releases get rollback/uninstall. Every mutation asks for confirmation (`Enter` confirm · `Esc` cancel) |
 | `e` | Edit the selection's YAML in `$KUBE_EDITOR`/`$EDITOR` — applied on save (unchanged file = nothing sent) |
 | `> topology` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
@@ -85,7 +85,8 @@ when you see it 💚).
 | `> posture` | Posture (advisory): best-practice findings by rule — missing requests/limits, privileged/root containers, missing probes, `latest` images, namespaces without NetworkPolicy, TLS certificates near/past expiry; `Enter` opens the referenced object, `w` errors only |
 | `> sizing` | Sizing (advisory): a recap **table of every listed workload** — usage-vs-request gauges and ✓/!/✗ verdicts for CPU & memory, worst first; `Enter` opens the detailed panel (avg/peak gauges vs request/limit). Never applied, never estimated |
 | `> helm releases` | Helm releases: history, deployed resources with **live state**, values — reachable from the `:` picker like any resource; sortable (`s`/`S`, header click) and filterable like every table |
-| `o` | Jump to the owner (pod → ReplicaSet → Deployment) |
+| `Enter` | **Drill DOWN one level** (k9s-like): Deployment/StatefulSet/DaemonSet/ReplicaSet/Job/Service → their Pods → **Containers**, CronJob → its Jobs → Pods, Ingress → its backend Services, Node → the pods it hosts, Namespace → its pods. `Esc` pops exactly one level. On a kind with no child, `Enter` opens the YAML detail |
+| `o` | Jump UP the owner chain (pod → ReplicaSet → Deployment) |
 | `> diff` | Diff: live object vs its `last-applied` configuration — drifted fields with both values; explicit no-baseline / no-drift states |
 
 All analysis views live behind the **`>` views palette** — one key, a
