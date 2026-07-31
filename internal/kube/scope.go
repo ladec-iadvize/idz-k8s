@@ -11,15 +11,21 @@ import (
 // all namespaces and filtering locally.
 
 // IsNamespacePattern reports whether the scope is a glob (path.Match syntax:
-// '*', '?', '[…]') rather than a single namespace name.
-func IsNamespacePattern(ns string) bool { return strings.ContainsAny(ns, "*?[") }
+// '*', '?', '[…]') or a comma-separated multi-namespace selection ("a,b" —
+// Space-marked in the namespace picker) rather than a single namespace name.
+func IsNamespacePattern(ns string) bool { return strings.ContainsAny(ns, "*?[,") }
 
-// MatchNamespace reports whether a namespace matches the glob pattern. A
-// malformed pattern matches nothing (the view goes empty — never a wrong
-// scope silently widened).
+// MatchNamespace reports whether a namespace matches the scope: each
+// comma-separated part is a glob (an exact name matches itself). A malformed
+// part matches nothing (the view goes empty — never a wrong scope silently
+// widened).
 func MatchNamespace(pattern, ns string) bool {
-	ok, err := path.Match(pattern, ns)
-	return err == nil && ok
+	for _, part := range strings.Split(pattern, ",") {
+		if ok, err := path.Match(strings.TrimSpace(part), ns); err == nil && ok {
+			return true
+		}
+	}
+	return false
 }
 
 // namespaceScope splits the UI scope into the API-server namespace ("" = all)

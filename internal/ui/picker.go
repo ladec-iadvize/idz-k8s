@@ -64,6 +64,25 @@ func (m Model) handlePickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if hit(msg, m.keys.Open) {
 		return m.pickerSelect()
 	}
+	// Namespace picker: Space marks/unmarks the highlighted namespace —
+	// Enter then scopes to ALL the marked ones (owner request 2026-07-31).
+	// Namespace names cannot contain spaces, so type-to-filter loses nothing.
+	if m.pickerKind == pickNamespace && msg.Type == tea.KeySpace {
+		if row, ok := m.pickerWin.Selected(); ok && len(row) > 0 {
+			name := row[0]
+			if name != allNamespacesLabel && !strings.HasPrefix(name, nsPatternPrefix) {
+				if m.pickerMarked == nil {
+					m.pickerMarked = map[string]bool{}
+				}
+				if m.pickerMarked[name] {
+					delete(m.pickerMarked, name)
+				} else {
+					m.pickerMarked[name] = true
+				}
+			}
+		}
+		return m, nil
+	}
 	// Column chooser: Space toggles, ←/→ reorders; no type-to-filter (and no
 	// key may leak to global shortcuts while the chooser is open).
 	if m.pickerKind == pickColumns {
@@ -194,6 +213,7 @@ func (m Model) openPicker(kind pickerKind) (tea.Model, tea.Cmd) {
 	}
 	m.pickerOpts = opts
 	m.pickerQuery = ""
+	m.pickerMarked = map[string]bool{} // fresh multi-select on every open
 	m.applyPickerRows()
 	m.screen = screenPicker
 	m.layout()
@@ -325,6 +345,15 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			m.client.Namespace = "" // empty → list across all namespaces
 		case strings.HasPrefix(choice, nsPatternPrefix):
 			m.client.Namespace = strings.TrimPrefix(choice, nsPatternPrefix)
+		case len(m.pickerMarked) > 0:
+			// Space-marked namespaces: scope to ALL of them (comma list —
+			// the same client-side matching as glob patterns).
+			names := make([]string, 0, len(m.pickerMarked))
+			for n := range m.pickerMarked {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			m.client.Namespace = strings.Join(names, ",")
 		default:
 			m.client.Namespace = choice
 		}
@@ -392,10 +421,7 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			m.layout()
 			return m, nil
 		case resetViewLabel:
-			m.resetCurrentView()
-			m.screen = screenList
-			m.layout()
-			return m, m.listObjects()
+			return m, m.resetCurrentView()
 		}
 		name := strings.TrimSpace(strings.SplitN(choice, "  (", 2)[0])
 		for _, v := range m.cfg.SavedViews {

@@ -114,3 +114,29 @@ func TestSelectorLabelHelpers(t *testing.T) {
 		t.Fatal("empty selector must not match everything")
 	}
 }
+
+// TestMatchNamespaceCommaList (owner request 2026-07-31): a comma-separated
+// scope ("a,b" — Space-marked in the picker) matches exactly those
+// namespaces; globs and exact names mix freely.
+func TestMatchNamespaceCommaList(t *testing.T) {
+	if !kube.IsNamespacePattern("a,b") {
+		t.Fatal("a comma list is a multi-namespace scope")
+	}
+	cases := []struct {
+		pattern, ns string
+		want        bool
+	}{
+		{"audience-back,conversation-back", "audience-back", true},
+		{"audience-back,conversation-back", "conversation-back", true},
+		{"audience-back,conversation-back", "other", false},
+		{"staging-*,prod", "staging-web", true},
+		{"staging-*,prod", "prod", true},
+		{"staging-*,prod", "production", false},
+		{"a, b", "b", true}, // stray spaces around commas are tolerated
+	}
+	for _, c := range cases {
+		if got := kube.MatchNamespace(c.pattern, c.ns); got != c.want {
+			t.Fatalf("MatchNamespace(%q, %q) = %v, want %v", c.pattern, c.ns, got, c.want)
+		}
+	}
+}
