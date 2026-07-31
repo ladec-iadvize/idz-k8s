@@ -25,8 +25,10 @@ changing anything.
    call — never wire a mutation to a bare keypress. New admin verbs ship with
    an operation test (fakes, `tests/integration/admin_test.go`) AND a UI
    confirmation-gate test (`internal/ui/admin_test.go`). Mutations carry the
-   `idz-k8s` field manager. Exec-into-pod and node drain are still out of
-   scope (a future spec change, not a patch).
+   `idz-k8s` field manager. Exec-into-pod shipped in v3.4 (owner request
+   2026-07-31: 'shell' in the actions palette, native SPDY + TTY) along
+   with CronJob triggering; node drain is still out of scope (a future
+   spec change, not a patch).
 2. **Never fabricate data** (FR-021 + project constitution). When Prometheus
    or any source is unreachable, show an explicit "unavailable" state — never
    estimate, never render an empty chart as if it were data.

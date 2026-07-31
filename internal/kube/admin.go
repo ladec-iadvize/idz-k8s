@@ -114,6 +114,43 @@ func (c *Client) mergePatch(ctx context.Context, t model.ResourceType, namespace
 	return nil
 }
 
+// TriggerCronJob creates a Job from a CronJob's template right now — what
+// `kubectl create job --from=cronjob/x` does (v3 admin, UI-confirmed).
+// Returns the created job's name.
+func (c *Client) TriggerCronJob(ctx context.Context, t model.ResourceType, namespace, name string, at time.Time) (string, error) {
+	cj, err := c.resourceFor(t, namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("getting CronJob/%s: %w", name, err)
+	}
+	tplSpec, found, _ := unstructured.NestedMap(cj.Object, "spec", "jobTemplate", "spec")
+	if !found {
+		return "", fmt.Errorf("CronJob/%s has no job template", name)
+	}
+	// Job names are DNS labels (63 chars): keep room for the suffix.
+	base := name
+	if len(base) > 47 {
+		base = base[:47]
+	}
+	jobName := fmt.Sprintf("%s-manual-%s", base, at.UTC().Format("150405"))
+	job := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"metadata": map[string]any{
+			"name":      jobName,
+			"namespace": namespace,
+			// The annotation kubectl sets for manual runs — makes the origin
+			// auditable and keeps controllers from double-counting it.
+			"annotations": map[string]any{"cronjob.kubernetes.io/instantiate": "manual"},
+		},
+		"spec": tplSpec,
+	}}
+	jobs := model.ResourceType{Group: "batch", Version: "v1", Kind: "Job", Resource: "jobs", Namespaced: true}
+	if _, err := c.resourceFor(jobs, namespace).Create(ctx, job, metav1.CreateOptions{FieldManager: fieldManager}); err != nil {
+		return "", fmt.Errorf("creating Job/%s: %w", jobName, err)
+	}
+	return jobName, nil
+}
+
 // FirstReadyPod resolves a selector to one ready pod — the port-forward
 // target for workloads and services (kubectl-like resolution).
 func (c *Client) FirstReadyPod(ctx context.Context, namespace, selector string) (string, error) {

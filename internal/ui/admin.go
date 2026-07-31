@@ -106,6 +106,9 @@ func (m *Model) listActions() ([]actionEntry, string) {
 		out = append(out, actionEntry{"port-forward", "localhost tunnel to " + label, func(m *Model) (tea.Model, tea.Cmd) {
 			return m.openForwardPrompt(obj)
 		}})
+		out = append(out, actionEntry{"shell", "interactive shell in " + label + " (bash, sh fallback)", func(m *Model) (tea.Model, tea.Cmd) {
+			return m.openShell(obj)
+		}})
 	}
 	for _, fw := range m.forwardsFor(obj) {
 		out = append(out, actionEntry{"stop-forward", "stop " + fw.Label(), func(m *Model) (tea.Model, tea.Cmd) {
@@ -129,6 +132,19 @@ func (m *Model) listActions() ([]actionEntry, string) {
 		}})
 	}
 	if kindIs(kind, "CronJob") {
+		out = append(out, actionEntry{"trigger", "run " + label + " now (creates a Job)", func(m *Model) (tea.Model, tea.Cmd) {
+			cl := m.client
+			return m.requestConfirm("trigger "+label+" now (creates a Job from its template)",
+				func() tea.Msg {
+					ctx, cancel := context.WithTimeout(context.Background(), adminTimeout)
+					defer cancel()
+					jobName, err := cl.TriggerCronJob(ctx, t, obj.Namespace, obj.Name, time.Now())
+					if err != nil {
+						return adminMsg{summary: label + " triggered", err: err}
+					}
+					return adminMsg{summary: label + " triggered — Job/" + jobName}
+				})
+		}})
 		suspended, _, _ := unstructured.NestedBool(obj.Raw, "spec", "suspend")
 		id, verb := "suspend", "suspend scheduling of "+label
 		if suspended {
