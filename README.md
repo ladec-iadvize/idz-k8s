@@ -74,7 +74,7 @@ when you see it 💚).
 | `Enter` | Drill down: a workload/Service opens **its pods**, a node opens **the pods it hosts**; a pod opens its YAML |
 | `y` / `d` | YAML view / describe (conditions + the object's events, messages in full; Services show their backends). Secret values are **masked**; `x` on a Secret's detail reveals/hides them |
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod |
-| `a` | **Actions palette** (admin): the actions the selection supports — scale, rolling restart, port-forward, cordon/uncordon, suspend/resume, edit, delete; Helm releases get rollback/uninstall. Every mutation asks for confirmation (`Enter` confirm · `Esc` cancel) |
+| `a` | **Actions palette** (admin): the actions the selection supports — scale, rolling restart, port-forward, **shell into the pod** (bash, sh fallback), cordon/uncordon, suspend/resume, **trigger a CronJob now**, edit, delete; Helm releases get rollback/uninstall. Every mutation asks for confirmation (`Enter` confirm · `Esc` cancel) |
 | `e` | Edit the selection's YAML in `$KUBE_EDITOR`/`$EDITOR` — applied on save (unchanged file = nothing sent) |
 | `> topology` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
 | `> events` | Events **timeline**: a time axis per object, warnings highlighted (`w` = warnings only, `k` = kind filter); the selected event's message shows in full below the list, `Enter` opens the referenced object |

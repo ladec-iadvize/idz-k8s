@@ -322,3 +322,25 @@ func TestBulkActionsMatchKind(t *testing.T) {
 		t.Fatalf("deployment palette must not offer node/cronjob bulk actions:\n%s", opts)
 	}
 }
+
+// TestShellAndTriggerInPalette: pods offer "shell"; CronJobs offer "trigger"
+// behind the confirmation modal.
+func TestShellAndTriggerInPalette(t *testing.T) {
+	m := adminModel(t) // deployment: shell offered (resolves a pod), no trigger
+	m = pressRune(t, m, 'a')
+	opts := pickerOptions(m)
+	if !strings.Contains(opts, "shell") || strings.Contains(opts, "trigger") {
+		t.Fatalf("deployment palette wrong:\n%s", opts)
+	}
+
+	m = adminModel(t)
+	m.curType = model.ResourceType{Group: "batch", Version: "v1", Kind: "CronJob", Resource: "cronjobs", Namespaced: true}
+	m.objects = []model.ResourceObject{{Type: m.curType, Namespace: "demo", Name: "nightly",
+		Raw: map[string]any{"metadata": map[string]any{"name": "nightly", "namespace": "demo"},
+			"spec": map[string]any{"schedule": "0 * * * *"}}}}
+	m.applyRows()
+	m = selectAction(t, m, "trigger")
+	if !m.confirming || !strings.Contains(m.confirmTitle, "trigger CronJob/nightly") {
+		t.Fatalf("trigger must arm the confirmation, got %q", m.confirmTitle)
+	}
+}

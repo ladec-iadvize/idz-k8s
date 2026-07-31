@@ -192,3 +192,83 @@ func TestFirstReadyPodPrefersReadyOnes(t *testing.T) {
 		t.Fatal("an empty selector match must error, never guess")
 	}
 }
+
+// TestTriggerCronJobCreatesJob (owner request 2026-07-31): the "trigger"
+// action creates a Job from the CronJob's template, kubectl-style — manual
+// annotation, template spec copied, DNS-safe name.
+func TestTriggerCronJobCreatesJob(t *testing.T) {
+	cron := NewCronJob("demo", "nightly")
+	cron.Object["spec"].(map[string]any)["jobTemplate"] = map[string]any{
+		"spec": map[string]any{
+			"template": map[string]any{
+				"spec": map[string]any{
+					"containers":    []any{map[string]any{"name": "main", "image": "batch:1"}},
+					"restartPolicy": "Never",
+				},
+			},
+		},
+	}
+	client, _ := NewFakeClient("demo", cron)
+	defer client.Close()
+
+	at := time.Date(2026, 7, 31, 9, 30, 0, 0, time.UTC)
+	jobName, err := client.TriggerCronJob(context.Background(), CronJobsType, "demo", "nightly", at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobName != "nightly-manual-093000" {
+		t.Fatalf("job name=%q", jobName)
+	}
+	jobs := model.ResourceType{Group: "batch", Version: "v1", Kind: "Job", Resource: "jobs", Namespaced: true}
+	raw := getRaw(t, client, jobs, "demo", jobName)
+	if v, _, _ := unstructured.NestedString(raw, "metadata", "annotations", "cronjob.kubernetes.io/instantiate"); v != "manual" {
+		t.Fatalf("manual annotation missing: %v", raw)
+	}
+	cs, _, _ := unstructured.NestedSlice(raw, "spec", "template", "spec", "containers")
+	if len(cs) != 1 || cs[0].(map[string]any)["image"] != "batch:1" {
+		t.Fatalf("job template not copied: %v", cs)
+	}
+
+	// A template-less CronJob errors instead of creating an empty Job.
+	bare := NewCronJob("demo", "bare")
+	client2, _ := NewFakeClient("demo", bare)
+	defer client2.Close()
+	if _, err := client2.TriggerCronJob(context.Background(), CronJobsType, "demo", "bare", at); err == nil {
+		t.Fatal("a CronJob without a job template must not be triggerable")
+	}
+
+	// Long names stay DNS-label safe (63 chars).
+	long := NewCronJob("demo", strings.Repeat("x", 60))
+	long.Object["spec"].(map[string]any)["jobTemplate"] = map[string]any{"spec": map[string]any{}}
+	client3, _ := NewFakeClient("demo", long)
+	defer client3.Close()
+	name3, err := client3.TriggerCronJob(context.Background(), CronJobsType, "demo", strings.Repeat("x", 60), at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(name3) > 63 {
+		t.Fatalf("job name exceeds the DNS label limit: %q (%d)", name3, len(name3))
+	}
+}
+
+// TestDefaultContainer: annotation wins, first container otherwise.
+func TestDefaultContainer(t *testing.T) {
+	pod := map[string]any{
+		"metadata": map[string]any{"annotations": map[string]any{
+			"kubectl.kubernetes.io/default-container": "sidecar",
+		}},
+		"spec": map[string]any{"containers": []any{
+			map[string]any{"name": "main"}, map[string]any{"name": "sidecar"},
+		}},
+	}
+	if got := kube.DefaultContainer(pod); got != "sidecar" {
+		t.Fatalf("annotation must win, got %q", got)
+	}
+	delete(pod["metadata"].(map[string]any), "annotations")
+	if got := kube.DefaultContainer(pod); got != "main" {
+		t.Fatalf("first container otherwise, got %q", got)
+	}
+	if got := kube.DefaultContainer(map[string]any{}); got != "" {
+		t.Fatalf("no containers → empty, got %q", got)
+	}
+}
