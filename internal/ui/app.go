@@ -48,6 +48,7 @@ const (
 	screenConnectivity
 	screenAccess
 	screenDrift
+	screenContainers
 )
 
 type pickerKind int
@@ -170,11 +171,15 @@ type Model struct {
 
 	// Drill-down: viewing the pods owned by a workload (US9 ownership) or
 	// running on a node (Enter on the nodes list).
-	drillSelector  string             // label selector; "" = not drilling
-	drillNode      string             // node name; "" = not drilling by node
-	drillFor       string             // e.g. "Deployment/back", "Node/ip-10-0-1-2"
-	drillNamespace string             // workload namespace (query scope only — the user's namespace filter is untouched)
-	drillPrevType  model.ResourceType // type to restore on Esc
+	drillSelector  string          // label selector; "" = not drilling
+	drillNode      string          // node name; "" = not drilling by node
+	drillFor       string          // e.g. "Deployment/back", "Node/ip-10-0-1-2"
+	drillNamespace string          // workload namespace (query scope only — the user's namespace filter is untouched)
+	drillOwnerUID  string          // ownerReferences UID filter (CronJob → Jobs)
+	drillNames     map[string]bool // name allow-list (Ingress → Services)
+	// drillStack holds the levels above the current one — Esc pops exactly
+	// one (Deployment → Pods → Containers, CronJob → Jobs → Pods…).
+	drillStack []drillFrame
 
 	recentWin int // first visible row of the events detail window
 
@@ -322,6 +327,16 @@ type Model struct {
 	// most every changeFlushDelay (bursts from a rolling update coalesce).
 	changePending bool
 
+	// Containers view (Enter on a pod — the leaf of the drill chain).
+	containerPod     model.ResourceObject
+	containerRows    []model.Container
+	containerWin     winTable
+	containerSortCol int
+	containerSortAsc bool
+	// logsFrom is the screen Esc returns to from the log view (the
+	// containers list when the logs were opened from a container).
+	logsFrom screen
+
 	// Sizing overview row filter ('/' on the table, helm-list style).
 	sizingFiltering bool
 	sizingQuery     string
@@ -405,33 +420,34 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 	fi.Prompt = "/"
 
 	m := Model{
-		cfg:            cfg,
-		kubeconfigPath: kubeconfigPath,
-		client:         client,
-		keys:           keys.Default(),
-		theme:          theme.Default(),
-		help:           help.New(),
-		detail:         viewport.New(0, 0),
-		logsView:       viewport.New(0, 0),
-		diag:           viewport.New(0, 0),
-		topo:           viewport.New(0, 0),
-		events:         viewport.New(0, 0),
-		filter:         fi,
-		helmTable:      table.New(table.WithFocused(true)),
-		helmHist:       viewport.New(0, 0),
-		sizingVP:       viewport.New(0, 0),
-		posture:        viewport.New(0, 0),
-		connectivity:   viewport.New(0, 0),
-		access:         viewport.New(0, 0),
-		drift:          viewport.New(0, 0),
-		screen:         screenList,
-		marked:         map[string]model.ResourceObject{},
-		forwards:       map[string]*kube.PortForward{},
-		sortCol:        -1,
-		sizingSortCol:  -1,
-		usageSortCol:   -1,
-		helmSortCol:    -1,
-		sortAsc:        true,
+		cfg:              cfg,
+		kubeconfigPath:   kubeconfigPath,
+		client:           client,
+		keys:             keys.Default(),
+		theme:            theme.Default(),
+		help:             help.New(),
+		detail:           viewport.New(0, 0),
+		logsView:         viewport.New(0, 0),
+		diag:             viewport.New(0, 0),
+		topo:             viewport.New(0, 0),
+		events:           viewport.New(0, 0),
+		filter:           fi,
+		helmTable:        table.New(table.WithFocused(true)),
+		helmHist:         viewport.New(0, 0),
+		sizingVP:         viewport.New(0, 0),
+		posture:          viewport.New(0, 0),
+		connectivity:     viewport.New(0, 0),
+		access:           viewport.New(0, 0),
+		drift:            viewport.New(0, 0),
+		screen:           screenList,
+		marked:           map[string]model.ResourceObject{},
+		forwards:         map[string]*kube.PortForward{},
+		sortCol:          -1,
+		sizingSortCol:    -1,
+		usageSortCol:     -1,
+		containerSortCol: -1,
+		helmSortCol:      -1,
+		sortAsc:          true,
 	}
 	// Table look & feel: colored headers, background-highlighted selection.
 	// Purely visual — row geometry is unchanged (mouse mapping intact).
@@ -547,8 +563,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.applyRows()
 			// Broken-link visibility (US9): a workload/service whose selector
 			// matches no pods is the classic "why is nothing routing" case.
-			if m.drillSelector != "" && len(m.objects) == 0 {
-				m.statusMsg = "⚠ " + m.drillFor + ": selector matches NO pods (broken link?) — Esc to go back"
+			if m.drilling() && len(m.objects) == 0 {
+				m.statusMsg = "⚠ " + m.drillFor + ": no " + m.curType.Resource + " (broken link?) — Esc to go back"
 			}
 		}
 		return m, nil
@@ -740,6 +756,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.errMsg = msg.err.Error()
+		return m, nil
+
+	case containersMsg:
+		if m.screen == screenContainers && msg.pod.Name == m.containerPod.Name {
+			m.containerPod = msg.pod
+			m.containerRows = kube.PodContainers(msg.pod.Raw)
+			m.applyContainerRows()
+		}
 		return m, nil
 
 	case adminMsg:
@@ -1108,6 +1132,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.topo, cmd = m.topo.Update(msg)
 		return m, cmd
+	case screenContainers:
+		return m.handleContainersKey(msg)
 	case screenEvents:
 		return m.handleEventsKey(msg)
 	case screenHelm:
@@ -1149,6 +1175,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case screenTop:
 			m.usageWin.Move(delta)
+			return m, nil
+		case screenContainers:
+			m.containerWin.Move(delta)
 			return m, nil
 		case screenHelm:
 			m.helmWin.Move(delta)
@@ -1243,6 +1272,22 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				r := m.usageRows[c]
 				return m.openDescribeRef(objRef{typeKey: m.usageTypeKey, ns: r.Namespace, name: r.Name})
 			}
+		}
+		return m, nil
+	case screenContainers:
+		if msg.Y == tableHeaderY {
+			if col, ok := m.containerColumnAt(msg.X); ok {
+				if m.containerSortCol == col {
+					m.containerSortAsc = !m.containerSortAsc
+				} else {
+					m.containerSortCol, m.containerSortAsc = col, true
+				}
+				m.applyContainerRows()
+			}
+			return m, nil
+		}
+		if m.containerWin.ClickVisible(msg.Y-headerLines) && doubleClick(m.containerWin.cursor) {
+			return m.openContainerLogs()
 		}
 		return m, nil
 	case screenDiag:
@@ -1375,14 +1420,29 @@ func (m *Model) goBack() (tea.Model, tea.Cmd) {
 		m.logCancel = nil
 	}
 	m.revealSecret = false
+	// Esc on the containers view returns to the pod list it came from.
+	if m.screen == screenContainers {
+		m.screen = screenList
+		m.statusMsg = ""
+		m.layout()
+		return m, nil
+	}
+	// Esc on logs opened from a container returns to the containers view.
+	if m.screen == screenLogs && m.logsFrom == screenContainers {
+		m.logsFrom = screenList
+		m.screen = screenContainers
+		m.statusMsg = ""
+		m.layout()
+		return m, nil
+	}
 	// Esc on the helm history returns to the helm release list.
 	if m.screen == screenHelmHist {
 		m.screen = screenHelm
 		m.layout()
 		return m, nil
 	}
-	// Esc on a drilled pod list returns to the workload list it came from.
-	if m.screen == screenList && (m.drillSelector != "" || m.drillNode != "") {
+	// Esc on a drilled list pops ONE level of the chain.
+	if m.screen == screenList && m.drilling() {
 		cmd := m.exitDrill()
 		m.layout()
 		return m, cmd
@@ -1462,7 +1522,8 @@ func (m *Model) layout() {
 	m.events.Width, m.events.Height = m.width, bodyH
 	m.helmHist.Width, m.helmHist.Height = m.width, bodyH
 	m.sizingVP.Width, m.sizingVP.Height = m.width, bodyH
-	m.sizingWin.SetHeight(bodyH - 1) // -1: the overview's own column header
+	m.sizingWin.SetHeight(bodyH - 1)    // -1: the overview's own column header
+	m.containerWin.SetHeight(bodyH - 1) // -1: the containers table's header
 	m.posture.Width, m.posture.Height = m.width, bodyH
 	m.connectivity.Width, m.connectivity.Height = m.width, bodyH
 	m.access.Width, m.access.Height = m.width, bodyH
@@ -1503,6 +1564,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.drift.View()
 	case screenSizingList:
 		return m.sizingListView()
+	case screenContainers:
+		return m.containersView()
 	default:
 		return m.listView()
 	}
@@ -1733,8 +1796,8 @@ func (m Model) buildHeaderLine() (string, []clickZone) {
 		}
 	}
 	typeLabel := m.curType.Key()
-	if m.drillSelector != "" || m.drillNode != "" {
-		typeLabel = "pods ⊂ " + m.drillFor
+	if m.drilling() {
+		typeLabel = m.drillChildLabel()
 	}
 	// The chip reflects what is on SCREEN, not the last browsed type — the
 	// helm view is not a kube resource type (owner bug report 2026-07-07).
@@ -1959,6 +2022,11 @@ func (m Model) screenKeymap() keymapView {
 		return keymapView{
 			short: []key.Binding{k.Up, k.Down, k.Open, k.Filter, k.Sort, k.SortDir, k.Back, k.Quit},
 			full:  [][]key.Binding{nav, {k.Open, k.Filter, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
+		}
+	case screenContainers:
+		return keymapView{
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Logs, k.Actions, k.Sort, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Logs, k.Actions, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
 	case screenDetail, screenHelmHist:
 		short := []key.Binding{k.Up, k.Down, k.Filter, k.SearchNext, k.SearchPrev}

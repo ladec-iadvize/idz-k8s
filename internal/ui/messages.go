@@ -164,6 +164,10 @@ type editorClosedMsg struct {
 	err      error
 }
 
+// containersMsg carries the freshly fetched pod behind the containers view
+// (the list snapshot can lag behind container restarts).
+type containersMsg struct{ pod model.ResourceObject }
+
 // forwardMsg: a port-forward attempt finished (started or failed).
 type forwardMsg struct {
 	fw  *kube.PortForward

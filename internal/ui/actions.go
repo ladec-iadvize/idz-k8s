@@ -124,10 +124,13 @@ func (m *Model) drillNodePods(node string) (tea.Model, tea.Cmd) {
 	if !okType {
 		pods = podResourceType
 	}
-	m.drillPrevType = m.curType
-	m.drillNode = node
-	m.drillFor = "Node/" + node
-	m.curType = pods
+	m.drillStack = append(m.drillStack, drillFrame{
+		typ: m.curType, selector: m.drillSelector, node: m.drillNode,
+		ownerUID: m.drillOwnerUID, names: m.drillNames, label: m.drillFor,
+		namespace: m.drillNamespace, nsScope: m.client.Namespace, filter: m.filter.Value(),
+	})
+	m.applyDrillFrame(drillFrame{typ: pods, node: node, label: "Node/" + node})
+	m.filter.SetValue("")
 	m.screen = screenList
 	m.statusMsg = "pods on " + m.drillFor + " — Esc to go back"
 	m.layout()
@@ -137,10 +140,11 @@ func (m *Model) drillNodePods(node string) (tea.Model, tea.Cmd) {
 	return m, m.listObjects()
 }
 
-// openListSelection is the Enter action of the list: drill into a workload's
-// pods, or open the YAML detail (k9s-like).
+// openListSelection is the Enter action of the list: walk one level DOWN the
+// chain (Deployment → Pods → Containers, CronJob → Jobs → Pods…), or open the
+// YAML detail when the kind has no child (k9s-like).
 func (m Model) openListSelection() (tea.Model, tea.Cmd) {
-	if cmd, ok := m.drillIntoPods(); ok {
+	if cmd, ok := m.drillInto(); ok {
 		return m, cmd
 	}
 	cmd := m.openDetail()
@@ -236,46 +240,6 @@ func (m Model) delegate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-// drillIntoPods switches the list to the pods owned by the selected workload
-// (Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, Service) via its label
-// selector. ok=false when the selection has no pod selector (e.g. a Pod).
-func (m *Model) drillIntoPods() (tea.Cmd, bool) {
-	obj, found := m.selectedObject()
-	if !found || strings.EqualFold(m.curType.Kind, "Pod") || m.drillSelector != "" || m.drillNode != "" {
-		return nil, false
-	}
-	pods, okType := findTypeByKey(m.types, "v1/pods")
-	if !okType {
-		pods = podResourceType
-	}
-	// A node has no selector: drilling shows the pods scheduled on it —
-	// the list twin of the topology view (complementary, not redundant:
-	// topology is capacity-oriented, this is a full pod list with filter,
-	// sort, marks, logs…).
-	if strings.EqualFold(m.curType.Kind, "Node") {
-		m.drillPrevType = m.curType
-		m.drillNode = obj.Name
-		m.drillFor = "Node/" + obj.Name
-		m.curType = pods
-		m.statusMsg = "pods on " + m.drillFor + " — Esc to go back"
-		return m.listObjects(), true
-	}
-	sel, ok := kube.PodSelector(obj.Raw)
-	if !ok {
-		return nil, false
-	}
-	m.drillPrevType = m.curType
-	m.drillSelector = sel
-	m.drillFor = m.curType.Kind + "/" + obj.Name
-	m.drillNamespace = obj.Namespace // query scope only; ns filter untouched
-	m.curType = pods
-	m.statusMsg = "pods of " + m.drillFor + " — Esc to go back"
-	if m.metrics.Enabled() {
-		return tea.Batch(m.listObjects(), m.fetchListUsage()), true
-	}
-	return m.listObjects(), true
-}
-
 // gotoOwner walks one step UP the ownership chain (US9): from a Pod to its
 // ReplicaSet, from a ReplicaSet to its Deployment, etc. It switches the list
 // to the owner's type with the filter pre-set to the owner's name, so pressing
@@ -307,20 +271,6 @@ func (m *Model) gotoOwner() tea.Cmd {
 	m.curType = ownerType
 	m.filter.SetValue(ref.Name)
 	m.statusMsg = "owner of " + obj.Name + ": " + ref.Kind + "/" + ref.Name
-	return m.listObjects()
-}
-
-// exitDrill restores the workload list the drill-down came from.
-// resetDrill clears every drill-down scope field (selector, node, label,
-// owning namespace).
-func (m *Model) resetDrill() {
-	m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
-}
-
-func (m *Model) exitDrill() tea.Cmd {
-	m.curType = m.drillPrevType
-	m.resetDrill()
-	m.statusMsg = ""
 	return m.listObjects()
 }
 

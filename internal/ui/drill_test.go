@@ -6,6 +6,10 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 
 	"github.com/iadvize/idz-k8s/internal/config"
 	"github.com/iadvize/idz-k8s/internal/kube"
@@ -609,5 +613,199 @@ func TestEnterOnNodeDrillsToItsPods(t *testing.T) {
 	m = asModel(t, mi)
 	if m.curType.Resource != "nodes" || m.drillNode != "" {
 		t.Fatalf("Esc should restore nodes, got type=%q drillNode=%q", m.curType.Key(), m.drillNode)
+	}
+}
+
+// drillChainModel builds a CronJob list backed by a fake dynamic client
+// holding the CronJob, the Job it owns (plus a foreign Job) and the Job's pod.
+func drillChainModel(t *testing.T) Model {
+	t.Helper()
+	cronType := model.ResourceType{Group: "batch", Version: "v1", Kind: "CronJob", Resource: "cronjobs", Namespaced: true}
+	jobType := model.ResourceType{Group: "batch", Version: "v1", Kind: "Job", Resource: "jobs", Namespaced: true}
+	podType := model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}
+
+	cronRaw := map[string]any{
+		"apiVersion": "batch/v1", "kind": "CronJob",
+		"metadata": map[string]any{"name": "nightly", "namespace": "demo", "uid": "cron-uid-1"},
+		"spec":     map[string]any{"schedule": "0 * * * *"},
+	}
+	ownedJob := map[string]any{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]any{"name": "nightly-123", "namespace": "demo",
+			"ownerReferences": []any{map[string]any{"kind": "CronJob", "name": "nightly", "uid": "cron-uid-1"}}},
+		"spec": map[string]any{"selector": map[string]any{
+			"matchLabels": map[string]any{"job-name": "nightly-123"}}},
+	}
+	foreignJob := map[string]any{
+		"apiVersion": "batch/v1", "kind": "Job",
+		"metadata": map[string]any{"name": "other-job", "namespace": "demo", "uid": "job-uid-9"},
+		"spec":     map[string]any{"selector": map[string]any{"matchLabels": map[string]any{"job-name": "other-job"}}},
+	}
+	jobPod := map[string]any{
+		"apiVersion": "v1", "kind": "Pod",
+		"metadata": map[string]any{"name": "nightly-123-abc", "namespace": "demo",
+			"labels": map[string]any{"job-name": "nightly-123"}},
+		"spec": map[string]any{"containers": []any{map[string]any{"name": "worker", "image": "batch:1"}}},
+		"status": map[string]any{"phase": "Running", "containerStatuses": []any{
+			map[string]any{"name": "worker", "ready": true, "state": map[string]any{"running": map[string]any{}}}}},
+	}
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{
+			{Group: "batch", Version: "v1", Resource: "cronjobs"}: "CronJobList",
+			{Group: "batch", Version: "v1", Resource: "jobs"}:     "JobList",
+			{Version: "v1", Resource: "pods"}:                     "PodList",
+		},
+		&unstructured.Unstructured{Object: cronRaw},
+		&unstructured.Unstructured{Object: ownedJob},
+		&unstructured.Unstructured{Object: foreignJob},
+		&unstructured.Unstructured{Object: jobPod})
+
+	m := New(&kube.Client{Namespace: "demo", Dynamic: dyn}, config.Defaults(), "", WithInitialType(cronType))
+	m.types = []model.ResourceType{cronType, jobType, podType}
+	m.width, m.height = 140, 30
+	m.layout()
+	m.objects = []model.ResourceObject{{Type: cronType, Namespace: "demo", Name: "nightly", Raw: cronRaw}}
+	m.applyRows()
+	return m
+}
+
+// TestDrillChainCronJobToContainers (owner request 2026-07-31): Enter walks
+// CronJob → Jobs (owned only) → Pods (by selector) → Containers, and each Esc
+// pops exactly one level.
+func TestDrillChainCronJobToContainers(t *testing.T) {
+	m := drillChainModel(t)
+
+	// CronJob → its Jobs (the foreign job must not show).
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.curType.Kind != "Job" || m.drillOwnerUID != "cron-uid-1" {
+		t.Fatalf("level 1: type=%q ownerUID=%q", m.curType.Key(), m.drillOwnerUID)
+	}
+	if cmd == nil {
+		t.Fatal("drill must reload the list")
+	}
+	m = asModel(t, applyMsg(t, m, cmd))
+	if len(m.rowObjs) != 1 || m.rowObjs[0].Name != "nightly-123" {
+		t.Fatalf("only the owned job must show, got %+v", m.rowObjs)
+	}
+	if !strings.Contains(m.header(), "jobs ⊂ CronJob/nightly") {
+		t.Fatalf("header should show the level, got %q", m.header())
+	}
+
+	// Job → its Pods (label selector).
+	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.curType.Kind != "Pod" || m.drillSelector != "job-name=nightly-123" {
+		t.Fatalf("level 2: type=%q selector=%q", m.curType.Key(), m.drillSelector)
+	}
+	m = asModel(t, applyMsg(t, m, cmd))
+	if len(m.rowObjs) != 1 || m.rowObjs[0].Name != "nightly-123-abc" {
+		t.Fatalf("job pods: %+v", m.rowObjs)
+	}
+
+	// Pod → its containers.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.screen != screenContainers || len(m.containerRows) != 1 || m.containerRows[0].Name != "worker" {
+		t.Fatalf("level 3: screen=%d rows=%+v", m.screen, m.containerRows)
+	}
+
+	// Esc pops one level at a time: containers → pods → jobs → cronjobs.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	if m.screen != screenList || m.curType.Kind != "Pod" {
+		t.Fatalf("Esc from containers: screen=%d type=%q", m.screen, m.curType.Key())
+	}
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	if m.curType.Kind != "Job" || m.drillOwnerUID != "cron-uid-1" {
+		t.Fatalf("Esc to jobs: type=%q ownerUID=%q", m.curType.Key(), m.drillOwnerUID)
+	}
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	m = asModel(t, mi)
+	if m.curType.Kind != "CronJob" || m.drilling() {
+		t.Fatalf("Esc to cronjobs: type=%q drilling=%v", m.curType.Key(), m.drilling())
+	}
+}
+
+// applyMsg runs a command and feeds its message back into the model.
+func applyMsg(t *testing.T, m Model, cmd tea.Cmd) tea.Model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var out tea.Model = m
+		for _, c := range batch {
+			out = applyMsg(t, asModel(t, out), c)
+		}
+		return out
+	}
+	mi, _ := m.Update(msg)
+	return mi
+}
+
+// TestDrillIngressToServices: Enter on an Ingress lists exactly its backend
+// services; a kind with no child keeps opening the YAML detail.
+func TestDrillIngressToServices(t *testing.T) {
+	ingType := model.ResourceType{Group: "networking.k8s.io", Version: "v1", Kind: "Ingress", Resource: "ingresses", Namespaced: true}
+	svcType := model.ResourceType{Version: "v1", Kind: "Service", Resource: "services", Namespaced: true}
+	cmType := model.ResourceType{Version: "v1", Kind: "ConfigMap", Resource: "configmaps", Namespaced: true}
+	ingRaw := map[string]any{
+		"apiVersion": "networking.k8s.io/v1", "kind": "Ingress",
+		"metadata": map[string]any{"name": "web", "namespace": "demo"},
+		"spec": map[string]any{"rules": []any{map[string]any{"http": map[string]any{"paths": []any{
+			map[string]any{"backend": map[string]any{"service": map[string]any{"name": "front"}}},
+		}}}}},
+	}
+	svcFront := map[string]any{"apiVersion": "v1", "kind": "Service",
+		"metadata": map[string]any{"name": "front", "namespace": "demo"}}
+	svcOther := map[string]any{"apiVersion": "v1", "kind": "Service",
+		"metadata": map[string]any{"name": "unrelated", "namespace": "demo"}}
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{
+			{Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"}: "IngressList",
+			{Version: "v1", Resource: "services"}:                              "ServiceList",
+			// Listing services derives their status from their backends —
+			// the fake refuses to LIST a kind it does not know.
+			{Group: "discovery.k8s.io", Version: "v1", Resource: "endpointslices"}: "EndpointSliceList",
+			{Version: "v1", Resource: "endpoints"}:                                 "EndpointsList",
+		},
+		&unstructured.Unstructured{Object: ingRaw},
+		&unstructured.Unstructured{Object: svcFront},
+		&unstructured.Unstructured{Object: svcOther})
+
+	m := New(&kube.Client{Namespace: "demo", Dynamic: dyn}, config.Defaults(), "", WithInitialType(ingType))
+	m.types = []model.ResourceType{ingType, svcType, cmType}
+	m.width, m.height = 140, 30
+	m.layout()
+	m.objects = []model.ResourceObject{{Type: ingType, Namespace: "demo", Name: "web", Raw: ingRaw}}
+	m.applyRows()
+
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if m.curType.Kind != "Service" {
+		t.Fatalf("Ingress must drill to services, got %q", m.curType.Key())
+	}
+	m = asModel(t, applyMsg(t, m, cmd))
+	if len(m.rowObjs) != 1 || m.rowObjs[0].Name != "front" {
+		t.Fatalf("only the backend service must show, got %+v", m.rowObjs)
+	}
+
+	// A ConfigMap has no child: Enter opens the YAML detail as before.
+	m2 := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "", WithInitialType(cmType))
+	m2.width, m2.height = 140, 30
+	m2.layout()
+	m2.objects = []model.ResourceObject{{Type: cmType, Namespace: "demo", Name: "cfg",
+		Raw: map[string]any{"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]any{"name": "cfg", "namespace": "demo"}}}}
+	m2.applyRows()
+	mi, _ = m2.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m2 = asModel(t, mi)
+	if m2.screen != screenDetail {
+		t.Fatalf("a childless kind must open the YAML detail, screen=%d", m2.screen)
 	}
 }

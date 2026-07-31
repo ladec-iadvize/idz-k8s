@@ -32,6 +32,8 @@ type podShell struct {
 	cl  *kube.Client
 	t   model.ResourceType
 	obj model.ResourceObject
+	// container overrides the default-container pick (containers view).
+	container string
 
 	stdin          io.Reader
 	stdout, stderr io.Writer
@@ -48,6 +50,9 @@ func (s *podShell) Run() error {
 	// Resolve the target pod (the object itself, or the first ready pod
 	// behind a workload/service selector) and its default container.
 	pod, container := s.obj.Name, kube.DefaultContainer(s.obj.Raw)
+	if s.container != "" {
+		container = s.container
+	}
 	if !strings.EqualFold(s.t.Kind, "Pod") {
 		sel, ok := kube.PodSelector(s.obj.Raw)
 		if !ok {
@@ -57,7 +62,10 @@ func (s *podShell) Run() error {
 		if err != nil {
 			return fmt.Errorf("%s/%s: %w", s.t.Kind, s.obj.Name, err)
 		}
-		pod, container = name, ""
+		pod = name
+		if s.container == "" {
+			container = "" // let the API pick the resolved pod's default
+		}
 	}
 
 	// Raw mode on the real terminal (arrow keys, ctrl-c reach the remote
@@ -119,8 +127,16 @@ func (q *resizeQueue) Next() *remotecommand.TerminalSize {
 
 // openShell hands the terminal to a remote shell in the selection.
 func (m Model) openShell(obj model.ResourceObject) (tea.Model, tea.Cmd) {
-	label := m.curType.Kind + "/" + obj.Name
-	sh := &podShell{cl: m.client, t: m.curType, obj: obj}
+	return m.shellExec(obj, m.curType, "", m.curType.Kind+"/"+obj.Name)
+}
+
+// openShellIn shells into ONE named container of a pod (containers view).
+func (m Model) openShellIn(pod model.ResourceObject, container string) (tea.Model, tea.Cmd) {
+	return m.shellExec(pod, podsType, container, "Pod/"+pod.Name+" › "+container)
+}
+
+func (m Model) shellExec(obj model.ResourceObject, t model.ResourceType, container, label string) (tea.Model, tea.Cmd) {
+	sh := &podShell{cl: m.client, t: t, obj: obj, container: container}
 	return m, tea.Exec(sh, func(err error) tea.Msg {
 		if err != nil && !strings.Contains(err.Error(), "terminated with exit code") {
 			// Real failures (unreachable, no shell binary) — a non-zero exit
