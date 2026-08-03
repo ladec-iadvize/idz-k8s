@@ -708,10 +708,10 @@ func (m *Model) applyRows() {
 	rows := make([]table.Row, 0, len(objs))
 	levels := make([]model.HealthLevel, 0, len(objs))
 	kept := make([]model.ResourceObject, 0, len(objs))
+	// The filter matches EVERY visible column (owner request 2026-08-03), so
+	// the cells are rendered first and the row is kept or dropped after.
+	terms := filterTerms(q)
 	for _, o := range objs {
-		if q != "" && !strings.Contains(strings.ToLower(o.Namespace+"/"+o.Name), q) {
-			continue
-		}
 		mark := " "
 		if _, ok := m.marked[o.Namespace+"/"+o.Name]; ok {
 			mark = "●"
@@ -719,6 +719,10 @@ func (m *Model) applyRows() {
 		row := table.Row{mark}
 		for _, c := range cols {
 			row = append(row, c.cell(m, o))
+		}
+		if len(terms) > 0 &&
+			!matchesTerms(rowHaystack(o.Namespace+"/"+o.Name, row[1:]...), terms) {
+			continue
 		}
 		rows = append(rows, row)
 		levels = append(levels, m.rowHealth(o))

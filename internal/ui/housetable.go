@@ -48,6 +48,17 @@ func houseWidths[R any](m *Model, cols []houseColumn[R], rows []R, sortCol int) 
 	return fitColumns(needs, mins, m.width-len(cols))
 }
 
+// houseHaystack renders a row's cells into the lowercase text the '/' filter
+// matches against (identity + every column) — the house-table twin of
+// rowHaystack.
+func houseHaystack[R any](m *Model, cols []houseColumn[R], identity string, row R) string {
+	cells := make([]string, 0, len(cols))
+	for _, c := range cols {
+		cells = append(cells, c.cell(m, row))
+	}
+	return rowHaystack(identity, cells...)
+}
+
 // houseColumnAt maps a header click x to a column index (1-column separators).
 func houseColumnAt(widths []int, x int) (int, bool) {
 	pos := 0

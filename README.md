@@ -97,7 +97,9 @@ identically **from every view**.
 
 ## Interaction
 
-- **Keyboard**: arrows/PgUp/PgDn, `/` filter (centered input, live), `:` resource
+- **Keyboard**: arrows/PgUp/PgDn, `/` filter (centered input, live — matches
+  **every visible column**: name, namespace, status, version, image, node, IP…;
+  a space means AND, e.g. `1.30 ready`), `:` resource
   type (kubectl short names work: `:svc`, `:deploy`, `:helm`…; native types listed first, CRDs below), `n` namespace (a glob like `staging-*` scopes
   every view to all matching namespaces), `c` context, `?` contextual help, `q` quit. `s`/`S` sort
   columns, `Space` marks resources (then `f`/`v`/`z` scope to the selection),

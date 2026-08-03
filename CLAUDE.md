@@ -142,6 +142,18 @@ opening the YAML detail.
   chooser, never default. User-specific columns belong in the user's
   viewPrefs, not in code.
 
+## Filtering ('/') — owner request 2026-08-03
+
+Every filterable table matches the query against the row's IDENTITY plus
+EVERY visible column's rendered cell, via the shared helpers in
+`internal/ui/rowfilter.go` (`filterTerms`/`rowHaystack`/`matchesTerms`,
+`houseHaystack` for the generic house tables). A space in the query means
+AND. Cells are rendered BEFORE the keep/drop decision — guarded by
+`TestFilterScaleGuard` (5,000 pods, ~7 ms per pass). Always strip ANSI
+before matching (styled cells would otherwise swallow a match). The events
+timeline is the deliberate exception: it matches object identity only, so
+typing "back" finds pods named *back* instead of every BackOff event.
+
 ## Testing conventions
 
 - Fakes only: `tests/integration/harness.go` (fake dynamic/clientset —

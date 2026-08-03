@@ -106,7 +106,7 @@ func (m *Model) updateHelmColumns() {
 func (m *Model) renderHelm() {
 	now := time.Now()
 	m.updateHelmColumns()
-	q := strings.ToLower(strings.TrimSpace(m.helmQuery))
+	terms := filterTerms(m.helmQuery)
 	src := m.helmRows
 	if m.helmSortCol >= 0 {
 		src = make([]model.HelmRelease, len(m.helmRows))
@@ -121,7 +121,9 @@ func (m *Model) renderHelm() {
 	}
 	rows := make([]table.Row, 0, len(src))
 	for _, r := range src {
-		if q != "" && !strings.Contains(strings.ToLower(r.Namespace+"/"+r.Name+" "+r.Chart), q) {
+		// Every column, like every other filterable table.
+		if len(terms) > 0 && !matchesTerms(rowHaystack(r.Namespace+"/"+r.Name,
+			r.Chart, r.ChartVersion, r.AppVersion, r.Status, kube.Age(r.Updated, now)), terms) {
 			continue
 		}
 		rows = append(rows, table.Row{

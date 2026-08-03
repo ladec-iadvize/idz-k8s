@@ -368,14 +368,16 @@ func (m *Model) sizingColumnAt(x int) (int, bool) {
 	return houseColumnAt(m.sizingWidths(m.sizingColumns()), x)
 }
 
-// applySizingFilter rebuilds the visible overview rows from the master set
-// (workload name/namespace substring), then re-applies the sort.
+// applySizingFilter rebuilds the visible overview rows from the master set —
+// matching EVERY column like every other filterable table (owner request
+// 2026-08-03) — then re-applies the sort.
 func (m *Model) applySizingFilter() {
-	q := strings.ToLower(strings.TrimSpace(m.sizingQuery))
+	terms := filterTerms(m.sizingQuery)
+	cols := m.sizingColumns()
 	rows := make([]model.SizingAdvice, 0, len(m.sizingAllRows))
 	objs := make([]model.ResourceObject, 0, len(m.sizingAllObjs))
 	for i, r := range m.sizingAllRows {
-		if q != "" && !strings.Contains(strings.ToLower(r.Namespace+"/"+r.Workload), q) {
+		if len(terms) > 0 && !matchesTerms(houseHaystack(m, cols, r.Namespace+"/"+r.Workload, r), terms) {
 			continue
 		}
 		rows = append(rows, r)
