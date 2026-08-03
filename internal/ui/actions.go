@@ -184,7 +184,18 @@ func (m Model) handleScrollKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// Logs: Space pauses/resumes the follow; scrolling up pauses so the view
 	// stops being yanked to the bottom; End resumes at the tail (FR-005).
+	// 'w' folds long lines, ←/→ shift the view sideways (owner request
+	// 2026-08-03) — both re-render from the buffer, never from the View.
 	switch {
+	case hit(msg, m.keys.Wrap):
+		m.toggleLogWrap()
+		return m, nil
+	case hit(msg, m.keys.ScrollLeft):
+		m.scrollLogs(-logHStep)
+		return m, nil
+	case hit(msg, m.keys.ScrollRight):
+		m.scrollLogs(logHStep)
+		return m, nil
 	case hit(msg, m.keys.Pause):
 		m.logPaused = !m.logPaused
 		if m.logPaused {

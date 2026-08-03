@@ -96,6 +96,12 @@ Keep it that way — it is what makes everything testable with fakes.
   coordinates.
 - **Widths are counted in RUNES, never bytes** (`truncate`/`padTo`). Glyphs
   like `—`, `✓`, `●` are multi-byte; byte-counting produced phantom `…`.
+- **Log rendering goes through `renderLogs()`** (logsview.go): the buffer is
+  re-rendered on every new line, resize and toggle so the wrap ('w') and the
+  horizontal offset (←/→) always apply — never append a raw line to the
+  viewport. Slicing/folding log lines MUST use `xansi` (Wrap/TruncateLeft):
+  merged lines carry a colored pod prefix and rune slicing cuts escape
+  sequences, bleeding color across the screen.
 - **Never accumulate content in a viewport's `View()`** — it is windowed and
   padded. Use a real buffer (see `logBuf`).
 - **Typing modes must swallow keys BEFORE global shortcuts** (see the picker

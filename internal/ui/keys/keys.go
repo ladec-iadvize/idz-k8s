@@ -9,41 +9,44 @@ import "github.com/charmbracelet/bubbles/key"
 // KeyMap holds every binding. Help text is attached so the overlay stays in
 // sync with behavior.
 type KeyMap struct {
-	Up         key.Binding
-	Down       key.Binding
-	PageUp     key.Binding
-	PageDown   key.Binding
-	Home       key.Binding
-	End        key.Binding
-	Open       key.Binding
-	Back       key.Binding
-	Filter     key.Binding
-	Jump       key.Binding
-	Logs       key.Binding
-	Yaml       key.Binding
-	Describe   key.Binding
-	Owner      key.Binding
-	Palette    key.Binding // one entry point for every analysis view
-	Actions    key.Binding // one entry point for every admin action (v3)
-	Edit       key.Binding
-	SearchNext key.Binding
-	SearchPrev key.Binding
-	Mark       key.Binding
-	Sort       key.Binding
-	SortDir    key.Binding
-	Columns    key.Binding
-	Views      key.Binding
-	ResetView  key.Binding
-	Values     key.Binding
-	Reveal     key.Binding
-	Pause      key.Binding
-	WarnOnly   key.Binding
-	Mouse      key.Binding
-	Kind       key.Binding
-	Namespace  key.Binding
-	Context    key.Binding
-	Help       key.Binding
-	Quit       key.Binding
+	Up          key.Binding
+	Down        key.Binding
+	PageUp      key.Binding
+	PageDown    key.Binding
+	Home        key.Binding
+	End         key.Binding
+	Open        key.Binding
+	Back        key.Binding
+	Filter      key.Binding
+	Jump        key.Binding
+	Logs        key.Binding
+	Yaml        key.Binding
+	Describe    key.Binding
+	Owner       key.Binding
+	Palette     key.Binding // one entry point for every analysis view
+	Actions     key.Binding // one entry point for every admin action (v3)
+	Edit        key.Binding
+	SearchNext  key.Binding
+	SearchPrev  key.Binding
+	Mark        key.Binding
+	Sort        key.Binding
+	SortDir     key.Binding
+	Columns     key.Binding
+	Views       key.Binding
+	ResetView   key.Binding
+	Values      key.Binding
+	Reveal      key.Binding
+	Pause       key.Binding
+	WarnOnly    key.Binding
+	Wrap        key.Binding // logs: fold long lines
+	ScrollLeft  key.Binding // logs: shift the view sideways
+	ScrollRight key.Binding
+	Mouse       key.Binding
+	Kind        key.Binding
+	Namespace   key.Binding
+	Context     key.Binding
+	Help        key.Binding
+	Quit        key.Binding
 }
 
 // Default returns the conventional bindings (see contracts/keybindings.md).
@@ -78,12 +81,16 @@ func Default() KeyMap {
 		Reveal:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "reveal/mask secret values")),
 		Pause:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "pause/resume")),
 		WarnOnly:   key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "warnings only")),
-		Mouse:      key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mouse on/off (copy text)")),
-		Kind:       key.NewBinding(key.WithKeys("k"), key.WithHelp("k", "kind")),
-		Namespace:  key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "namespace")),
-		Context:    key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "context")),
-		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		// Logs view only (per-screen keymap): 'w' wraps there, matching k9s.
+		Wrap:        key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "wrap long lines")),
+		ScrollLeft:  key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "scroll left")),
+		ScrollRight: key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "scroll right")),
+		Mouse:       key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mouse on/off (copy text)")),
+		Kind:        key.NewBinding(key.WithKeys("k"), key.WithHelp("k", "kind")),
+		Namespace:   key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "namespace")),
+		Context:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "context")),
+		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
 }
 
@@ -102,6 +109,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Logs, k.Yaml, k.Describe, k.Owner, k.Palette, k.Actions, k.Edit},
 		{k.Sort, k.SortDir, k.Columns, k.Views, k.ResetView},
 		{k.Kind, k.Namespace, k.Context, k.Values, k.Reveal, k.Pause, k.WarnOnly},
+		{k.Wrap, k.ScrollLeft, k.ScrollRight},
 		{k.Mouse, k.Help, k.Quit},
 	}
 }
