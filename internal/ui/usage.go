@@ -124,13 +124,15 @@ func (m *Model) usageColumns() []usageColumn {
 	return cols
 }
 
-// applyUsageFilter rebuilds the visible rows (name/namespace substring),
-// then re-applies the sort.
+// applyUsageFilter rebuilds the visible rows — matching EVERY column like
+// every other filterable table (owner request 2026-08-03) — then re-applies
+// the sort.
 func (m *Model) applyUsageFilter() {
-	q := strings.ToLower(strings.TrimSpace(m.usageFilterQ))
+	terms := filterTerms(m.usageFilterQ)
+	cols := m.usageColumns()
 	rows := make([]model.UsageRow, 0, len(m.usageAllRows))
 	for _, r := range m.usageAllRows {
-		if q != "" && !strings.Contains(strings.ToLower(r.Namespace+"/"+r.Name), q) {
+		if len(terms) > 0 && !matchesTerms(houseHaystack(m, cols, r.Namespace+"/"+r.Name, r), terms) {
 			continue
 		}
 		rows = append(rows, r)

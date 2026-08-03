@@ -1615,17 +1615,17 @@ func (m Model) View() string {
 	case m.viewNaming:
 		out = overlayCenter(out, m.inputModal("save view as", m.viewName, "Enter save · Esc cancel"), m.width)
 	case m.filtering:
-		out = overlayCenter(out, m.inputModal("filter "+m.curType.Resource, m.filter.Value(), "Enter save · Esc close"), m.width)
+		out = overlayCenter(out, m.inputModal("filter "+m.curType.Resource, m.filter.Value(), "any column · space = AND · Enter save · Esc close"), m.width)
 	case m.screen == screenEvents && m.eventsFiltering:
 		out = overlayCenter(out, m.inputModal("filter events", m.eventsQuery, "Enter save · Esc cancel"), m.width)
 	case m.screen == screenHelm && m.helmFiltering:
-		out = overlayCenter(out, m.inputModal("filter helm releases", m.helmQuery, "Enter save · Esc cancel"), m.width)
+		out = overlayCenter(out, m.inputModal("filter helm releases", m.helmQuery, "any column · space = AND · Enter save · Esc close"), m.width)
 	case m.searchTyping:
 		out = overlayCenter(out, m.inputModal("search", m.searchInput, "Enter search · 'n'/'N' navigate · Esc clear"), m.width)
 	case m.screen == screenSizingList && m.sizingFiltering:
-		out = overlayCenter(out, m.inputModal("filter workloads", m.sizingQuery, "Enter save · Esc cancel"), m.width)
+		out = overlayCenter(out, m.inputModal("filter workloads", m.sizingQuery, "any column · space = AND · Enter save · Esc close"), m.width)
 	case m.screen == screenTop && m.usageTyping:
-		out = overlayCenter(out, m.inputModal("filter usage rows", m.usageFilterQ, "Enter save · Esc cancel"), m.width)
+		out = overlayCenter(out, m.inputModal("filter usage rows", m.usageFilterQ, "any column · space = AND · Enter save · Esc close"), m.width)
 	}
 	// The banner is prepended AFTER the overlays: modals center within the
 	// app area and every click keeps its banner-less coordinates (mouse Y is
