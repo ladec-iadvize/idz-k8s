@@ -140,6 +140,10 @@ type Model struct {
 	logCh     <-chan kube.LogLine
 	logBuf    []string // accumulated log lines (bounded by logBufMax)
 	logPaused bool     // paused: keep buffering but stop auto-scrolling (FR-005)
+	// Log readability (owner request 2026-08-03): fold long lines, or keep
+	// them on one line and shift the view sideways.
+	logWrap    bool
+	logHOffset int // horizontal offset in display cells; 0 = column 0
 
 	// Detail usage panel (pods) and top-consumers view.
 	detailObj            model.ResourceObject
@@ -489,6 +493,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
+		if m.screen == screenLogs {
+			m.renderLogs() // wrapping and the h-offset clamp follow the width
+		}
 		return m, nil
 
 	case typesMsg:
@@ -618,7 +625,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.logBuf) > logBufMax {
 				m.logBuf = m.logBuf[len(m.logBuf)-logBufMax:]
 			}
-			m.setContent(screenLogs, strings.Join(m.logBuf, "\n"))
+			// Re-render from the buffer so the wrap/offset mode applies to
+			// lines arriving live too (never append the raw line).
+			m.renderLogs()
 			if !m.logPaused {
 				m.logsView.GotoBottom()
 			}
@@ -2000,8 +2009,10 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenLogs:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Pause, k.End, k.Filter, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Pause, k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Up, k.Down, k.Pause, k.Wrap, k.ScrollLeft, k.ScrollRight, k.Filter, k.Back, k.Quit},
+			full: [][]key.Binding{nav,
+				{k.Pause, k.End, k.Wrap, k.ScrollLeft, k.ScrollRight},
+				{k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
 		}
 	case screenPicker:
 		return keymapView{
