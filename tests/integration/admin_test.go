@@ -224,6 +224,27 @@ func TestTriggerCronJobCreatesJob(t *testing.T) {
 	if v, _, _ := unstructured.NestedString(raw, "metadata", "annotations", "cronjob.kubernetes.io/instantiate"); v != "manual" {
 		t.Fatalf("manual annotation missing: %v", raw)
 	}
+	// The Job must claim the CronJob as owner (owner report 2026-08-03: a
+	// manual Job without an owner reference never showed under its CronJob),
+	// but WITHOUT controller=true — the CronJob controller must keep ignoring
+	// it so concurrencyPolicy and the history limits stay untouched.
+	refs, found, _ := unstructured.NestedSlice(raw, "metadata", "ownerReferences")
+	if !found || len(refs) != 1 {
+		t.Fatalf("expected exactly one ownerReference, got %v", refs)
+	}
+	ref := refs[0].(map[string]any)
+	if ref["kind"] != "CronJob" || ref["name"] != "nightly" {
+		t.Fatalf("ownerReference must point at the CronJob: %v", ref)
+	}
+	if uid, _, _ := unstructured.NestedString(getRaw(t, client, CronJobsType, "demo", "nightly"), "metadata", "uid"); uid != "" && ref["uid"] != uid {
+		t.Fatalf("ownerReference uid=%v, want the CronJob's %q", ref["uid"], uid)
+	}
+	if ctrl, _ := ref["controller"].(bool); ctrl {
+		t.Fatal("controller must be false — the CronJob controller must not adopt a manual Job")
+	}
+	if blocking, _ := ref["blockOwnerDeletion"].(bool); blocking {
+		t.Fatal("blockOwnerDeletion must be false")
+	}
 	cs, _, _ := unstructured.NestedSlice(raw, "spec", "template", "spec", "containers")
 	if len(cs) != 1 || cs[0].(map[string]any)["image"] != "batch:1" {
 		t.Fatalf("job template not copied: %v", cs)

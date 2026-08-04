@@ -83,6 +83,11 @@ func (m Model) openActions() (tea.Model, tea.Cmd) {
 func (m *Model) listActions() ([]actionEntry, string) {
 	obj, ok := m.selectedObject()
 	if !ok {
+		// An empty child list still has a parent to act on (owner report
+		// 2026-08-03: 'a' in an empty CronJob → Jobs offered nothing).
+		if parents := m.parentActions(); len(parents) > 0 {
+			return parents, m.drillFor
+		}
 		return nil, ""
 	}
 	kind := m.curType.Kind
@@ -170,7 +175,71 @@ func (m *Model) listActions() ([]actionEntry, string) {
 				}))
 		}},
 	)
+	// Inside a drilled list, the level's parent is actionable too.
+	out = append(out, m.parentActions()...)
 	return out, label
+}
+
+// parentActions offers the actions of the object the current drill level was
+// opened FROM — triggering the CronJob whose Jobs you are looking at, or
+// restarting the Deployment whose Pods you are looking at. Entries are
+// suffixed "-parent" so they never shadow the selection's own actions.
+func (m *Model) parentActions() []actionEntry {
+	parent, pt := m.drillParent, m.drillParentType
+	if !m.drilling() || parent.Name == "" || pt.Kind == "" {
+		return nil
+	}
+	label := pt.Kind + "/" + parent.Name
+	var out []actionEntry
+	switch {
+	case kindIs(pt.Kind, "CronJob"):
+		out = append(out, actionEntry{"trigger-parent", "run " + label + " now (creates a Job)",
+			func(m *Model) (tea.Model, tea.Cmd) {
+				cl := m.client
+				return m.requestConfirm("trigger "+label+" now (creates a Job from its template)",
+					func() tea.Msg {
+						ctx, cancel := context.WithTimeout(context.Background(), adminTimeout)
+						defer cancel()
+						jobName, err := cl.TriggerCronJob(ctx, pt, parent.Namespace, parent.Name, time.Now())
+						if err != nil {
+							return adminMsg{summary: label + " triggered", err: err}
+						}
+						return adminMsg{summary: label + " triggered — Job/" + jobName}
+					})
+			}})
+		suspended, _, _ := unstructured.NestedBool(parent.Raw, "spec", "suspend")
+		id, verb := "suspend-parent", "suspend scheduling of "+label
+		if suspended {
+			id, verb = "resume-parent", "resume scheduling of "+label
+		}
+		out = append(out, actionEntry{id, verb, func(m *Model) (tea.Model, tea.Cmd) {
+			return m.requestConfirm(verb,
+				m.adminCmd(label+" updated", func(ctx context.Context, cl *kube.Client) error {
+					return cl.SetSuspend(ctx, pt, parent.Namespace, parent.Name, !suspended)
+				}))
+		}})
+	case kindIs(pt.Kind, "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet"):
+		out = append(out, actionEntry{"restart-parent", "rolling restart of " + label,
+			func(m *Model) (tea.Model, tea.Cmd) {
+				return m.requestConfirm("rolling restart of "+label,
+					m.adminCmd(label+" restarted", func(ctx context.Context, cl *kube.Client) error {
+						return cl.RolloutRestart(ctx, pt, parent.Namespace, parent.Name, time.Now())
+					}))
+			}})
+		if kindIs(pt.Kind, "Deployment", "StatefulSet", "ReplicaSet") {
+			out = append(out, actionEntry{"scale-parent", "set replicas of " + label,
+				func(m *Model) (tea.Model, tea.Cmd) {
+					// The prompt scales the PARENT, not the selected child.
+					saved, savedType := m.curType, m.drillParentType
+					m.curType = savedType
+					mi, cmd := m.openScalePrompt(parent)
+					mm := mi.(Model)
+					mm.curType = saved
+					return mm, cmd
+				}})
+		}
+	}
+	return out
 }
 
 // markedActions builds the bulk actions applying to every marked resource

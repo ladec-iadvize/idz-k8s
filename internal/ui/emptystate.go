@@ -18,7 +18,7 @@ func (m *Model) emptyDrillNote() string {
 			// The normal case, not a failure: kubectl shows the same nothing.
 			return "no " + child + " right now — a CronJob keeps only its recent " + child +
 				" (its history limits), so between two runs there are none · " +
-				"'a' → trigger runs one now · Esc goes back"
+				"'a' → trigger-parent runs one now · Esc goes back"
 		}
 		return "no " + child + " owned by " + m.drillFor + " right now · Esc goes back"
 	case m.drillSelector != "":
