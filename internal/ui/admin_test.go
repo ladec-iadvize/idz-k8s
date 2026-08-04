@@ -5,8 +5,11 @@ package ui
 // value prompt) — Esc always cancels, typing-mode keys never leak.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -436,5 +439,119 @@ func TestParentActionsInDrilledList(t *testing.T) {
 	}
 	if strings.Index(opts2, "delete") > strings.Index(opts2, "trigger-parent") {
 		t.Fatalf("the selection's own actions must come first:\n%s", opts2)
+	}
+}
+
+// TestEditorCommandForcesWaitOnGUIEditors (owner-report class 2026-08-04):
+// a GUI editor that does not block hands the file back untouched, so the
+// wait flag is added when the operator did not pass one.
+func TestEditorCommandForcesWaitOnGUIEditors(t *testing.T) {
+	cases := []struct {
+		env      string
+		wantArgs []string
+		wantGUI  bool
+	}{
+		{"vim", []string{"/tmp/x.yaml"}, false},
+		{"code", []string{"--wait", "/tmp/x.yaml"}, true},
+		{"code --wait", []string{"--wait", "/tmp/x.yaml"}, true},         // not doubled
+		{"code -w", []string{"-w", "/tmp/x.yaml"}, true},                 // honored
+		{"/usr/local/bin/code", []string{"--wait", "/tmp/x.yaml"}, true}, // by base name
+		{"open", []string{"-W", "/tmp/x.yaml"}, true},
+		{"nvim -u NONE", []string{"-u", "NONE", "/tmp/x.yaml"}, false},
+	}
+	for _, c := range cases {
+		t.Setenv("KUBE_EDITOR", "")
+		t.Setenv("EDITOR", c.env)
+		cmd, gui := editorCommand("/tmp/x.yaml")
+		if gui != c.wantGUI {
+			t.Fatalf("EDITOR=%q gui=%v, want %v", c.env, gui, c.wantGUI)
+		}
+		if got := cmd.Args[1:]; !slicesEqual(got, c.wantArgs) {
+			t.Fatalf("EDITOR=%q args=%v, want %v", c.env, got, c.wantArgs)
+		}
+	}
+	// KUBE_EDITOR wins over EDITOR (kubectl's order).
+	t.Setenv("KUBE_EDITOR", "vim")
+	t.Setenv("EDITOR", "code")
+	if cmd, gui := editorCommand("/tmp/x.yaml"); gui || filepath.Base(cmd.Path) != "vim" {
+		t.Fatalf("KUBE_EDITOR must win, got %q gui=%v", cmd.Path, gui)
+	}
+}
+
+func slicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestApplyEditOutcomes: each ending is reported precisely — applied (with
+// the touched fields), a real no-op, and the "editor did not wait" case whose
+// file is KEPT so a late save is not lost.
+func TestApplyEditOutcomes(t *testing.T) {
+	m := adminModel(t)
+	original, err := m.client.ObjectYAML(t.Context(), deploymentsType, "demo", "back")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(content string) string {
+		t.Helper()
+		f := filepath.Join(t.TempDir(), "edit.yaml")
+		if err := os.WriteFile(f, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	base := editorClosedMsg{original: original, t: deploymentsType, ns: "demo", name: "back",
+		openedAt: time.Now().Add(-time.Minute)} // a human-length session
+
+	// 1. A real edit: applied, and the summary names the field.
+	msg := base
+	msg.path = write(strings.Replace(original, "replicas: 3", "replicas: 6", 1))
+	out, ok := m.applyEdit(msg)().(adminMsg)
+	if !ok || out.err != nil {
+		t.Fatalf("apply result: %+v", out)
+	}
+	if !strings.Contains(out.summary, "updated") || !strings.Contains(out.summary, "spec.replicas") {
+		t.Fatalf("summary must name what changed, got %q", out.summary)
+	}
+	obj, err := m.client.GetObject(t.Context(), deploymentsType, "demo", "back")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _, _ := unstructured.NestedInt64(obj.Raw, "spec", "replicas"); r != 6 {
+		t.Fatalf("replicas=%d, want 6", r)
+	}
+
+	// 2. Saved with no change after a real session: an honest no-op, file gone.
+	msg = base
+	msg.path = write(original)
+	out = m.applyEdit(msg)().(adminMsg)
+	if out.err != nil || !strings.Contains(out.summary, "unchanged") {
+		t.Fatalf("no-op result: %+v", out)
+	}
+	if _, err := os.Stat(msg.path); !os.IsNotExist(err) {
+		t.Fatal("a genuine no-op must clean its temp file up")
+	}
+
+	// 3. The editor returned instantly with no change: that is a
+	// misconfiguration, not a no-op — explain it and KEEP the file.
+	msg = base
+	msg.openedAt = time.Now()
+	msg.path = write(original)
+	out = m.applyEdit(msg)().(adminMsg)
+	if out.err == nil || !strings.Contains(out.err.Error(), "KUBE_EDITOR") {
+		t.Fatalf("a non-blocking editor must be called out, got %+v", out)
+	}
+	if !strings.Contains(out.err.Error(), msg.path) {
+		t.Fatalf("the kept file must be named: %v", out.err)
+	}
+	if _, err := os.Stat(msg.path); err != nil {
+		t.Fatalf("the file must be kept so a late save is not lost: %v", err)
 	}
 }

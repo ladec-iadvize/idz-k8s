@@ -142,6 +142,21 @@ opening the YAML detail.
   chooser, never default. User-specific columns belong in the user's
   viewPrefs, not in code.
 
+## Edit flow ('e') — owner report 2026-08-04
+
+The edit is applied as a MERGE PATCH of original→edited
+(`kube.ApplyEditedYAML`), never a whole-object Update: an Update carries the
+resourceVersion captured when the editor opened, so any churn during the
+session 409s, and it clobbers concurrent changes to other fields. Known GUI
+editors get their wait flag forced (`code` → `code --wait`) because a
+non-blocking editor hands the file back untouched; when an editor returns in
+under 1.5 s with no change, say so and KEEP the temp file instead of
+reporting "unchanged". `editorProcess` prints what idz-k8s is waiting for
+before suspending the TUI (a frozen frame with no explanation is what made
+"I saved and nothing happened" look like a bug — VSCode's
+`files.autoSave: onFocusChange` writes on focus loss, so the apply can also
+land without an explicit save).
+
 ## Drilled levels act on their parent (owner report 2026-08-03)
 
 Inside a drilled list, `'a'` offers the SELECTION's actions AND the parent's

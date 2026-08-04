@@ -807,8 +807,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Hand the terminal to the editor; Bubble Tea restores the screen
 		// when the process exits.
-		closed := editorClosedMsg{path: msg.path, original: msg.original, t: msg.t, ns: msg.ns, name: msg.name}
-		return m, tea.ExecProcess(editorCommand(msg.path), func(err error) tea.Msg {
+		label := msg.t.Kind + "/" + msg.name
+		cmd, gui := editorCommand(msg.path)
+		closed := editorClosedMsg{path: msg.path, original: msg.original,
+			t: msg.t, ns: msg.ns, name: msg.name, openedAt: time.Now()}
+		return m, tea.Exec(&editorProcess{cmd: cmd, label: label, gui: gui}, func(err error) tea.Msg {
 			closed.err = err
 			return closed
 		})

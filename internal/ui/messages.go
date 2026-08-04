@@ -155,12 +155,15 @@ type editOpenMsg struct {
 	err      error
 }
 
-// editorClosedMsg: $EDITOR exited; apply the file if it changed.
+// editorClosedMsg: $EDITOR exited; apply the file if it changed. openedAt
+// dates the hand-over, so an editor that returned instantly (a GUI one
+// without its wait flag) is told apart from a real "nothing changed".
 type editorClosedMsg struct {
 	path     string
 	original string
 	t        model.ResourceType
 	ns, name string
+	openedAt time.Time
 	err      error
 }
 

@@ -8,8 +8,10 @@ package ui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -664,9 +666,24 @@ func (m *Model) startEdit() tea.Cmd {
 	}
 }
 
+// guiEditorWait maps GUI editors to the flag that makes them BLOCK until the
+// file is closed. Without it they hand control straight back and the edit is
+// read before the operator has typed anything (owner-report class 2026-08-04).
+var guiEditorWait = map[string]string{
+	"code": "--wait", "code-insiders": "--wait", "codium": "--wait",
+	"subl": "--wait", "sublime_text": "--wait", "atom": "--wait",
+	"mate": "--wait", "gedit": "--wait", "zed": "--wait",
+	"idea": "--wait", "webstorm": "--wait", "goland": "--wait",
+	"open": "-W", // macOS: open -W <file>
+}
+
+// waitFlags are the flags that already make an editor block.
+var waitFlags = map[string]bool{"-w": true, "--wait": true, "-W": true}
+
 // editorCommand builds the editor invocation: $KUBE_EDITOR, then $EDITOR,
-// then vi — kubectl edit's resolution order.
-func editorCommand(path string) *exec.Cmd {
+// then vi — kubectl edit's resolution order. A known GUI editor gets its
+// wait flag added when the operator did not pass one.
+func editorCommand(path string) (cmd *exec.Cmd, gui bool) {
 	ed := os.Getenv("KUBE_EDITOR")
 	if ed == "" {
 		ed = os.Getenv("EDITOR")
@@ -675,29 +692,92 @@ func editorCommand(path string) *exec.Cmd {
 		ed = "vi"
 	}
 	parts := strings.Fields(ed)
+	flag, isGUI := guiEditorWait[filepath.Base(parts[0])]
+	if isGUI {
+		waits := false
+		for _, p := range parts[1:] {
+			if waitFlags[p] {
+				waits = true
+			}
+		}
+		if !waits {
+			parts = append(parts, flag)
+		}
+	}
 	args := append(parts[1:], path) //nolint:gocritic // parts[1:] is never reused
-	return exec.Command(parts[0], args...)
+	return exec.Command(parts[0], args...), isGUI
 }
 
-// applyEdit reads the edited file back and updates the object — unless the
-// content is unchanged, in which case nothing is sent to the cluster.
+// editorProcess hands the terminal to the editor. It prints what idz-k8s is
+// waiting for FIRST: with a GUI editor the TUI is suspended on a frozen
+// frame, and "I saved but nothing happened" is the result of not knowing the
+// apply waits for the file to be CLOSED (owner report 2026-08-04).
+type editorProcess struct {
+	cmd   *exec.Cmd
+	label string
+	gui   bool
+
+	stdin          io.Reader
+	stdout, stderr io.Writer
+}
+
+func (e *editorProcess) SetStdin(r io.Reader)  { e.stdin = r }
+func (e *editorProcess) SetStdout(w io.Writer) { e.stdout = w }
+func (e *editorProcess) SetStderr(w io.Writer) { e.stderr = w }
+
+func (e *editorProcess) Run() error {
+	_, _ = fmt.Fprintf(e.stdout, "⇢ editing %s\r\n", e.label)
+	if e.gui {
+		_, _ = fmt.Fprintf(e.stdout,
+			"  SAVE, then CLOSE the tab/window — idz-k8s applies the edit when your editor releases the file.\r\n"+
+				"  (closing without saving changes nothing · beware VSCode's autoSave: it writes when the window loses focus)\r\n")
+	}
+	e.cmd.Stdin, e.cmd.Stdout, e.cmd.Stderr = e.stdin, e.stdout, e.stderr
+	return e.cmd.Run()
+}
+
+// editorTooFast: an editor that returns this quickly did not wait for the
+// operator — the file it hands back is still the untouched original.
+const editorTooFast = 1500 * time.Millisecond
+
+// applyEdit reads the edited file back and applies WHAT CHANGED as a merge
+// patch (never a whole-object Update — see kube.ApplyEditedYAML), naming the
+// touched fields so the operator sees what landed.
 func (m Model) applyEdit(msg editorClosedMsg) tea.Cmd {
 	cl := m.client
 	return func() tea.Msg {
-		defer func() { _ = os.Remove(msg.path) }()
 		label := msg.t.Kind + "/" + msg.name
 		data, err := os.ReadFile(msg.path)
 		if err != nil {
+			_ = os.Remove(msg.path)
 			return adminMsg{summary: label, err: err}
 		}
 		if strings.TrimSpace(string(data)) == strings.TrimSpace(msg.original) {
+			// A GUI editor that does not block returns before anything was
+			// typed. Keep the file so a late save is not lost, and say what
+			// to fix instead of a misleading "unchanged".
+			if time.Since(msg.openedAt) < editorTooFast {
+				return adminMsg{summary: label, err: fmt.Errorf(
+					"your editor returned in %s without a change — if it is a GUI editor it must block: export KUBE_EDITOR='code --wait'. Your copy is kept at %s",
+					time.Since(msg.openedAt).Round(time.Millisecond), msg.path)}
+			}
+			_ = os.Remove(msg.path)
 			return adminMsg{summary: label + " unchanged — nothing applied"}
 		}
+		defer func() { _ = os.Remove(msg.path) }()
 		ctx, cancel := context.WithTimeout(context.Background(), adminTimeout)
 		defer cancel()
-		if err := cl.ApplyYAML(ctx, msg.t, data); err != nil {
+		changed, err := cl.ApplyEditedYAML(ctx, msg.t, []byte(msg.original), data)
+		if err != nil {
 			return adminMsg{summary: label, err: err}
 		}
-		return adminMsg{summary: label + " updated"}
+		if !changed {
+			return adminMsg{summary: label + " unchanged — nothing applied"}
+		}
+		fields := kube.MergePatchFields([]byte(msg.original), data)
+		if len(fields) == 0 {
+			return adminMsg{summary: label + " updated"}
+		}
+		return adminMsg{summary: label + " updated — " + truncate(strings.Join(fields, ", "), 90)}
 	}
 }
