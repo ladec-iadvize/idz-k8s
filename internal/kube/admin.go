@@ -141,6 +141,21 @@ func (c *Client) TriggerCronJob(ctx context.Context, t model.ResourceType, names
 			// The annotation kubectl sets for manual runs — makes the origin
 			// auditable and keeps controllers from double-counting it.
 			"annotations": map[string]any{"cronjob.kubernetes.io/instantiate": "manual"},
+			// Owner reference with controller=false (owner report 2026-08-03):
+			// kubectl leaves manual Jobs ownerless, so they never showed up
+			// under their CronJob in the drill view. Claiming ownership WITHOUT
+			// the controller flag is the sweet spot: the Job is listed under
+			// its CronJob and garbage-collected with it, while the CronJob
+			// controller — which only counts jobs it CONTROLS — still ignores
+			// it, so concurrencyPolicy and the history limits are untouched.
+			"ownerReferences": []any{map[string]any{
+				"apiVersion":         cj.GetAPIVersion(),
+				"kind":               cj.GetKind(),
+				"name":               cj.GetName(),
+				"uid":                string(cj.GetUID()),
+				"controller":         false,
+				"blockOwnerDeletion": false,
+			}},
 		},
 		"spec": tplSpec,
 	}}

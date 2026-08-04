@@ -142,6 +142,21 @@ opening the YAML detail.
   chooser, never default. User-specific columns belong in the user's
   viewPrefs, not in code.
 
+## Drilled levels act on their parent (owner report 2026-08-03)
+
+Inside a drilled list, `'a'` offers the SELECTION's actions AND the parent's
+(`parentActions()` in admin.go, ids suffixed `-parent`) — triggering the
+CronJob whose Jobs you are looking at, restarting the Deployment whose Pods
+you are looking at. It works on an EMPTY child level too (that is where it
+matters most). The drill frame carries the parent object + its type; any new
+`drillChain` entry gets parent actions for free once its kind is listed in
+`parentActions`.
+
+A manually triggered Job carries an ownerReference to its CronJob with
+`controller: false` — without it the Job never appeared under its CronJob
+(kubectl leaves manual Jobs ownerless), and WITH `controller: true` the
+CronJob controller would adopt it and skew concurrencyPolicy/history limits.
+
 ## Empty states must explain themselves (owner report 2026-08-03)
 
 A blank table reads as a broken tool. `emptyListNote()`

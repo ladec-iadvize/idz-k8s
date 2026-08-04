@@ -65,6 +65,12 @@ type drillFrame struct {
 	namespace string // query scope of the drill (not the user's ns filter)
 	nsScope   string // the user's namespace filter (byNamespace changes it)
 	filter    string // the '/' filter of the level we are leaving
+	// parent is the object this level was opened FROM (its CronJob, its
+	// Deployment…) with its type — the actions palette offers the parent's
+	// own actions from inside the child list (owner report 2026-08-03: 'a'
+	// in CronJob → Jobs could not trigger the CronJob).
+	parent     model.ResourceObject
+	parentType model.ResourceType
 }
 
 // drilling reports whether the list is showing a drilled level.
@@ -103,8 +109,10 @@ func (m *Model) drillInto() (tea.Cmd, bool) {
 		filter: m.filter.Value(),
 	}
 	label := m.curType.Kind + "/" + obj.Name
-	// A fresh level starts unfiltered and unscoped by the previous one.
-	next := drillFrame{typ: child, label: label, namespace: obj.Namespace}
+	// A fresh level starts unfiltered and unscoped by the previous one, and
+	// remembers the object it was opened from as its parent.
+	next := drillFrame{typ: child, label: label, namespace: obj.Namespace,
+		parent: obj, parentType: m.curType}
 
 	switch step.by {
 	case bySelector:
@@ -156,6 +164,7 @@ func (m *Model) applyDrillFrame(f drillFrame) {
 	m.drillSelector, m.drillNode = f.selector, f.node
 	m.drillOwnerUID, m.drillNames = f.ownerUID, f.names
 	m.drillFor, m.drillNamespace = f.label, f.namespace
+	m.drillParent, m.drillParentType = f.parent, f.parentType
 }
 
 // exitDrill pops one level (Esc). The list returns to the parent exactly as
@@ -181,5 +190,6 @@ func (m *Model) exitDrill() tea.Cmd {
 func (m *Model) resetDrill() {
 	m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 	m.drillOwnerUID, m.drillNames = "", nil
+	m.drillParent, m.drillParentType = model.ResourceObject{}, model.ResourceType{}
 	m.drillStack = nil
 }

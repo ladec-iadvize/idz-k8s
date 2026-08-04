@@ -344,3 +344,97 @@ func TestShellAndTriggerInPalette(t *testing.T) {
 		t.Fatalf("trigger must arm the confirmation, got %q", m.confirmTitle)
 	}
 }
+
+// cronDrilledModel returns a model showing the (empty) Jobs level drilled
+// from a CronJob — the exact state the owner reported on 2026-08-03.
+func cronDrilledModel(t *testing.T, jobs ...model.ResourceObject) Model {
+	t.Helper()
+	cronType := model.ResourceType{Group: "batch", Version: "v1", Kind: "CronJob", Resource: "cronjobs", Namespaced: true}
+	jobType := model.ResourceType{Group: "batch", Version: "v1", Kind: "Job", Resource: "jobs", Namespaced: true}
+	cronRaw := map[string]any{
+		"apiVersion": "batch/v1", "kind": "CronJob",
+		"metadata": map[string]any{"name": "nightly", "namespace": "demo", "uid": "cron-uid-1"},
+		"spec": map[string]any{"schedule": "0 * * * *",
+			"jobTemplate": map[string]any{"spec": map[string]any{}}},
+	}
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{
+			{Group: "batch", Version: "v1", Resource: "cronjobs"}: "CronJobList",
+			{Group: "batch", Version: "v1", Resource: "jobs"}:     "JobList",
+		}, &unstructured.Unstructured{Object: cronRaw})
+	m := New(&kube.Client{Namespace: "demo", Dynamic: dyn}, config.Defaults(), "",
+		WithInitialType(cronType))
+	m.types = []model.ResourceType{cronType, jobType}
+	m.width, m.height = 140, 30
+	m.layout()
+	m.objects = []model.ResourceObject{{Type: cronType, Namespace: "demo", Name: "nightly", Raw: cronRaw}}
+	m.applyRows()
+	// Drill into the Jobs level.
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	m.objects = jobs
+	m.applyRows()
+	return m
+}
+
+// TestParentActionsInDrilledList (owner report 2026-08-03: 'a' in the
+// CronJob → Jobs view triggered nothing): the palette offers the PARENT's
+// actions there, even when the child list is empty, and triggering works.
+func TestParentActionsInDrilledList(t *testing.T) {
+	m := cronDrilledModel(t) // empty Jobs level
+	if len(m.rowObjs) != 0 || m.drillParent.Name != "nightly" {
+		t.Fatalf("precondition: empty jobs level under the cronjob, parent=%q", m.drillParent.Name)
+	}
+	m = pressRune(t, m, 'a')
+	opts := pickerOptions(m)
+	for _, want := range []string{"trigger-parent", "suspend-parent"} {
+		if !strings.Contains(opts, want) {
+			t.Fatalf("an empty drilled list must offer the parent's actions, missing %q:\n%s", want, opts)
+		}
+	}
+
+	// Selecting trigger-parent confirms, then creates the Job.
+	m = selectAction(t, m, "trigger-parent")
+	if !m.confirming || !strings.Contains(m.confirmTitle, "CronJob/nightly") {
+		t.Fatalf("trigger-parent must confirm on the parent, got %q", m.confirmTitle)
+	}
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if cmd == nil {
+		t.Fatal("Enter must run the trigger")
+	}
+	msg, ok := cmd().(adminMsg)
+	if !ok || msg.err != nil {
+		t.Fatalf("trigger result: %+v", msg)
+	}
+	if !strings.Contains(msg.summary, "Job/nightly-manual-") {
+		t.Fatalf("summary must name the created job, got %q", msg.summary)
+	}
+
+	// The created Job carries the owner reference, so the SAME drilled level
+	// lists it — that was the reported "delay" (it never appeared at all).
+	jobType := model.ResourceType{Group: "batch", Version: "v1", Kind: "Job", Resource: "jobs", Namespaced: true}
+	created, err := m.client.List(t.Context(), jobType, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(created) != 1 {
+		t.Fatalf("expected the triggered job, got %+v", created)
+	}
+	if !kube.OwnedByUID(created[0].Raw, "cron-uid-1") {
+		t.Fatalf("the triggered job must be owned by the CronJob: %+v", created[0].Raw["metadata"])
+	}
+
+	// With a child selected, the parent's actions come AFTER the child's own.
+	m2 := cronDrilledModel(t, model.ResourceObject{Type: jobType, Namespace: "demo", Name: "nightly-123",
+		Raw: map[string]any{"metadata": map[string]any{"name": "nightly-123", "namespace": "demo"}}})
+	m2 = pressRune(t, m2, 'a')
+	opts2 := pickerOptions(m2)
+	if !strings.Contains(opts2, "trigger-parent") || !strings.Contains(opts2, "delete") {
+		t.Fatalf("both the child's and the parent's actions must show:\n%s", opts2)
+	}
+	if strings.Index(opts2, "delete") > strings.Index(opts2, "trigger-parent") {
+		t.Fatalf("the selection's own actions must come first:\n%s", opts2)
+	}
+}

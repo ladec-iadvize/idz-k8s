@@ -181,6 +181,10 @@ type Model struct {
 	drillNamespace string          // workload namespace (query scope only — the user's namespace filter is untouched)
 	drillOwnerUID  string          // ownerReferences UID filter (CronJob → Jobs)
 	drillNames     map[string]bool // name allow-list (Ingress → Services)
+	// The object the current level was opened from (its CronJob…) — the
+	// actions palette offers ITS actions from inside the child list.
+	drillParent     model.ResourceObject
+	drillParentType model.ResourceType
 	// drillStack holds the levels above the current one — Esc pops exactly
 	// one (Deployment → Pods → Containers, CronJob → Jobs → Pods…).
 	drillStack []drillFrame
