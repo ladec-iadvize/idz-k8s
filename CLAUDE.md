@@ -142,6 +142,17 @@ opening the YAML detail.
   chooser, never default. User-specific columns belong in the user's
   viewPrefs, not in code.
 
+## Empty states must explain themselves (owner report 2026-08-03)
+
+A blank table reads as a broken tool. `emptyListNote()`
+(internal/ui/emptystate.go) is rendered in the list body whenever there are
+no rows and says WHY: an unmatched filter, an empty scope, a lost
+connection, or — per drill mode — a legitimately empty child level. Only
+selector/name drills (workload/Service → Pods, Ingress → Services) may say
+"broken link?"; a CronJob between two runs has no Job by design (history
+limits), so its note explains that and points at 'a' → trigger. Keep the
+status-line half SHORT (shortDrillWarning) so it never truncates.
+
 ## Filtering ('/') — owner request 2026-08-03
 
 Every filterable table matches the query against the row's IDENTITY plus

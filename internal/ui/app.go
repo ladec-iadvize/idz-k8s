@@ -571,7 +571,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Broken-link visibility (US9): a workload/service whose selector
 			// matches no pods is the classic "why is nothing routing" case.
 			if m.drilling() && len(m.objects) == 0 {
-				m.statusMsg = "⚠ " + m.drillFor + ": no " + m.curType.Resource + " (broken link?) — Esc to go back"
+				// The body carries the WHY (emptyDrillNote); the status line
+				// stays short so it never truncates.
+				m.statusMsg = m.shortDrillWarning()
 			}
 		}
 		return m, nil

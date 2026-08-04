@@ -784,8 +784,22 @@ func (m Model) listView() string {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
+	written := to - from
+	// Empty state: SAY why nothing shows. A blank body plus a warning reads
+	// as a broken view (owner report 2026-08-03).
+	if m.win.Len() == 0 && m.win.height > 0 {
+		note := m.emptyListNote()
+		for _, l := range wrapTo(note, m.width-2) {
+			if written >= m.win.height {
+				break
+			}
+			b.WriteString(m.theme.Faint.Render(padTo(" "+l, m.width)))
+			b.WriteString("\n")
+			written++
+		}
+	}
 	// Pad to full body height so footer geometry stays fixed.
-	for i := to - from; i < m.win.height; i++ {
+	for i := written; i < m.win.height; i++ {
 		b.WriteString("\n")
 	}
 	return strings.TrimSuffix(b.String(), "\n")
