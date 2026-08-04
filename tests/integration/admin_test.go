@@ -150,22 +150,73 @@ func TestObjectYAMLAndApplyRoundTrip(t *testing.T) {
 	if edited == doc {
 		t.Fatalf("fixture yaml did not contain replicas: 3:\n%s", doc)
 	}
-	if err := client.ApplyYAML(ctx, DeploymentsType, []byte(edited)); err != nil {
+	changed, err := client.ApplyEditedYAML(ctx, DeploymentsType, []byte(doc), []byte(edited))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("a real edit must report itself as changed")
 	}
 	raw := getRaw(t, client, DeploymentsType, "demo", "back")
 	if r, _, _ := unstructured.NestedInt64(raw, "spec", "replicas"); r != 7 {
 		t.Fatalf("replicas=%d, want 7", r)
+	}
+	// Only the edited field is sent: the patch names spec.replicas and
+	// nothing else (owner report 2026-08-04 — a whole-object Update carried a
+	// stale resourceVersion and 409'd, or clobbered concurrent changes).
+	fields := kube.MergePatchFields([]byte(doc), []byte(edited))
+	if len(fields) != 1 || fields[0] != "spec.replicas" {
+		t.Fatalf("patched fields=%v, want [spec.replicas]", fields)
+	}
+	// An identical document sends nothing at all.
+	changed, err = client.ApplyEditedYAML(ctx, DeploymentsType, []byte(doc), []byte(doc))
+	if err != nil || changed {
+		t.Fatalf("an unchanged edit must be a no-op: changed=%v err=%v", changed, err)
+	}
+}
+
+// TestApplyEditedYAMLIgnoresStaleResourceVersion (owner report 2026-08-04):
+// the edit is applied as a patch of what changed, so churn on OTHER fields
+// while the editor was open neither conflicts nor gets clobbered.
+func TestApplyEditedYAMLIgnoresStaleResourceVersion(t *testing.T) {
+	client, _ := NewFakeClient("demo", NewDeployment("demo", "back", 3))
+	defer client.Close()
+	ctx := context.Background()
+	doc, err := client.ObjectYAML(ctx, DeploymentsType, "demo", "back")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Meanwhile the cluster moves: something else scales the deployment and
+	// its status changes (a new resourceVersion in real life).
+	if err := client.ScaleWorkload(ctx, DeploymentsType, "demo", "back", 9); err != nil {
+		t.Fatal(err)
+	}
+	// The operator's edit only touched an annotation.
+	edited := strings.Replace(doc, "  name: back\n", "  name: back\n  annotations:\n    edited-by: idz-k8s\n", 1)
+	if edited == doc {
+		t.Fatalf("fixture rewrite failed:\n%s", doc)
+	}
+	if _, err := client.ApplyEditedYAML(ctx, DeploymentsType, []byte(doc), []byte(edited)); err != nil {
+		t.Fatalf("the edit must apply despite the concurrent change: %v", err)
+	}
+	raw := getRaw(t, client, DeploymentsType, "demo", "back")
+	if v, _, _ := unstructured.NestedString(raw, "metadata", "annotations", "edited-by"); v != "idz-k8s" {
+		t.Fatalf("the edited annotation is missing: %v", raw["metadata"])
+	}
+	// The concurrent scale survived — a whole-object Update would have
+	// reverted it to the 3 replicas the editor had opened with.
+	if r, _, _ := unstructured.NestedInt64(raw, "spec", "replicas"); r != 9 {
+		t.Fatalf("replicas=%d — the concurrent change was clobbered", r)
 	}
 }
 
 func TestApplyYAMLRejectsGarbage(t *testing.T) {
 	client, _ := NewFakeClient("demo")
 	defer client.Close()
-	if err := client.ApplyYAML(context.Background(), DeploymentsType, []byte(":\n  - not yaml")); err == nil {
+	if _, err := client.ApplyEditedYAML(context.Background(), DeploymentsType, []byte("{}"), []byte(":\n  - not yaml")); err == nil {
 		t.Fatal("garbage YAML must not be applied")
 	}
-	if err := client.ApplyYAML(context.Background(), DeploymentsType, []byte("apiVersion: apps/v1\nkind: Deployment\n")); err == nil {
+	if _, err := client.ApplyEditedYAML(context.Background(), DeploymentsType, []byte("{}"), []byte("apiVersion: apps/v1\nkind: Deployment\n")); err == nil {
 		t.Fatal("a document without metadata.name must not be applied")
 	}
 }

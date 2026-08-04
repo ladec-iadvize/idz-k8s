@@ -76,7 +76,7 @@ when you see it 💚).
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod; in the containers view: that container's logs |
 | in logs: `w` / `←` `→` | `w` folds long lines onto the next line (wrap); `←`/`→` shift the view sideways 20 columns at a time when wrapping is off. `Space` pauses the follow, `End` resumes at the tail |
 | `a` | **Actions palette** (admin): the actions the selection supports — scale, rolling restart, port-forward, **shell into the pod** (bash, sh fallback), cordon/uncordon, suspend/resume, **trigger a CronJob now**, edit, delete; Helm releases get rollback/uninstall. Every mutation asks for confirmation (`Enter` confirm · `Esc` cancel) |
-| `e` | Edit the selection's YAML in `$KUBE_EDITOR`/`$EDITOR` — applied on save (unchanged file = nothing sent) |
+| `e` | Edit the selection's YAML in `$KUBE_EDITOR`/`$EDITOR`. **Save, then close the file/tab** — the edit is applied when the editor releases it, as a patch of what you changed (concurrent changes to other fields survive). GUI editors get `--wait` added automatically; an unchanged file sends nothing |
 | `> topology` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
 | `> events` | Events **timeline**: a time axis per object, warnings highlighted (`w` = warnings only, `k` = kind filter); the selected event's message shows in full below the list, `Enter` opens the referenced object |
 | `> failures` | Failure diagnostics **grouped by failure type** (CrashLoopBackOff, OOMKilled, evictions, restarts, unschedulable — with the scheduler's reason), error groups first; `↑`/`↓` select, `Enter` opens the pod, `w` errors only |

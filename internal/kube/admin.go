@@ -7,8 +7,12 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
+
+	jsonpatch "github.com/evanphx/json-patch"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -48,27 +52,84 @@ func (c *Client) ObjectYAML(ctx context.Context, t model.ResourceType, namespace
 	return string(data), nil
 }
 
-// ApplyYAML parses an edited YAML document and updates the object it
-// describes. The document must keep its metadata.name (and resourceVersion,
-// so a concurrent change surfaces as a conflict instead of being clobbered).
-func (c *Client) ApplyYAML(ctx context.Context, t model.ResourceType, doc []byte) error {
-	jsonDoc, err := yaml.YAMLToJSON(doc)
+// ApplyEditedYAML applies an edit as a MERGE PATCH of what the operator
+// actually changed (original → edited), the way kubectl edit does — never a
+// whole-object Update. That matters twice (owner report 2026-08-04):
+//   - an Update carries the resourceVersion captured when the editor opened,
+//     so any churn during the edit session (a Deployment's status conditions,
+//     an HPA scaling it) makes the save fail with a 409 conflict;
+//   - a patch touches only the edited fields, so concurrent changes to OTHER
+//     fields survive instead of being clobbered.
+//
+// changed=false means the documents are equivalent: nothing is sent.
+func (c *Client) ApplyEditedYAML(ctx context.Context, t model.ResourceType, original, edited []byte) (changed bool, err error) {
+	origJSON, err := yaml.YAMLToJSON(original)
 	if err != nil {
-		return fmt.Errorf("parsing edited YAML: %w", err)
+		return false, fmt.Errorf("reading the original YAML: %w", err)
+	}
+	editedJSON, err := yaml.YAMLToJSON(edited)
+	if err != nil {
+		return false, fmt.Errorf("parsing edited YAML: %w", err)
 	}
 	// UnmarshalJSON goes through UnstructuredJSONScheme, which keeps integers
 	// as int64 (a plain yaml.Unmarshal would degrade them to float64).
 	obj := &unstructured.Unstructured{}
-	if err := obj.UnmarshalJSON(jsonDoc); err != nil {
-		return fmt.Errorf("parsing edited YAML: %w", err)
+	if err := obj.UnmarshalJSON(editedJSON); err != nil {
+		return false, fmt.Errorf("parsing edited YAML: %w", err)
 	}
 	if obj.GetName() == "" {
-		return fmt.Errorf("edited YAML has no metadata.name")
+		return false, fmt.Errorf("edited YAML has no metadata.name")
 	}
-	if _, err := c.resourceFor(t, obj.GetNamespace()).Update(ctx, obj, metav1.UpdateOptions{FieldManager: fieldManager}); err != nil {
-		return fmt.Errorf("updating %s/%s: %w", t.Kind, obj.GetName(), err)
+	patch, err := jsonpatch.CreateMergePatch(origJSON, editedJSON)
+	if err != nil {
+		return false, fmt.Errorf("diffing the edit: %w", err)
 	}
-	return nil
+	if len(patch) == 0 || string(patch) == "{}" {
+		return false, nil
+	}
+	if _, err := c.resourceFor(t, obj.GetNamespace()).Patch(ctx, obj.GetName(),
+		types.MergePatchType, patch, metav1.PatchOptions{FieldManager: fieldManager}); err != nil {
+		return false, fmt.Errorf("applying the edit to %s/%s: %w", t.Kind, obj.GetName(), err)
+	}
+	return true, nil
+}
+
+// MergePatchFields lists the top-level paths an edit touches — what the
+// status line reports back so the operator sees WHAT was applied.
+func MergePatchFields(original, edited []byte) []string {
+	origJSON, err1 := yaml.YAMLToJSON(original)
+	editedJSON, err2 := yaml.YAMLToJSON(edited)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+	patch, err := jsonpatch.CreateMergePatch(origJSON, editedJSON)
+	if err != nil {
+		return nil
+	}
+	var m map[string]any
+	if json.Unmarshal(patch, &m) != nil {
+		return nil
+	}
+	return topPaths(m, "")
+}
+
+// topPaths flattens a merge patch into dotted paths, stopping at the level
+// where a whole subtree is replaced (2 levels deep is enough to be useful).
+func topPaths(m map[string]any, prefix string) []string {
+	var out []string
+	for k, v := range m {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		if sub, ok := v.(map[string]any); ok && prefix == "" && len(sub) > 0 {
+			out = append(out, topPaths(sub, path)...)
+			continue
+		}
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ScaleWorkload sets spec.replicas on a scalable workload
