@@ -266,6 +266,12 @@ type Container struct {
 	State    string // Running / Waiting:<reason> / Terminated:<reason> / unknown
 	Restarts int
 	Level    HealthLevel
+	// LastTerminated says WHY the previous run ended — "OOMKilled (exit 137)",
+	// "Error (exit 1)", "Completed" — read from status.lastState.terminated.
+	// This is where an OOM kill becomes visible (owner request 2026-08-05):
+	// the pod is Running again, only its PREVIOUS run explains the restart.
+	LastTerminated   string
+	LastTerminatedAt time.Time
 }
 
 // Diagnostic is one workload-failure finding (US10): a crashlooping/OOMKilled/

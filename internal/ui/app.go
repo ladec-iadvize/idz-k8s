@@ -169,6 +169,7 @@ type Model struct {
 	eventsFiltering bool            // typing a filter (Enter commits, Esc cancels)
 	eventsKind      string          // kind filter ("" = all kinds)
 	eventsWarnOnly  bool            // severity filter: warnings only (FR-014)
+	eventsWindow    time.Duration   // timeline scale: 0 = every retained event
 	recentSel       int             // selected index in the Recent list (highlighted on the timeline)
 	eventsScope     map[string]bool // "ns/name" allow-list (set when opened from a drill)
 	eventsScopeFor  string          // label, e.g. "Deployment/back"
@@ -235,6 +236,7 @@ type Model struct {
 
 	// Click zones of the events header line (T048); set by renderEvents.
 	eventsKindZone  clickZone
+	eventsScaleZone clickZone
 	eventsFilterHit clickZone
 
 	// disconnected marks a lost cluster connection; the periodic tick keeps
@@ -1443,6 +1445,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if msg.X >= m.eventsKindZone.x0 && msg.X < m.eventsKindZone.x1 {
 				return m.openKindPicker()
 			}
+			if msg.X >= m.eventsScaleZone.x0 && msg.X < m.eventsScaleZone.x1 {
+				m.cycleEventsWindow()
+				return m, nil
+			}
 			if msg.X >= m.eventsFilterHit.x0 && msg.X < m.eventsFilterHit.x1 {
 				m.eventsFiltering = true
 				m.renderEvents()
@@ -2055,8 +2061,8 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenEvents:
 		return keymapView{
-			short: []key.Binding{k.Open, k.Filter, k.Kind, k.WarnOnly, k.Namespace, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Open, k.Filter, k.Kind, k.WarnOnly, k.Namespace}, {k.Back, k.Help, k.Quit}},
+			short: []key.Binding{k.Open, k.Scale, k.Filter, k.Kind, k.WarnOnly, k.Namespace, k.Back, k.Quit},
+			full:  [][]key.Binding{nav, {k.Open, k.Scale, k.Filter, k.Kind, k.WarnOnly, k.Namespace}, {k.Back, k.Help, k.Quit}},
 		}
 	case screenDiag, screenPosture:
 		return keymapView{

@@ -38,6 +38,7 @@ type KeyMap struct {
 	Reveal      key.Binding
 	Pause       key.Binding
 	WarnOnly    key.Binding
+	Scale       key.Binding // events: time window of the timeline
 	Wrap        key.Binding // logs: fold long lines
 	ScrollLeft  key.Binding // logs: shift the view sideways
 	ScrollRight key.Binding
@@ -81,6 +82,7 @@ func Default() KeyMap {
 		Reveal:     key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "reveal/mask secret values")),
 		Pause:      key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "pause/resume")),
 		WarnOnly:   key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "warnings only")),
+		Scale:      key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "time window")),
 		// Logs view only (per-screen keymap): 'w' wraps there, matching k9s.
 		Wrap:        key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "wrap long lines")),
 		ScrollLeft:  key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "scroll left")),
@@ -109,7 +111,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Logs, k.Yaml, k.Describe, k.Owner, k.Palette, k.Actions, k.Edit},
 		{k.Sort, k.SortDir, k.Columns, k.Views, k.ResetView},
 		{k.Kind, k.Namespace, k.Context, k.Values, k.Reveal, k.Pause, k.WarnOnly},
-		{k.Wrap, k.ScrollLeft, k.ScrollRight},
+		{k.Scale, k.Wrap, k.ScrollLeft, k.ScrollRight},
 		{k.Mouse, k.Help, k.Quit},
 	}
 }

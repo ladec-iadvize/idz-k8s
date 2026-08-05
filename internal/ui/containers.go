@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -74,6 +75,24 @@ func (m *Model) containerColumns() []houseColumn[model.Container] {
 		{title: "RESTARTS", right: true, cell: func(_ *Model, c model.Container) string {
 			return fmt.Sprintf("%d", c.Restarts)
 		}, less: func(a, b model.Container) bool { return a.Restarts < b.Restarts }},
+		// WHY the previous run ended — an OOMKill is invisible in STATE once
+		// the container is Running again (owner request 2026-08-05).
+		{title: "LAST TERMINATION", cell: func(m *Model, c model.Container) string {
+			if c.LastTerminated == "" {
+				return "—"
+			}
+			label := c.LastTerminated
+			if !c.LastTerminatedAt.IsZero() {
+				label += " · " + kube.Age(c.LastTerminatedAt, m.now()) + " ago"
+			}
+			if strings.Contains(c.LastTerminated, "OOMKilled") {
+				return m.theme.Error.Render(label)
+			}
+			if strings.Contains(c.LastTerminated, "Completed") {
+				return m.theme.Faint.Render(label)
+			}
+			return m.theme.Warning.Render(label)
+		}, less: func(a, b model.Container) bool { return a.LastTerminated < b.LastTerminated }},
 		{title: "IMAGE", cell: func(_ *Model, c model.Container) string { return orDash(c.Image) },
 			less: func(a, b model.Container) bool { return a.Image < b.Image }},
 	}

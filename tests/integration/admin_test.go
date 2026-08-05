@@ -344,3 +344,53 @@ func TestDefaultContainer(t *testing.T) {
 		t.Fatalf("no containers → empty, got %q", got)
 	}
 }
+
+// TestPodLastTerminationSurfacesOOM (owner request 2026-08-05: "voir la
+// raison pour laquelle le pod s'est stoppé, très pratique pour les OOM"):
+// the reason lives in status.lastState.terminated — a pod that is Running
+// again keeps it, and an OOMKill outranks a clean Completed.
+func TestPodLastTerminationSurfacesOOM(t *testing.T) {
+	pod := NewPod("demo", "web-1", "Running")
+	pod.Object["spec"] = map[string]any{"containers": []any{
+		map[string]any{"name": "app", "image": "app:1"},
+		map[string]any{"name": "sidecar", "image": "envoy:1"},
+	}}
+	pod.Object["status"].(map[string]any)["containerStatuses"] = []any{
+		map[string]any{"name": "app", "ready": true, "restartCount": int64(4),
+			"state": map[string]any{"running": map[string]any{}},
+			"lastState": map[string]any{"terminated": map[string]any{
+				"reason": "OOMKilled", "exitCode": int64(137),
+				"finishedAt": "2026-08-05T09:00:00Z"}}},
+		map[string]any{"name": "sidecar", "ready": true,
+			"state": map[string]any{"running": map[string]any{}},
+			"lastState": map[string]any{"terminated": map[string]any{
+				"reason": "Completed", "exitCode": int64(0)}}},
+	}
+
+	cs := kube.PodContainers(pod.Object)
+	if len(cs) != 2 {
+		t.Fatalf("containers=%+v", cs)
+	}
+	// The container is Running NOW; the OOM only shows in its last state.
+	if cs[0].State != "Running" || cs[0].Restarts != 4 {
+		t.Fatalf("current state: %+v", cs[0])
+	}
+	if cs[0].LastTerminated != "OOMKilled (exit 137)" {
+		t.Fatalf("last termination=%q", cs[0].LastTerminated)
+	}
+	if cs[0].LastTerminatedAt.IsZero() {
+		t.Fatal("the termination timestamp must be parsed")
+	}
+	if cs[1].LastTerminated != "Completed (exit 0)" {
+		t.Fatalf("sidecar last termination=%q", cs[1].LastTerminated)
+	}
+
+	// The pod-level summary picks the worst reason (OOM over Completed).
+	if got := kube.PodLastTermination(pod.Object); got != "OOMKilled (exit 137)" {
+		t.Fatalf("pod summary=%q, want the OOM", got)
+	}
+	// A pod that never terminated anything reports nothing — never a guess.
+	if got := kube.PodLastTermination(NewPod("demo", "fresh", "Running").Object); got != "" {
+		t.Fatalf("a fresh pod must report no termination, got %q", got)
+	}
+}

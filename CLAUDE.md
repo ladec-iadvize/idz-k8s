@@ -142,6 +142,23 @@ opening the YAML detail.
   chooser, never default. User-specific columns belong in the user's
   viewPrefs, not in code.
 
+## Why a container stopped (owner request 2026-08-05)
+
+The current `state` says nothing about an OOM once the container is running
+again — the reason lives in `status.lastState.terminated`
+(`kube.PodLastTermination`, `Container.LastTerminated`). It surfaces in three
+places: inline in the pods list's RESTARTS cell (`4 (OOMKilled (exit 137))`,
+sorting stays numeric via the column's own `less`), as a LAST TERMINATION
+column in the containers view, and as an off-by-default column in the 'C'
+chooser. Never infer a reason the API did not give.
+
+## Events timeline scale (owner request 2026-08-05)
+
+`'t'` (keys.Scale) cycles `eventsWindows` (5m/15m/1h/6h/24h/all, default
+all): it filters the events AND rescales the axis, with a clickable
+`scale:[…]` chip. The lane cap and the detail-row count derive from
+`m.bodyH` instead of the old fixed 25/8, so a taller terminal shows more.
+
 ## Helm release detail (owner request 2026-08-05)
 
 `helm.ReleaseDetail` carries everything Helm stores per revision: each

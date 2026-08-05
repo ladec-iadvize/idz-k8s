@@ -6,6 +6,8 @@ package kube
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -44,6 +46,7 @@ func PodContainers(raw map[string]interface{}) []model.Container {
 					ct.Restarts = int(r)
 				}
 				ct.State, ct.Level = containerState(st, ct.Ready, init)
+				ct.LastTerminated, ct.LastTerminatedAt = lastTermination(st)
 			}
 			out = append(out, ct)
 		}
@@ -97,6 +100,65 @@ func containerState(status map[string]interface{}, ready, init bool) (string, mo
 		}
 	}
 	return "unknown", model.HealthUnknown
+}
+
+// lastTermination summarises status.lastState.terminated — why the PREVIOUS
+// run of the container ended. "" when it never terminated before.
+func lastTermination(status map[string]interface{}) (string, time.Time) {
+	term, found, _ := unstructured.NestedMap(status, "lastState", "terminated")
+	if !found {
+		return "", time.Time{}
+	}
+	reason, _ := term["reason"].(string)
+	code, hasCode, _ := unstructured.NestedInt64(term, "exitCode")
+	label := reason
+	if label == "" {
+		label = "Terminated"
+	}
+	if hasCode {
+		label = fmt.Sprintf("%s (exit %d)", label, code)
+	}
+	at := time.Time{}
+	if ts, _, _ := unstructured.NestedString(term, "finishedAt"); ts != "" {
+		if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			at = parsed
+		}
+	}
+	return label, at
+}
+
+// PodLastTermination returns the most relevant "why did it stop" of a pod:
+// the last termination of any container, worst first (an OOMKill outranks a
+// clean Completed). "" when no container ever terminated.
+func PodLastTermination(raw map[string]interface{}) string {
+	best, bestRank := "", -1
+	rank := func(label string) int {
+		switch {
+		case strings.Contains(label, "OOMKilled"):
+			return 3
+		case strings.Contains(label, "Error"), strings.Contains(label, "exit 1"):
+			return 2
+		case strings.Contains(label, "Completed"):
+			return 0
+		default:
+			return 1
+		}
+	}
+	for _, field := range []string{"containerStatuses", "initContainerStatuses"} {
+		statuses, _, _ := unstructured.NestedSlice(raw, "status", field)
+		for _, s := range statuses {
+			sm, ok := s.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if label, _ := lastTermination(sm); label != "" {
+				if r := rank(label); r > bestRank {
+					best, bestRank = label, r
+				}
+			}
+		}
+	}
+	return best
 }
 
 // OwnedByUID reports whether an object's ownerReferences name the given UID —
