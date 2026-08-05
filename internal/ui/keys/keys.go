@@ -40,6 +40,8 @@ type KeyMap struct {
 	WarnOnly    key.Binding
 	Scale       key.Binding // events: time window of the timeline
 	Wrap        key.Binding // logs: fold long lines
+	ClearLogs   key.Binding // logs: drop what is buffered
+	Separator   key.Binding // logs: mark the current point in the stream
 	ScrollLeft  key.Binding // logs: shift the view sideways
 	ScrollRight key.Binding
 	Mouse       key.Binding
@@ -84,7 +86,11 @@ func Default() KeyMap {
 		WarnOnly:   key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "warnings only")),
 		Scale:      key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "time window")),
 		// Logs view only (per-screen keymap): 'w' wraps there, matching k9s.
-		Wrap:        key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "wrap long lines")),
+		Wrap: key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "wrap long lines")),
+		// ctrl+l is the terminal convention for "clear"; 'M' marks the stream
+		// ('m' is the global mouse toggle, 'c' the context picker).
+		ClearLogs:   key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("ctrl+l", "clear logs")),
+		Separator:   key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "insert separator")),
 		ScrollLeft:  key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "scroll left")),
 		ScrollRight: key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "scroll right")),
 		Mouse:       key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mouse on/off (copy text)")),
@@ -111,7 +117,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Logs, k.Yaml, k.Describe, k.Owner, k.Palette, k.Actions, k.Edit},
 		{k.Sort, k.SortDir, k.Columns, k.Views, k.ResetView},
 		{k.Kind, k.Namespace, k.Context, k.Values, k.Reveal, k.Pause, k.WarnOnly},
-		{k.Scale, k.Wrap, k.ScrollLeft, k.ScrollRight},
+		{k.Scale, k.Wrap, k.ScrollLeft, k.ScrollRight, k.ClearLogs, k.Separator},
 		{k.Mouse, k.Help, k.Quit},
 	}
 }

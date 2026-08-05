@@ -9,12 +9,57 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	xansi "github.com/charmbracelet/x/ansi"
 )
 
 // logHStep is how far ←/→ shift the view (a word-ish chunk, like less).
 const logHStep = 20
+
+// logSepPrefix marks a separator line inside the buffer (owner request
+// 2026-08-06: 'M' marks the current point in the stream — trigger something,
+// then read only what came after). The line is stored as a SENTINEL, not as a
+// pre-drawn rule, so it is redrawn at the right width after every resize.
+const logSepPrefix = "\x00idz-sep\x00"
+
+// clearLogs drops what is buffered without touching the stream: new lines
+// keep arriving (owner request 2026-08-06).
+func (m *Model) clearLogs() {
+	if len(m.logBuf) == 0 {
+		m.statusMsg = "logs already empty — streaming continues"
+		return
+	}
+	m.logBuf = nil
+	m.logHOffset = 0
+	m.renderLogs()
+	m.logsView.GotoTop()
+	m.statusMsg = "logs cleared — streaming continues ('M' marks a point instead of clearing)"
+}
+
+// markLogs appends a timestamped separator at the current tail.
+func (m *Model) markLogs() {
+	m.logBuf = append(m.logBuf, logSepPrefix+time.Now().Format("15:04:05"))
+	if len(m.logBuf) > logBufMax {
+		m.logBuf = m.logBuf[len(m.logBuf)-logBufMax:]
+	}
+	m.renderLogs()
+	if !m.logPaused {
+		m.logsView.GotoBottom()
+	}
+	m.statusMsg = "separator inserted — everything below it is newer"
+}
+
+// renderSeparator draws a full-width rule carrying the mark's time. It ignores
+// the horizontal offset: a separator must span the view wherever you scrolled.
+func (m *Model) renderSeparator(line string, w int) string {
+	stamp := strings.TrimPrefix(line, logSepPrefix)
+	label := " ── " + stamp + " "
+	if pad := w - len([]rune(label)); pad > 0 {
+		label += strings.Repeat("─", pad)
+	}
+	return m.theme.Warning.Render(truncate(label, w))
+}
 
 // renderLogs rebuilds the log viewport from the buffer, honoring the wrap
 // toggle and the horizontal offset. Called on every new line, on resize and
@@ -32,6 +77,8 @@ func (m *Model) renderLogs() {
 	out := make([]string, 0, len(m.logBuf))
 	for _, l := range m.logBuf {
 		switch {
+		case strings.HasPrefix(l, logSepPrefix):
+			out = append(out, m.renderSeparator(l, w))
 		case m.logWrap:
 			// Word-aware, ANSI-safe hard wrap: the viewport never soft-wraps
 			// on its own (that would desync every line count).
@@ -50,6 +97,9 @@ func (m *Model) renderLogs() {
 func (m *Model) logMaxWidth() int {
 	maxW := 0
 	for _, l := range m.logBuf {
+		if strings.HasPrefix(l, logSepPrefix) {
+			continue // a separator is drawn to the view width, never scrolled
+		}
 		if w := xansi.StringWidth(l); w > maxW {
 			maxW = w
 		}

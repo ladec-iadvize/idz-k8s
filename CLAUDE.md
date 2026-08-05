@@ -97,9 +97,12 @@ Keep it that way — it is what makes everything testable with fakes.
 - **Widths are counted in RUNES, never bytes** (`truncate`/`padTo`). Glyphs
   like `—`, `✓`, `●` are multi-byte; byte-counting produced phantom `…`.
 - **Log rendering goes through `renderLogs()`** (logsview.go): the buffer is
-  re-rendered on every new line, resize and toggle so the wrap ('w') and the
-  horizontal offset (←/→) always apply — never append a raw line to the
-  viewport. Slicing/folding log lines MUST use `xansi` (Wrap/TruncateLeft):
+  re-rendered on every new line, resize and toggle so the wrap ('w'), the
+  horizontal offset (←/→) and the separators ('M') always apply — never
+  append a raw line to the viewport. A separator is stored as a SENTINEL
+  line (`logSepPrefix`), never as a pre-drawn rule, so it is redrawn at the
+  current width after a resize and stays full-width when the view is
+  scrolled sideways. `ctrl+l` clears the buffer only — never the stream. Slicing/folding log lines MUST use `xansi` (Wrap/TruncateLeft):
   merged lines carry a colored pod prefix and rune slicing cuts escape
   sequences, bleeding color across the screen.
 - **Never accumulate content in a viewport's `View()`** — it is windowed and
