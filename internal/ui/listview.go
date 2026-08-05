@@ -292,12 +292,26 @@ func (m *Model) columnsBase() []listColumn {
 		}
 		restarts := listColumn{title: "RESTARTS",
 			cell: func(_ *Model, o model.ResourceObject) string {
-				if r := kube.PodRestarts(o.Raw); r > 0 {
-					return fmt.Sprintf("%d", r)
+				r := kube.PodRestarts(o.Raw)
+				if r == 0 {
+					return "0"
 				}
-				return "0"
+				// Say WHY it restarted when the cluster knows: an OOMKill is
+				// otherwise invisible on a pod that is Running again (owner
+				// request 2026-08-05). Sorting stays numeric (own less).
+				if why := kube.PodLastTermination(o.Raw); why != "" {
+					return fmt.Sprintf("%d (%s)", r, why)
+				}
+				return fmt.Sprintf("%d", r)
 			},
 			less: func(a, b model.ResourceObject) bool { return kube.PodRestarts(a.Raw) < kube.PodRestarts(b.Raw) }}
+		lastTerm := listColumn{title: "LAST TERMINATION", off: true,
+			cell: func(_ *Model, o model.ResourceObject) string {
+				return orDash(kube.PodLastTermination(o.Raw))
+			},
+			less: func(a, b model.ResourceObject) bool {
+				return kube.PodLastTermination(a.Raw) < kube.PodLastTermination(b.Raw)
+			}}
 		node := listColumn{title: "NODE",
 			cell: func(_ *Model, o model.ResourceObject) string { return orDash(kube.PodNode(o.Raw)) },
 			less: func(a, b model.ResourceObject) bool { return kube.PodNode(a.Raw) < kube.PodNode(b.Raw) }}
@@ -309,7 +323,7 @@ func (m *Model) columnsBase() []listColumn {
 		// `kubectl get pods -o wide` order; the live usage columns stay one
 		// 'C' toggle away (personal preferences live in viewPrefs).
 		cpuUse.off, cpuPct.off, memUse.off, memPct.off = true, true, true, true
-		return []listColumn{ns, name, ready, status, restarts, age, ip, node, cpuUse, cpuPct, memUse, memPct}
+		return []listColumn{ns, name, ready, status, restarts, age, ip, node, lastTerm, cpuUse, cpuPct, memUse, memPct}
 
 	case strings.EqualFold(kind, "Node"):
 		pods := listColumn{title: "PODS READY",

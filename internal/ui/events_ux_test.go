@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -215,5 +216,94 @@ func TestEventsViewUsesTerminalWidth(t *testing.T) {
 		if w := len([]rune(line)); w > 80 {
 			t.Fatalf("line exceeds the 80-col terminal (%d): %q", w, line)
 		}
+	}
+}
+
+// TestEventsTimelineScale (owner request 2026-08-05): 't' cycles the time
+// window, which filters the events AND rescales the axis; the chip and the
+// legend name the current scale, and an empty window says how to widen it.
+func TestEventsTimelineScale(t *testing.T) {
+	now := time.Now()
+	m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "",
+		WithInitialType(model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}))
+	m.width, m.height = 140, 40
+	m.layout()
+	m.screen = screenEvents
+	m.eventRows = []model.Event{
+		{Time: now.Add(-1 * time.Minute), Type: "Warning", Reason: "BackOff", ObjKind: "Pod", ObjName: "fresh"},
+		{Time: now.Add(-30 * time.Minute), Type: "Normal", Reason: "Pulled", ObjKind: "Pod", ObjName: "halfhour"},
+		{Time: now.Add(-10 * time.Hour), Type: "Normal", Reason: "Scheduled", ObjKind: "Pod", ObjName: "ancient"},
+	}
+	m.renderEvents()
+	if len(m.eventsShown) != 3 || m.eventsWindow != 0 {
+		t.Fatalf("default scale must show everything: shown=%d window=%v", len(m.eventsShown), m.eventsWindow)
+	}
+	if !strings.Contains(xansi.Strip(m.events.View()), "scale:[all ▾]") {
+		t.Fatalf("the scale chip must be visible:\n%s", xansi.Strip(m.events.View()))
+	}
+
+	// 't' → 5m: only the fresh event survives, and the axis rescales to it.
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if m.eventsWindow != 5*time.Minute {
+		t.Fatalf("first 't' must select 5m, got %v", m.eventsWindow)
+	}
+	if len(m.eventsShown) != 1 || m.eventsShown[0].ObjName != "fresh" {
+		t.Fatalf("the 5m window must keep only the recent event: %+v", m.eventsShown)
+	}
+	view := xansi.Strip(m.events.View())
+	if !strings.Contains(view, "scale:[5m ▾]") || strings.Contains(view, "ancient") {
+		t.Fatalf("view must reflect the 5m scale:\n%s", view)
+	}
+
+	// 't' again → 15m keeps the 1-minute event, still not the 30-minute one.
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if m.eventsWindow != 15*time.Minute || len(m.eventsShown) != 1 {
+		t.Fatalf("15m window: %v shown=%d", m.eventsWindow, len(m.eventsShown))
+	}
+	// → 1h picks up the half-hour one.
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if m.eventsWindow != time.Hour || len(m.eventsShown) != 2 {
+		t.Fatalf("1h window: %v shown=%d", m.eventsWindow, len(m.eventsShown))
+	}
+	// Cycling all the way round comes back to "all".
+	for range 3 {
+		m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	}
+	if m.eventsWindow != 0 || len(m.eventsShown) != 3 {
+		t.Fatalf("the cycle must return to all: %v shown=%d", m.eventsWindow, len(m.eventsShown))
+	}
+
+	// An empty window explains how to widen it instead of just "no events".
+	m.eventRows = []model.Event{{Time: now.Add(-2 * time.Hour), Type: "Normal", Reason: "Pulled",
+		ObjKind: "Pod", ObjName: "old"}}
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}}) // 5m
+	if got := xansi.Strip(m.events.View()); !strings.Contains(got, "'t' widens the scale") {
+		t.Fatalf("an empty scale must say how to widen it:\n%s", got)
+	}
+}
+
+// TestEventsDetailRowsGrowWithHeight: a taller terminal shows more events and
+// more lanes (owner request: "voir plus d'events").
+func TestEventsDetailRowsGrowWithHeight(t *testing.T) {
+	now := time.Now()
+	rows := make([]model.Event, 0, 40)
+	for i := range 40 {
+		rows = append(rows, model.Event{Time: now.Add(-time.Duration(i) * time.Minute),
+			Type: "Normal", Reason: "Pulled", ObjKind: "Pod",
+			ObjName: fmt.Sprintf("pod-%02d", i), Namespace: "demo"})
+	}
+	count := func(height int) int {
+		m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "",
+			WithInitialType(model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}))
+		m.width, m.height = 140, height
+		m.layout()
+		m.screen = screenEvents
+		m.eventRows = rows
+		m.renderEvents()
+		return m.recentShown
+	}
+	small, large := count(30), count(60)
+	if large <= small {
+		t.Fatalf("a taller terminal must detail more events: %d rows at h=30 vs %d at h=60", small, large)
 	}
 }

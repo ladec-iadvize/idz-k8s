@@ -66,6 +66,9 @@ func (m Model) handleEventsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case hit(msg, m.keys.Kind):
 		return m.openKindPicker()
+	case hit(msg, m.keys.Scale):
+		m.cycleEventsWindow()
+		return m, nil
 	case hit(msg, m.keys.WarnOnly):
 		m.eventsWarnOnly = !m.eventsWarnOnly
 		m.recentSel, m.recentWin = 0, 0
@@ -91,8 +94,42 @@ func (m Model) handleEventsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 const (
 	timelineLaneWidth = 30 // MINIMUM width of the object-name column
-	timelineMaxLanes  = 25 // lanes shown before "+N more"
+	timelineMaxLanes  = 25 // lanes shown before "+N more" (height permitting)
 )
+
+// eventsWindows are the timeline scales 't' cycles through (owner request
+// 2026-08-05: zoom in to separate a burst, zoom out to see the whole
+// retention). 0 = everything the cluster still retains.
+var eventsWindows = []time.Duration{
+	5 * time.Minute, 15 * time.Minute, time.Hour, 6 * time.Hour, 24 * time.Hour, 0,
+}
+
+// windowLabel names a scale for the header chip.
+func windowLabel(d time.Duration) string {
+	switch {
+	case d == 0:
+		return "all"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	default:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+}
+
+// cycleEventsWindow moves to the next scale and re-renders.
+func (m *Model) cycleEventsWindow() {
+	next := 0
+	for i, w := range eventsWindows {
+		if w == m.eventsWindow {
+			next = (i + 1) % len(eventsWindows)
+			break
+		}
+	}
+	m.eventsWindow = eventsWindows[next]
+	m.recentSel, m.recentWin = 0, 0
+	m.statusMsg = "timeline scale: " + windowLabel(m.eventsWindow)
+	m.renderEvents()
+}
 
 // timelineLaneW sizes the object-name column with the content (owner report
 // 2026-07-29: lane names truncated at 30 while half the screen sat empty):
@@ -122,7 +159,14 @@ func (m *Model) renderEvents() {
 	// the OBJECT identity only (namespace/kind/name) — not reasons/messages —
 	// so typing "back" matches pods named *back*, not every BackOff event.
 	var evs []model.Event
+	cutoff := time.Time{}
+	if m.eventsWindow > 0 {
+		cutoff = time.Now().Add(-m.eventsWindow)
+	}
 	for _, e := range m.eventRows {
+		if !cutoff.IsZero() && e.Time.Before(cutoff) {
+			continue // outside the selected scale
+		}
 		if m.eventsWarnOnly && !e.Warning() {
 			continue // severity filter: warnings only (FR-014)
 		}
@@ -156,6 +200,10 @@ func (m *Model) renderEvents() {
 	m.eventsKindZone = clickZone{x0: lipgloss.Width(b.String())}
 	b.WriteString(m.theme.StatusBar.Render("kind:[" + kindLabel + " ▾]"))
 	m.eventsKindZone.x1 = lipgloss.Width(b.String())
+	b.WriteString("  ")
+	m.eventsScaleZone = clickZone{x0: lipgloss.Width(b.String())}
+	b.WriteString(m.theme.StatusBar.Render("scale:[" + windowLabel(m.eventsWindow) + " ▾]"))
+	m.eventsScaleZone.x1 = lipgloss.Width(b.String())
 	if m.eventsWarnOnly {
 		b.WriteString("  " + m.theme.Warning.Render("▲ warnings only ('w' toggles)"))
 	}
@@ -166,13 +214,17 @@ func (m *Model) renderEvents() {
 	case q != "":
 		b.WriteString("  filter: " + m.eventsQuery + m.theme.Faint.Render("  (/ to edit)"))
 	default:
-		b.WriteString(m.theme.Faint.Render("  (/ filter, k kind, w warnings, n namespace)"))
+		b.WriteString(m.theme.Faint.Render("  (/ filter, k kind, t scale, w warnings, n namespace)"))
 	}
 	m.eventsFilterHit.x1 = lipgloss.Width(b.String())
 	b.WriteString("\n\n")
 
 	if len(evs) == 0 {
-		b.WriteString(m.theme.Faint.Render("no events match"))
+		note := "no events match"
+		if m.eventsWindow > 0 {
+			note += " in the last " + windowLabel(m.eventsWindow) + " — 't' widens the scale"
+		}
+		b.WriteString(m.theme.Faint.Render(note))
 		m.events.SetContent(b.String())
 		m.events.GotoTop()
 		return
@@ -284,8 +336,20 @@ func (m *Model) renderEvents() {
 
 	// Selection: ↑/↓ walk ALL filtered events (most recent first); the detail
 	// list below is a sliding window that follows the selection, and the
-	// selected event lights up on the timeline.
-	const recentWinSize = 8
+	// selected event lights up on the timeline. Both the lane count and the
+	// detail window grow with the terminal (owner request 2026-08-05: "voir
+	// plus d'events") instead of the old fixed 25/8.
+	maxLanes := timelineMaxLanes
+	if room := m.bodyH - 14; room > 0 && room < maxLanes {
+		maxLanes = room
+	}
+	if maxLanes < 3 {
+		maxLanes = 3
+	}
+	recentWinSize := m.bodyH - maxLanes - 12
+	if recentWinSize < 4 {
+		recentWinSize = 4
+	}
 	if m.recentSel >= len(evs) {
 		m.recentSel = len(evs) - 1
 	}
@@ -314,8 +378,8 @@ func (m *Model) renderEvents() {
 
 	// Lanes with proportionally placed markers.
 	shown := order
-	if len(shown) > timelineMaxLanes {
-		shown = shown[:timelineMaxLanes]
+	if len(shown) > maxLanes {
+		shown = shown[:maxLanes]
 	}
 	for _, l := range shown {
 		type cell struct {
@@ -358,13 +422,14 @@ func (m *Model) renderEvents() {
 		b.WriteString(row.String())
 		b.WriteString("\n")
 	}
-	if len(order) > timelineMaxLanes {
-		fmt.Fprintf(&b, "%s\n", m.theme.Faint.Render(fmt.Sprintf("… +%d more objects (type to filter)", len(order)-timelineMaxLanes)))
+	if len(order) > maxLanes {
+		fmt.Fprintf(&b, "%s\n", m.theme.Faint.Render(fmt.Sprintf("… +%d more objects (type to filter, or a taller terminal)", len(order)-maxLanes)))
 	}
 
 	// Legend + a sliding detail window over ALL events, following the selection.
 	b.WriteString("\n")
-	b.WriteString(m.theme.Faint.Render("▲ warning   • normal   (digit = repeated events)   ↑/↓ select"))
+	b.WriteString(m.theme.Faint.Render(fmt.Sprintf(
+		"▲ warning   • normal   (digit = repeated events)   ↑/↓ select   't' scale (%s)", windowLabel(m.eventsWindow))))
 	b.WriteString("\n")
 	b.WriteString(m.rule(fmt.Sprintf("Events (%d/%d)", m.recentSel+1, len(evs))))
 	b.WriteString("\n")
