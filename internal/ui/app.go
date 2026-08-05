@@ -49,6 +49,7 @@ const (
 	screenAccess
 	screenDrift
 	screenContainers
+	screenHelmRes
 )
 
 type pickerKind int
@@ -200,6 +201,14 @@ type Model struct {
 	helmHist       viewport.Model
 	helmRows       []model.HelmRelease
 	helmValuesOnly bool // 'v': show only the values of a release
+	// Release detail: the last loaded payload (re-rendered when the resource
+	// selection moves), the selectable resource list and its content lines,
+	// plus the viewport showing ONE resource's definition (owner request
+	// 2026-08-05).
+	helmDetail   helmDetailMsg
+	helmResSel   int
+	helmResLines []int
+	helmRes      viewport.Model
 
 	// Posture overview (US13, advisory).
 	posture viewport.Model
@@ -442,6 +451,7 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		filter:           fi,
 		helmTable:        table.New(table.WithFocused(true)),
 		helmHist:         viewport.New(0, 0),
+		helmRes:          viewport.New(0, 0),
 		sizingVP:         viewport.New(0, 0),
 		posture:          viewport.New(0, 0),
 		connectivity:     viewport.New(0, 0),
@@ -744,6 +754,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case helmDetailMsg:
 		m.renderHelmDetail(msg)
+		return m, nil
+
+	case helmResourceMsg:
+		if m.screen != screenHelmRes {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.setContent(screenHelmRes, m.rule("Live object — "+msg.label)+"\n\n"+
+				m.theme.Error.Render("⚠ "+msg.err.Error()))
+			return m, nil
+		}
+		m.setContent(screenHelmRes, m.rule("Live object — "+msg.label)+"\n\n"+
+			m.colorizeYAML(helmLiveYAML(msg.obj))+"\n\n"+
+			m.theme.Faint.Render("Enter on the release detail shows the chart-rendered definition · Esc goes back"))
+		m.helmRes.GotoTop()
 		return m, nil
 
 	case describeRefMsg:
@@ -1157,8 +1182,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case screenHelm:
 		return m.handleHelmKey(msg)
 	case screenHelmHist:
+		return m.handleHelmDetailKey(msg)
+	case screenHelmRes:
 		var cmd tea.Cmd
-		m.helmHist, cmd = m.helmHist.Update(msg)
+		m.helmRes, cmd = m.helmRes.Update(msg)
 		return m, cmd
 	case screenPicker:
 		return m.handlePickerKey(msg)
@@ -1353,6 +1380,17 @@ func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case screenHelmHist:
+		// Click a deployed resource to select it, double-click opens its
+		// definition (same gesture as the findings views).
+		if i, ok := findingAt(m.helmHist.YOffset+msg.Y-viewportTopY, m.helmResLines); ok {
+			m.helmResSel = i
+			m.renderHelmDetailView()
+			if doubleClick(4000 + i) {
+				return m.openHelmResource(false)
+			}
+		}
+		return m, nil
 	case screenHelm:
 		if msg.Y == tableHeaderY {
 			widths := m.helmColWidths()
@@ -1453,6 +1491,12 @@ func (m *Model) goBack() (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 	}
+	// Esc on a resource definition returns to the release detail.
+	if m.screen == screenHelmRes {
+		m.screen = screenHelmHist
+		m.layout()
+		return m, nil
+	}
 	// Esc on the helm history returns to the helm release list.
 	if m.screen == screenHelmHist {
 		m.screen = screenHelm
@@ -1539,6 +1583,7 @@ func (m *Model) layout() {
 	m.topo.Width, m.topo.Height = m.width, bodyH
 	m.events.Width, m.events.Height = m.width, bodyH
 	m.helmHist.Width, m.helmHist.Height = m.width, bodyH
+	m.helmRes.Width, m.helmRes.Height = m.width, bodyH
 	m.sizingVP.Width, m.sizingVP.Height = m.width, bodyH
 	m.sizingWin.SetHeight(bodyH - 1)    // -1: the overview's own column header
 	m.containerWin.SetHeight(bodyH - 1) // -1: the containers table's header
@@ -1570,6 +1615,8 @@ func (m Model) bodyView(sc screen) string {
 		return m.helmTable.View()
 	case screenHelmHist:
 		return m.helmHist.View()
+	case screenHelmRes:
+		return m.helmRes.View()
 	case screenSizing:
 		return m.sizingVP.View()
 	case screenPosture:
@@ -2048,7 +2095,14 @@ func (m Model) screenKeymap() keymapView {
 			short: []key.Binding{k.Up, k.Down, k.Open, k.Logs, k.Actions, k.Sort, k.Back, k.Quit},
 			full:  [][]key.Binding{nav, {k.Open, k.Logs, k.Actions, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
-	case screenDetail, screenHelmHist:
+	case screenHelmHist:
+		return keymapView{
+			short: []key.Binding{k.Up, k.Down, k.Open, k.Yaml, k.Values, k.Filter, k.Back, k.Quit},
+			full: [][]key.Binding{nav,
+				{k.Open, k.Yaml, k.Values, k.Filter, k.SearchNext, k.SearchPrev},
+				{k.Back, k.Help, k.Quit}},
+		}
+	case screenDetail:
 		short := []key.Binding{k.Up, k.Down, k.Filter, k.SearchNext, k.SearchPrev}
 		actions := []key.Binding{k.Filter, k.SearchNext, k.SearchPrev}
 		if m.screen == screenDetail && strings.EqualFold(m.curType.Kind, "Secret") {

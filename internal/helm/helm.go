@@ -131,6 +131,13 @@ func revisionsOf(rels []*release.Release, namespace string) []model.HelmRevision
 			rev.Status = r.Info.Status.String()
 			rev.Updated = r.Info.LastDeployed.Time
 			rev.Description = r.Info.Description
+			rev.FirstDeployed = r.Info.FirstDeployed.Time
+		}
+		// The chart is stored PER revision, so this is what that revision
+		// actually shipped — not the current one.
+		if r.Chart != nil && r.Chart.Metadata != nil {
+			rev.ChartVersion = r.Chart.Metadata.Version
+			rev.AppVersion = r.Chart.Metadata.AppVersion
 		}
 		out = append(out, rev)
 	}
@@ -145,6 +152,12 @@ type ReleaseDetail struct {
 	History   []model.HelmRevision
 	Resources []model.HelmResource
 	Values    string // YAML of user-supplied values; "" when none
+	// Notes is the rendered NOTES.txt of the current revision (what helm
+	// prints after an install/upgrade), Hooks its chart hooks with their last
+	// run, and Chart the metadata Helm stored with the revision.
+	Notes string
+	Hooks []model.HelmHook
+	Chart model.HelmChartInfo
 }
 
 // Detail loads a release's history, deployed resources, and values (read-only).
@@ -175,6 +188,38 @@ func (c *Client) Detail(namespace, name string) (ReleaseDetail, error) {
 		if data, err := yaml.Marshal(latest.Config); err == nil {
 			det.Values = string(data)
 		}
+	}
+	if latest.Info != nil {
+		det.Notes = latest.Info.Notes
+	}
+	if latest.Chart != nil && latest.Chart.Metadata != nil {
+		md := latest.Chart.Metadata
+		det.Chart = model.HelmChartInfo{
+			Name: md.Name, Version: md.Version, AppVersion: md.AppVersion,
+			Description: md.Description, Home: md.Home, Deprecated: md.Deprecated,
+		}
+		for _, d := range md.Dependencies {
+			if d == nil || d.Name == "" {
+				continue
+			}
+			dep := d.Name
+			if d.Version != "" {
+				dep += "-" + d.Version
+			}
+			det.Chart.Dependencies = append(det.Chart.Dependencies, dep)
+		}
+	}
+	for _, h := range latest.Hooks {
+		if h == nil {
+			continue
+		}
+		hook := model.HelmHook{Name: h.Name, Kind: h.Kind, Manifest: h.Manifest,
+			Phase: string(h.LastRun.Phase), Started: h.LastRun.StartedAt.Time,
+			Finished: h.LastRun.CompletedAt.Time}
+		for _, e := range h.Events {
+			hook.Events = append(hook.Events, string(e))
+		}
+		det.Hooks = append(det.Hooks, hook)
 	}
 	return det, nil
 }
@@ -232,6 +277,9 @@ func parseManifestResources(manifest string) []model.HelmResource {
 			Kind:       head.Kind,
 			Namespace:  head.Metadata.Namespace,
 			Name:       head.Metadata.Name,
+			// The document itself, so the UI can show the definition Helm
+			// rendered without re-fetching anything.
+			Manifest: strings.TrimPrefix(strings.TrimSpace(doc), "---\n"),
 		})
 	}
 	return out

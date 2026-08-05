@@ -42,6 +42,8 @@ func (m *Model) vpFor(sc screen) *viewport.Model {
 		return &m.topo
 	case screenHelmHist:
 		return &m.helmHist
+	case screenHelmRes:
+		return &m.helmRes
 	case screenSizing:
 		return &m.sizingVP
 	case screenPosture:

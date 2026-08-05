@@ -212,14 +212,47 @@ type HelmResource struct {
 	Kind       string
 	Namespace  string // empty → the release namespace
 	Name       string
+	// Manifest is the resource's own rendered document — the DEFINITION the
+	// chart produced, shown by Enter on the resource (owner request
+	// 2026-08-05). Kept verbatim so what you read is what Helm applied.
+	Manifest string
 }
 
-// HelmRevision is one entry of a release's history (US12).
+// HelmRevision is one entry of a release's history (US12). The chart and app
+// versions come from the revision's OWN stored chart, so the history answers
+// "what was deployed at revision N" (owner request 2026-08-05).
 type HelmRevision struct {
-	Revision    int
-	Status      string
-	Updated     time.Time
-	Description string
+	Revision      int
+	Status        string
+	Updated       time.Time
+	Description   string
+	ChartVersion  string
+	AppVersion    string
+	FirstDeployed time.Time
+}
+
+// HelmHook is one chart hook and the outcome of its last run — where a
+// failed pre-install/pre-upgrade job shows up.
+type HelmHook struct {
+	Name     string
+	Kind     string
+	Events   []string // pre-install, post-upgrade…
+	Phase    string   // Succeeded | Failed | Running | Unknown | ""
+	Started  time.Time
+	Finished time.Time
+	Manifest string
+}
+
+// HelmChartInfo describes the chart behind a release (metadata Helm stores
+// with every revision).
+type HelmChartInfo struct {
+	Name         string
+	Version      string
+	AppVersion   string
+	Description  string
+	Home         string
+	Deprecated   bool
+	Dependencies []string // "name-version" of each subchart
 }
 
 // Container is one container of a pod as the containers view shows it

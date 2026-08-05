@@ -167,6 +167,14 @@ type editorClosedMsg struct {
 	err      error
 }
 
+// helmResourceMsg carries one live object behind a helm resource ('y' on the
+// release detail).
+type helmResourceMsg struct {
+	label string
+	obj   model.ResourceObject
+	err   error
+}
+
 // containersMsg carries the freshly fetched pod behind the containers view
 // (the list snapshot can lag behind container restarts).
 type containersMsg struct{ pod model.ResourceObject }
