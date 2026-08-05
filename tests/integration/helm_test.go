@@ -51,9 +51,10 @@ func rel(ns, name string, revision int, status release.Status, chartName, versio
 		Namespace: ns,
 		Version:   revision,
 		Info: &release.Info{
-			Status:       status,
-			LastDeployed: helmtime.Now(),
-			Description:  "Upgrade complete",
+			Status:        status,
+			FirstDeployed: helmtime.Now(),
+			LastDeployed:  helmtime.Now(),
+			Description:   "Upgrade complete",
 		},
 		Chart: &chart.Chart{Metadata: &chart.Metadata{
 			Name: chartName, Version: version, AppVersion: "1.2.3",
@@ -149,5 +150,88 @@ metadata:
 	}
 	if !strings.Contains(det.Values, "replicaCount: 3") || !strings.Contains(det.Values, "tag: 1.2.3") {
 		t.Errorf("values YAML wrong: %q", det.Values)
+	}
+}
+
+// TestHelmDetailCarriesDefinitionsAndMetadata (owner request 2026-08-05):
+// the detail exposes each resource's own rendered document, the chart
+// metadata, NOTES.txt, hooks, and per-revision chart/app versions.
+func TestHelmDetailCarriesDefinitionsAndMetadata(t *testing.T) {
+	manifest := `---
+# Source: chart/templates/deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: back
+  namespace: audience-back
+spec:
+  replicas: 2
+---
+# Source: chart/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: back
+spec:
+  ports:
+  - port: 80
+`
+	old := rel("audience-back", "back", 1, release.StatusSuperseded, "common-deployment-chart", "0.27.0")
+	cur := rel("audience-back", "back", 2, release.StatusDeployed, "common-deployment-chart", "0.28.1")
+	cur.Manifest = manifest
+	cur.Info.Notes = "Your release is named back.\nWatch it with kubectl."
+	cur.Chart.Metadata.Description = "iAdvize common deployment chart"
+	cur.Chart.Metadata.Home = "https://example.internal/charts"
+	cur.Chart.Metadata.Dependencies = []*chart.Dependency{{Name: "redis", Version: "17.1.0"}}
+	cur.Hooks = []*release.Hook{{
+		Name: "back-migrate", Kind: "Job",
+		Events:  []release.HookEvent{release.HookPreUpgrade},
+		LastRun: release.HookExecution{Phase: release.HookPhaseFailed, StartedAt: helmtime.Now()},
+	}}
+
+	hc := memoryHelm(t, old, cur)
+	det, err := hc.Detail("audience-back", "back")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Each resource keeps its OWN document (the definition Enter shows).
+	if len(det.Resources) != 2 {
+		t.Fatalf("resources=%+v", det.Resources)
+	}
+	dep := det.Resources[0]
+	if dep.Kind != "Deployment" || !strings.Contains(dep.Manifest, "replicas: 2") {
+		t.Fatalf("deployment definition missing its body: %q", dep.Manifest)
+	}
+	if strings.Contains(dep.Manifest, "kind: Service") {
+		t.Fatalf("documents must not bleed into each other:\n%s", dep.Manifest)
+	}
+	if svc := det.Resources[1]; !strings.Contains(svc.Manifest, "port: 80") {
+		t.Fatalf("service definition missing its body: %q", svc.Manifest)
+	}
+
+	// Chart metadata, notes and hooks.
+	if det.Chart.Version != "0.28.1" || det.Chart.Description == "" || det.Chart.Home == "" {
+		t.Fatalf("chart info=%+v", det.Chart)
+	}
+	if len(det.Chart.Dependencies) != 1 || det.Chart.Dependencies[0] != "redis-17.1.0" {
+		t.Fatalf("dependencies=%v", det.Chart.Dependencies)
+	}
+	if !strings.Contains(det.Notes, "named back") {
+		t.Fatalf("notes=%q", det.Notes)
+	}
+	if len(det.Hooks) != 1 || det.Hooks[0].Phase != "Failed" || det.Hooks[0].Events[0] != "pre-upgrade" {
+		t.Fatalf("hooks=%+v", det.Hooks)
+	}
+
+	// History carries the chart/app version OF EACH revision.
+	if len(det.History) != 2 {
+		t.Fatalf("history=%+v", det.History)
+	}
+	if det.History[0].ChartVersion != "0.28.1" || det.History[1].ChartVersion != "0.27.0" {
+		t.Fatalf("per-revision chart versions wrong: %+v", det.History)
+	}
+	if det.History[0].AppVersion != "1.2.3" || det.History[0].FirstDeployed.IsZero() {
+		t.Fatalf("revision app version / first deployed: %+v", det.History[0])
 	}
 }

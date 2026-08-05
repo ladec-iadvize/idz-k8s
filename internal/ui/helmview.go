@@ -12,10 +12,26 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	xansi "github.com/charmbracelet/x/ansi"
+	"sigs.k8s.io/yaml"
 
 	"github.com/iadvize/idz-k8s/internal/kube"
 	"github.com/iadvize/idz-k8s/internal/model"
 )
+
+// helmLiveYAML renders a live object the way the detail view does: noisy
+// bookkeeping (managedFields, last-applied) stripped, secrets masked.
+func helmLiveYAML(obj model.ResourceObject) string {
+	raw := cleanForDisplay(obj.Raw)
+	if strings.EqualFold(obj.Type.Kind, "Secret") {
+		raw = maskSecret(raw)
+	}
+	out, err := yaml.Marshal(raw)
+	if err != nil {
+		return "(cannot render: " + err.Error() + ")"
+	}
+	return strings.TrimRight(string(out), "\n")
+}
 
 func (m *Model) openHelm() (tea.Model, tea.Cmd) {
 	if m.helm == nil {
@@ -230,7 +246,96 @@ func typeForManifest(types []model.ResourceType, r model.HelmResource) (model.Re
 // renderHelmDetail shows everything about a release: history, the resources
 // the chart deployed (with their LIVE state), and the user-supplied values.
 // In values-only mode ('v') it renders just the values.
+// renderHelmDetail stores the payload and renders it; renderHelmDetailView
+// re-renders from the stored one when the resource selection moves.
 func (m *Model) renderHelmDetail(msg helmDetailMsg) {
+	m.helmDetail = msg
+	m.helmResSel = 0
+	m.renderHelmDetailView()
+}
+
+// handleHelmDetailKey: ↑/↓ walk the deployed resources, Enter opens the
+// selected resource's DEFINITION (the chart's rendered manifest), 'y' its
+// LIVE object from the cluster, 'v' the values (owner request 2026-08-05).
+func (m Model) handleHelmDetailKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	res := m.helmDetail.detail.Resources
+	switch {
+	case hit(msg, m.keys.Open):
+		return m.openHelmResource(false)
+	case hit(msg, m.keys.Yaml):
+		return m.openHelmResource(true)
+	case hit(msg, m.keys.Values):
+		m.helmValuesOnly = !m.helmValuesOnly
+		m.renderHelmDetailView()
+		m.helmHist.GotoTop()
+		return m, nil
+	}
+	switch msg.Type {
+	case tea.KeyUp:
+		if m.helmResSel > 0 {
+			m.helmResSel--
+			m.renderHelmDetailView()
+			m.keepFindingVisible(&m.helmHist, m.helmResLines, m.helmResSel)
+		}
+		return m, nil
+	case tea.KeyDown:
+		if m.helmResSel < len(res)-1 {
+			m.helmResSel++
+			m.renderHelmDetailView()
+			m.keepFindingVisible(&m.helmHist, m.helmResLines, m.helmResSel)
+		}
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.helmHist, cmd = m.helmHist.Update(msg)
+	return m, cmd
+}
+
+// openHelmResource shows one deployed resource: its rendered definition, or
+// (live=true) the object as it exists in the cluster right now.
+func (m Model) openHelmResource(live bool) (tea.Model, tea.Cmd) {
+	res := m.helmDetail.detail.Resources
+	if m.helmResSel < 0 || m.helmResSel >= len(res) {
+		m.statusMsg = "no deployed resource to open"
+		return m, nil
+	}
+	r := res[m.helmResSel]
+	ns := r.Namespace
+	if ns == "" {
+		ns = m.helmDetail.ns
+	}
+	label := r.Kind + "/" + r.Name
+	m.screen = screenHelmRes
+	m.layout()
+	if !live {
+		body := r.Manifest
+		if strings.TrimSpace(body) == "" {
+			body = "(the release manifest carries no document for this resource)"
+		}
+		m.setContent(screenHelmRes, m.rule("Definition (chart-rendered) — "+ns+"/"+label)+"\n\n"+
+			m.colorizeYAML(strings.TrimRight(body, "\n"))+"\n\n"+
+			m.theme.Faint.Render("'y' on the release detail shows the LIVE object · Esc goes back"))
+		m.helmRes.GotoTop()
+		return m, nil
+	}
+	t, ok := typeForManifest(m.types, r)
+	if !ok {
+		m.setContent(screenHelmRes, m.rule("Live object — "+ns+"/"+label)+"\n\n"+
+			m.theme.Warning.Render("this type is not browsable with your credentials — showing nothing rather than guessing"))
+		return m, nil
+	}
+	m.setContent(screenHelmRes, "loading "+ns+"/"+label+" from the cluster…")
+	cl := m.client
+	return m, func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		obj, err := cl.GetObject(ctx, t, ns, r.Name)
+		return helmResourceMsg{label: ns + "/" + label, obj: obj, err: err}
+	}
+}
+
+func (m *Model) renderHelmDetailView() {
+	msg := m.helmDetail
 	var b strings.Builder
 	title := "Helm release — " + msg.ns + "/" + msg.name
 	if m.helmValuesOnly {
@@ -261,11 +366,22 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 	// History.
 	b.WriteString(m.rule("History"))
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "  %-5s %-16s %-9s %s\n", "REV", "STATUS", "WHEN", "DESCRIPTION")
-	// DESCRIPTION gets all the remaining terminal width (was cut at 66).
-	descW := m.width - 36
-	if descW < 40 {
-		descW = 40
+	// CHART/APP come from each revision's OWN stored chart, so the history
+	// answers "what shipped at revision N" (owner request 2026-08-05).
+	chartW, appW := 7, 5
+	for _, r := range msg.detail.History {
+		if n := len([]rune(r.ChartVersion)); n > chartW {
+			chartW = n
+		}
+		if n := len([]rune(r.AppVersion)); n > appW {
+			appW = n
+		}
+	}
+	chartW, appW = clampW(chartW, 7, 18), clampW(appW, 5, 18)
+	fmt.Fprintf(&b, "  %-5s %-16s %-*s %-*s %-9s %s\n", "REV", "STATUS", chartW, "CHART", appW, "APP", "WHEN", "DESCRIPTION")
+	descW := m.width - 40 - chartW - appW
+	if descW < 30 {
+		descW = 30
 	}
 	for i, r := range msg.detail.History {
 		if i >= 8 {
@@ -273,7 +389,13 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 			b.WriteString("\n")
 			break
 		}
-		line := fmt.Sprintf("  %-5d %-16s %-9s %s", r.Revision, r.Status, kube.Age(r.Updated, now), truncate(r.Description, descW))
+		cur := " "
+		if i == 0 {
+			cur = "▸" // the revision currently deployed
+		}
+		line := fmt.Sprintf("%s %-5d %-16s %-*s %-*s %-9s %s", cur, r.Revision, r.Status,
+			chartW, orDash(r.ChartVersion), appW, orDash(r.AppVersion),
+			kube.Age(r.Updated, now), truncate(r.Description, descW))
 		switch {
 		case r.Status == "failed":
 			b.WriteString(m.theme.Error.Render(line))
@@ -301,21 +423,103 @@ func (m *Model) renderHelmDetail(msg helmDetailMsg) {
 	if lim := m.width - 40; resW > lim && lim >= 24 {
 		resW = lim
 	}
+	if m.helmResSel >= len(msg.detail.Resources) {
+		m.helmResSel = len(msg.detail.Resources) - 1
+	}
+	if m.helmResSel < 0 {
+		m.helmResSel = 0
+	}
+	m.helmResLines = make([]int, 0, len(msg.detail.Resources))
 	for i, r := range msg.detail.Resources {
-		label := fmt.Sprintf("  %-*s", resW, truncate(r.Kind+"/"+r.Name, resW))
+		// Remember each resource's content line: ↑/↓ and clicks select it.
+		m.helmResLines = append(m.helmResLines, strings.Count(b.String(), "\n"))
+		cursor := "  "
+		if i == m.helmResSel {
+			cursor = "▸ "
+		}
+		label := fmt.Sprintf("%s%-*s", cursor, resW, truncate(r.Kind+"/"+r.Name, resW))
+		var line string
 		switch {
 		case i >= len(msg.live) || !msg.live[i].known:
-			b.WriteString(m.theme.Faint.Render(label + " —"))
+			line = m.theme.Faint.Render(label + " —")
 		case !msg.live[i].found:
-			b.WriteString(m.theme.Error.Render(label + " ✗ MISSING in cluster"))
+			line = m.theme.Error.Render(label + " ✗ MISSING in cluster")
 		default:
 			st := msg.live[i].status
-			b.WriteString(label + " " + m.theme.Status(st))
+			line = label + " " + m.theme.Status(st)
 			if st.Reason != "" {
-				b.WriteString(m.theme.Faint.Render(" (" + st.Reason + ")"))
+				line += m.theme.Faint.Render(" (" + st.Reason + ")")
 			}
 		}
+		if i == m.helmResSel {
+			line = m.theme.Selected.Render(xansi.Strip(line))
+		}
+		b.WriteString(line)
 		b.WriteString("\n")
+	}
+	if len(msg.detail.Resources) > 0 {
+		b.WriteString(m.theme.Faint.Render("  ↑/↓ select · Enter: its definition · 'y': its live object") + "\n")
+	}
+
+	// Chart metadata Helm stored with the revision.
+	if c := msg.detail.Chart; c.Name != "" {
+		b.WriteString("\n")
+		b.WriteString(m.rule("Chart"))
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "  %s-%s", c.Name, orDash(c.Version))
+		if c.AppVersion != "" {
+			fmt.Fprintf(&b, "  (app %s)", c.AppVersion)
+		}
+		if c.Deprecated {
+			b.WriteString("  " + m.theme.Error.Render("⚠ DEPRECATED chart"))
+		}
+		b.WriteString("\n")
+		if c.Description != "" {
+			b.WriteString("  " + m.theme.Faint.Render(truncate(c.Description, m.width-4)) + "\n")
+		}
+		if c.Home != "" {
+			b.WriteString("  " + m.theme.Faint.Render(truncate(c.Home, m.width-4)) + "\n")
+		}
+		if len(c.Dependencies) > 0 {
+			b.WriteString("  " + m.theme.Faint.Render("subcharts: "+truncate(strings.Join(c.Dependencies, ", "), m.width-14)) + "\n")
+		}
+	}
+
+	// Chart hooks and their last run — where a failed pre-upgrade job shows.
+	if len(msg.detail.Hooks) > 0 {
+		b.WriteString("\n")
+		b.WriteString(m.rule(fmt.Sprintf("Hooks (%d)", len(msg.detail.Hooks))))
+		b.WriteString("\n")
+		for _, h := range msg.detail.Hooks {
+			when := "never run"
+			if !h.Started.IsZero() {
+				when = kube.Age(h.Started, now) + " ago"
+			}
+			line := fmt.Sprintf("  %-28s %-14s %-22s %s",
+				truncate(h.Name, 28), truncate(h.Kind, 14),
+				truncate(strings.Join(h.Events, ","), 22), when)
+			switch h.Phase {
+			case "Failed":
+				b.WriteString(m.theme.Error.Render(line + "  ✗ " + h.Phase))
+			case "Succeeded":
+				b.WriteString(m.theme.Ok.Render(line + "  ✓ " + h.Phase))
+			case "":
+				b.WriteString(m.theme.Faint.Render(line))
+			default:
+				b.WriteString(m.theme.Warning.Render(line + "  ! " + h.Phase))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	// NOTES.txt of the current revision — what helm printed after the deploy.
+	if strings.TrimSpace(msg.detail.Notes) != "" {
+		b.WriteString("\n")
+		b.WriteString(m.rule("Notes (NOTES.txt)"))
+		b.WriteString("\n")
+		for _, l := range strings.Split(strings.TrimRight(msg.detail.Notes, "\n"), "\n") {
+			b.WriteString("  " + truncate(l, m.width-2) + "\n")
+		}
 	}
 
 	// User-supplied values.

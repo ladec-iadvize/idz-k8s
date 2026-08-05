@@ -142,6 +142,18 @@ opening the YAML detail.
   chooser, never default. User-specific columns belong in the user's
   viewPrefs, not in code.
 
+## Helm release detail (owner request 2026-08-05)
+
+`helm.ReleaseDetail` carries everything Helm stores per revision: each
+resource's OWN rendered document (`HelmResource.Manifest` — what Enter
+shows), the per-revision chart/app versions (the history answers "what
+shipped at revision N"), NOTES.txt, the hooks with their last run, and the
+chart metadata. The detail view keeps its payload in `m.helmDetail` and
+re-renders on selection moves; `helmResLines` maps resources to content
+lines for ↑/↓ and clicks (same pattern as the findings views). `Enter` =
+chart-rendered definition, `y` = live object (fetched, errors shown never
+faked), `v` = values-only.
+
 ## Edit flow ('e') — owner report 2026-08-04
 
 The edit is applied as a MERGE PATCH of original→edited
