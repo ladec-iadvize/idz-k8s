@@ -5,20 +5,20 @@
 class IdzK8s < Formula
   desc "Kubernetes overview, debugging & admin TUI"
   homepage "https://github.com/ladec-iadvize/idz-k8s"
-  version "3.7.3"
+  version "3.8.0"
 
   on_macos do
     if Hardware::CPU.intel?
-      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.7.3/idz-k8s_3.7.3_darwin_amd64.tar.gz"
-      sha256 "4613c17f245435eccb6320d70817ef52d3e3b2c7b8aff17e492c27c2d38faba6"
+      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.8.0/idz-k8s_3.8.0_darwin_amd64.tar.gz"
+      sha256 "d6b81c56929a390ad93cf9339e0ea450302baa0fac859eaf3a48c21f59470765"
 
       define_method(:install) do
         bin.install "idz-k8s"
       end
     end
     if Hardware::CPU.arm?
-      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.7.3/idz-k8s_3.7.3_darwin_arm64.tar.gz"
-      sha256 "0323a719173f2bfa62067e9f97b3509d0a9199f609f6c56cd17814afba06cca8"
+      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.8.0/idz-k8s_3.8.0_darwin_arm64.tar.gz"
+      sha256 "0e77f2f4a6603a059057db16536ae0f6b0b6adf91ab76e93f7324a0f4f73826d"
 
       define_method(:install) do
         bin.install "idz-k8s"
@@ -28,15 +28,15 @@ class IdzK8s < Formula
 
   on_linux do
     if Hardware::CPU.intel? && Hardware::CPU.is_64_bit?
-      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.7.3/idz-k8s_3.7.3_linux_amd64.tar.gz"
-      sha256 "464b9fb4fe571b54617296fd055a2955ed6c159a873754263d97177253dec51d"
+      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.8.0/idz-k8s_3.8.0_linux_amd64.tar.gz"
+      sha256 "1c4cc436e0de8e1e6998eb62ffed77c822f21d803245286a4f461759489befa5"
       define_method(:install) do
         bin.install "idz-k8s"
       end
     end
     if Hardware::CPU.arm? && Hardware::CPU.is_64_bit?
-      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.7.3/idz-k8s_3.7.3_linux_arm64.tar.gz"
-      sha256 "f5d84bfdda07d37b72f9849eedd24819bcff6754f33751fe8f08ad80fe3e4d1a"
+      url "https://github.com/ladec-iadvize/idz-k8s/releases/download/v3.8.0/idz-k8s_3.8.0_linux_arm64.tar.gz"
+      sha256 "10378001a6fe8da46c5631a6687b2f7e654cf68a77871de2b909a0875e0de700"
       define_method(:install) do
         bin.install "idz-k8s"
       end
