@@ -190,6 +190,12 @@ func (m Model) handleScrollKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case hit(msg, m.keys.Wrap):
 		m.toggleLogWrap()
 		return m, nil
+	case hit(msg, m.keys.ClearLogs):
+		m.clearLogs()
+		return m, nil
+	case hit(msg, m.keys.Separator):
+		m.markLogs()
+		return m, nil
 	case hit(msg, m.keys.ScrollLeft):
 		m.scrollLogs(-logHStep)
 		return m, nil

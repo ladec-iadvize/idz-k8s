@@ -2079,10 +2079,11 @@ func (m Model) screenKeymap() keymapView {
 		}
 	case screenLogs:
 		return keymapView{
-			short: []key.Binding{k.Up, k.Down, k.Pause, k.Wrap, k.ScrollLeft, k.ScrollRight, k.Filter, k.Back, k.Quit},
+			short: []key.Binding{k.Up, k.Down, k.Pause, k.Wrap, k.ClearLogs, k.Separator, k.Filter, k.Back, k.Quit},
 			full: [][]key.Binding{nav,
 				{k.Pause, k.End, k.Wrap, k.ScrollLeft, k.ScrollRight},
-				{k.Filter, k.SearchNext, k.SearchPrev, k.Back, k.Help, k.Quit}},
+				{k.ClearLogs, k.Separator, k.Filter, k.SearchNext, k.SearchPrev},
+				{k.Back, k.Help, k.Quit}},
 		}
 	case screenPicker:
 		return keymapView{

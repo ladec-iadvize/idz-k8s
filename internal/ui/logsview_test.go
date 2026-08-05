@@ -179,3 +179,97 @@ func TestLogsNewLinesRespectTheMode(t *testing.T) {
 		}
 	}
 }
+
+// TestLogsClear (owner request 2026-08-06): ctrl+l drops what is buffered
+// without touching the stream — new lines keep arriving afterwards.
+func TestLogsClear(t *testing.T) {
+	m := logsModel(t, "first line", "second line")
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m = asModel(t, mi)
+	if len(m.logBuf) != 0 {
+		t.Fatalf("ctrl+l must empty the buffer, got %v", m.logBuf)
+	}
+	if got := xansi.Strip(m.logsView.View()); strings.Contains(got, "first line") {
+		t.Fatalf("the view must be cleared:\n%s", got)
+	}
+	if !strings.Contains(m.statusMsg, "cleared") || !strings.Contains(m.statusMsg, "streaming continues") {
+		t.Fatalf("clearing must say the stream is untouched, got %q", m.statusMsg)
+	}
+	// The stream keeps feeding the view.
+	mi, _ = m.Update(logLineMsg{Text: "after the clear"})
+	m = asModel(t, mi)
+	if len(m.logBuf) != 1 || !strings.Contains(xansi.Strip(m.logsView.View()), "after the clear") {
+		t.Fatalf("new lines must still arrive: %v", m.logBuf)
+	}
+	// Clearing an empty buffer is a no-op that says so.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m = asModel(t, mi)
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m = asModel(t, mi)
+	if !strings.Contains(m.statusMsg, "already empty") {
+		t.Fatalf("a second clear must be explicit, got %q", m.statusMsg)
+	}
+}
+
+// TestLogsSeparator (owner request 2026-08-06): 'M' marks the current point
+// in the stream with a full-width rule carrying its time.
+func TestLogsSeparator(t *testing.T) {
+	m := logsModel(t, "before the mark")
+	mi, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m = asModel(t, mi)
+	mi, _ = m.Update(logLineMsg{Text: "after the mark"})
+	m = asModel(t, mi)
+
+	raw := xansi.Strip(m.vpRaw[screenLogs])
+	lines := strings.Split(raw, "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected line + separator + line, got %d:\n%s", len(lines), raw)
+	}
+	sep := lines[1]
+	if !strings.Contains(sep, "──") || strings.Contains(sep, "before") {
+		t.Fatalf("the separator must be a rule of its own: %q", sep)
+	}
+	if len([]rune(sep)) != m.width {
+		t.Fatalf("the separator must span the terminal (%d), got %d: %q", m.width, len([]rune(sep)), sep)
+	}
+	if lines[0] != "before the mark" || lines[2] != "after the mark" {
+		t.Fatalf("the mark must sit between the two lines:\n%s", raw)
+	}
+
+	// It is stored as a sentinel, so a resize redraws it at the new width.
+	mi, _ = m.Update(tea.WindowSizeMsg{Width: 50, Height: 24})
+	m = asModel(t, mi)
+	sep = strings.Split(xansi.Strip(m.vpRaw[screenLogs]), "\n")[1]
+	if len([]rune(sep)) != 50 {
+		t.Fatalf("after a resize the separator must span 50, got %d: %q", len([]rune(sep)), sep)
+	}
+
+	// Wrapping does not fold it, and scrolling sideways keeps it full width.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	m = asModel(t, mi)
+	if sep := strings.Split(xansi.Strip(m.vpRaw[screenLogs]), "\n")[1]; len([]rune(sep)) != 50 {
+		t.Fatalf("wrapped separator=%q", sep)
+	}
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}}) // wrap off
+	m = asModel(t, mi)
+	m.logBuf = append(m.logBuf, strings.Repeat("x", 300))
+	m.renderLogs()
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRight})
+	m = asModel(t, mi)
+	if sep := strings.Split(xansi.Strip(m.vpRaw[screenLogs]), "\n")[1]; len([]rune(sep)) != 50 {
+		t.Fatalf("a shifted view must keep the separator full width, got %d: %q", len([]rune(sep)), sep)
+	}
+
+	// A second mark adds a second rule.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'M'}})
+	m = asModel(t, mi)
+	if n := strings.Count(xansi.Strip(m.vpRaw[screenLogs]), "──"); n < 2 {
+		t.Fatalf("expected two separators, found %d", n)
+	}
+	// Clearing removes them too.
+	mi, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlL})
+	m = asModel(t, mi)
+	if len(m.logBuf) != 0 {
+		t.Fatalf("clear must drop separators as well: %v", m.logBuf)
+	}
+}
