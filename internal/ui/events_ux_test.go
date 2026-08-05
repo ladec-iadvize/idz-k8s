@@ -307,3 +307,102 @@ func TestEventsDetailRowsGrowWithHeight(t *testing.T) {
 		t.Fatalf("a taller terminal must detail more events: %d rows at h=30 vs %d at h=60", small, large)
 	}
 }
+
+// TestEventsScaleShowsCounts (owner report 2026-08-05: "j'ai pas
+// l'impression que les events ni le nombre de pods s'actualisent"): the
+// filtering did work, but nothing on screen made it obvious. The header now
+// carries the event and object counts, which move with the scale.
+func TestEventsScaleShowsCounts(t *testing.T) {
+	now := time.Now()
+	m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "",
+		WithInitialType(model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}))
+	m.width, m.height = 150, 40
+	m.layout()
+	m.screen = screenEvents
+	// 2 objects inside 5 minutes, 2 more only inside the hour.
+	m.eventRows = []model.Event{
+		{Time: now.Add(-1 * time.Minute), Type: "Normal", Reason: "Pulled", ObjKind: "Pod", ObjName: "a", Namespace: "demo"},
+		{Time: now.Add(-2 * time.Minute), Type: "Normal", Reason: "Started", ObjKind: "Pod", ObjName: "b", Namespace: "demo"},
+		{Time: now.Add(-40 * time.Minute), Type: "Normal", Reason: "Pulled", ObjKind: "Pod", ObjName: "c", Namespace: "demo"},
+		{Time: now.Add(-50 * time.Minute), Type: "Normal", Reason: "Pulled", ObjKind: "Pod", ObjName: "d", Namespace: "demo"},
+	}
+	m.renderEvents()
+	if got := xansi.Strip(m.events.View()); !strings.Contains(got, "4 events · 4 objects") {
+		t.Fatalf("the header must carry the counts:\n%s", got)
+	}
+	// 't' → 5m: both numbers move.
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if got := xansi.Strip(m.events.View()); !strings.Contains(got, "2 events · 2 objects") {
+		t.Fatalf("the counts must follow the scale:\n%s", got)
+	}
+}
+
+// TestEventsDetailListNotStarvedByLanes (owner report 2026-08-05): hundreds
+// of objects used to squeeze the detail list to its 4-row floor.
+func TestEventsDetailListNotStarvedByLanes(t *testing.T) {
+	now := time.Now()
+	var rows []model.Event
+	for i := range 300 {
+		rows = append(rows, model.Event{Time: now.Add(-time.Duration(i) * time.Second),
+			Type: "Normal", Reason: "Pulled", ObjKind: "Pod",
+			ObjName: fmt.Sprintf("pod-%03d", i), Namespace: "demo"})
+	}
+	m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "",
+		WithInitialType(model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}))
+	m.width, m.height = 150, 40
+	m.layout()
+	m.screen = screenEvents
+	m.eventRows = rows
+	m.renderEvents()
+	if m.recentShown < 8 {
+		t.Fatalf("the detail list must keep a usable size with many lanes, got %d rows", m.recentShown)
+	}
+	// A scoped timeline (few objects) gets even more detail rows.
+	m.eventRows = rows[:3]
+	m.renderEvents()
+	if m.recentShown < 3 {
+		t.Fatalf("a small timeline must detail everything it has, got %d", m.recentShown)
+	}
+}
+
+// TestEventsShowLastTermination (owner request 2026-08-05: the reason a pod
+// stopped belongs in the timeline): the selected event names it, and an OOM
+// is flagged on the row itself.
+func TestEventsShowLastTermination(t *testing.T) {
+	now := time.Now()
+	m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "",
+		WithInitialType(model.ResourceType{Version: "v1", Kind: "Pod", Resource: "pods", Namespaced: true}))
+	m.width, m.height = 150, 40
+	m.layout()
+	m.screen = screenEvents
+	m.eventRows = []model.Event{
+		{Time: now.Add(-1 * time.Minute), Type: "Normal", Reason: "Started",
+			Message: "Container started", ObjKind: "Pod", ObjName: "hungry", Namespace: "demo"},
+		{Time: now.Add(-2 * time.Minute), Type: "Normal", Reason: "Started",
+			Message: "Container started", ObjKind: "Pod", ObjName: "clean", Namespace: "demo"},
+	}
+	// The terminations arrive as their own message (one pods LIST).
+	mi, _ := m.Update(eventTermMsg{term: map[string]string{
+		"demo/hungry": "OOMKilled (exit 137)",
+		"demo/clean":  "Completed (exit 0)",
+	}})
+	m = asModel(t, mi)
+	view := xansi.Strip(m.events.View())
+	// The row of an OOMKilled pod is flagged inline…
+	if !strings.Contains(view, "⚠OOMKilled (exit 137)") {
+		t.Fatalf("an OOM must be flagged on the row:\n%s", view)
+	}
+	// …and the selected event spells it out.
+	if !strings.Contains(view, "last termination of this pod: OOMKilled (exit 137)") {
+		t.Fatalf("the selected event must name the termination:\n%s", view)
+	}
+	// A clean Completed is not screamed about on the row.
+	if strings.Contains(view, "⚠Completed") {
+		t.Fatalf("a clean exit must not be flagged as a warning:\n%s", view)
+	}
+	// Moving the selection shows the other pod's reason.
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if got := xansi.Strip(m.events.View()); !strings.Contains(got, "last termination of this pod: Completed (exit 0)") {
+		t.Fatalf("the selection's own reason must show:\n%s", got)
+	}
+}

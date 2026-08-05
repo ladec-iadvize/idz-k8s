@@ -167,6 +167,10 @@ type editorClosedMsg struct {
 	err      error
 }
 
+// eventTermMsg carries "why did this pod last stop" for the timeline's
+// annotations (best effort: an empty map just means no annotation).
+type eventTermMsg struct{ term map[string]string }
+
 // helmResourceMsg carries one live object behind a helm resource ('y' on the
 // release detail).
 type helmResourceMsg struct {

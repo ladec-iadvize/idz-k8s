@@ -156,8 +156,13 @@ chooser. Never infer a reason the API did not give.
 
 `'t'` (keys.Scale) cycles `eventsWindows` (5m/15m/1h/6h/24h/all, default
 all): it filters the events AND rescales the axis, with a clickable
-`scale:[…]` chip. The lane cap and the detail-row count derive from
-`m.bodyH` instead of the old fixed 25/8, so a taller terminal shows more.
+`scale:[…]` chip FOLLOWED BY THE COUNTS — on a busy cluster the top lanes
+look alike between two windows, so the numbers are the only visible proof
+the scale changed (owner report 2026-08-05). Lanes take at most bodyH/3 and
+the detail rows get the rest, computed from the ACTUAL lane count. The
+timeline also annotates why a pod last stopped (eventsPodTerm, fed by one
+extra pods LIST on open): ⚠OOM on the row, the full reason under the
+selected event.
 
 ## Helm release detail (owner request 2026-08-05)
 

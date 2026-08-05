@@ -166,14 +166,15 @@ type Model struct {
 	eventRows       []model.Event
 	eventsShown     []model.Event // after filters, most recent first (render order)
 	eventsQuery     string
-	eventsFiltering bool            // typing a filter (Enter commits, Esc cancels)
-	eventsKind      string          // kind filter ("" = all kinds)
-	eventsWarnOnly  bool            // severity filter: warnings only (FR-014)
-	eventsWindow    time.Duration   // timeline scale: 0 = every retained event
-	recentSel       int             // selected index in the Recent list (highlighted on the timeline)
-	eventsScope     map[string]bool // "ns/name" allow-list (set when opened from a drill)
-	eventsScopeFor  string          // label, e.g. "Deployment/back"
-	pickerReturn    screen          // screen to return to when the picker closes
+	eventsFiltering bool              // typing a filter (Enter commits, Esc cancels)
+	eventsKind      string            // kind filter ("" = all kinds)
+	eventsWarnOnly  bool              // severity filter: warnings only (FR-014)
+	eventsWindow    time.Duration     // timeline scale: 0 = every retained event
+	eventsPodTerm   map[string]string // ns/name → why that pod last stopped
+	recentSel       int               // selected index in the Recent list (highlighted on the timeline)
+	eventsScope     map[string]bool   // "ns/name" allow-list (set when opened from a drill)
+	eventsScopeFor  string            // label, e.g. "Deployment/back"
+	pickerReturn    screen            // screen to return to when the picker closes
 
 	// Drill-down: viewing the pods owned by a workload (US9 ownership) or
 	// running on a node (Enter on the nodes list).
@@ -730,6 +731,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = msg.err.Error()
 		}
 		m.renderTopology(msg.nodes)
+		return m, nil
+
+	case eventTermMsg:
+		m.eventsPodTerm = msg.term
+		if m.screen == screenEvents {
+			m.renderEvents()
+		}
 		return m, nil
 
 	case eventsMsg:
