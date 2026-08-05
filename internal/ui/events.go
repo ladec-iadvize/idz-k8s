@@ -4,6 +4,7 @@ package ui
 // timeline rendering (lanes, markers, badges).
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -44,7 +45,33 @@ func (m *Model) openEvents() (tea.Model, tea.Cmd) {
 	}
 	m.events.SetContent("loading events…")
 	m.layout()
-	return m, m.fetchEvents()
+	// One extra pods LIST (informer-cached) feeds the "why did it stop"
+	// annotations — events themselves rarely carry the OOM.
+	return m, tea.Batch(m.fetchEvents(), m.fetchEventTerminations())
+}
+
+// fetchEventTerminations maps ns/name → why that pod last stopped, for the
+// pods of the current scope.
+func (m Model) fetchEventTerminations() tea.Cmd {
+	cl, ns := m.client, m.client.Namespace
+	if m.drillSelector != "" && m.drillNamespace != "" {
+		ns = m.drillNamespace
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		pods, err := cl.List(ctx, podResourceType, ns)
+		if err != nil {
+			return eventTermMsg{} // best effort: the timeline works without it
+		}
+		out := make(map[string]string, len(pods))
+		for _, p := range pods {
+			if why := kube.PodLastTermination(p.Raw); why != "" {
+				out[p.Namespace+"/"+p.Name] = why
+			}
+		}
+		return eventTermMsg{term: out}
+	}
 }
 
 // handleEventsKey (outside typing mode): '/' edits the filter, 'k' opens the
@@ -204,6 +231,14 @@ func (m *Model) renderEvents() {
 	m.eventsScaleZone = clickZone{x0: lipgloss.Width(b.String())}
 	b.WriteString(m.theme.StatusBar.Render("scale:[" + windowLabel(m.eventsWindow) + " ▾]"))
 	m.eventsScaleZone.x1 = lipgloss.Width(b.String())
+	// The counts make the scale's effect obvious: on a busy cluster the top
+	// lanes look alike between two windows, so the numbers are what moves
+	// (owner report 2026-08-05).
+	objects := map[string]bool{}
+	for _, e := range evs {
+		objects[e.Namespace+"/"+e.ObjKind+"/"+e.ObjName] = true
+	}
+	b.WriteString("  " + m.theme.Position.Render(fmt.Sprintf("%d events · %d objects", len(evs), len(objects))))
 	if m.eventsWarnOnly {
 		b.WriteString("  " + m.theme.Warning.Render("▲ warnings only ('w' toggles)"))
 	}
@@ -339,14 +374,24 @@ func (m *Model) renderEvents() {
 	// selected event lights up on the timeline. Both the lane count and the
 	// detail window grow with the terminal (owner request 2026-08-05: "voir
 	// plus d'events") instead of the old fixed 25/8.
+	// Lanes never take more than a THIRD of the body: with hundreds of
+	// objects the timeline used to starve the detail list down to its 4-row
+	// minimum (owner report 2026-08-05). Few objects → the lanes stay small
+	// and the detail list takes the rest.
 	maxLanes := timelineMaxLanes
-	if room := m.bodyH - 14; room > 0 && room < maxLanes {
-		maxLanes = room
+	if third := m.bodyH / 3; third < maxLanes {
+		maxLanes = third
 	}
 	if maxLanes < 3 {
 		maxLanes = 3
 	}
-	recentWinSize := m.bodyH - maxLanes - 12
+	laneCount := len(order)
+	if laneCount > maxLanes {
+		laneCount = maxLanes
+	}
+	// The detail list gets whatever the lanes did not use — a scoped timeline
+	// (few lanes) details many more events.
+	recentWinSize := m.bodyH - laneCount - 12
 	if recentWinSize < 4 {
 		recentWinSize = 4
 	}
@@ -467,8 +512,16 @@ func (m *Model) renderEvents() {
 		if i == m.recentSel {
 			cursor = "▶ "
 		}
-		prefix := fmt.Sprintf("%s%-4s %s %-*s %s%s — ",
-			cursor, kube.Age(e.Time, now), eventBadge(e), objW, truncate(e.ObjKind+"/"+e.ObjName, objW), e.Reason, cnt)
+		// A pod that was OOMKilled carries it here: the event stream itself
+		// rarely says so (owner request 2026-08-05).
+		oom := ""
+		if strings.EqualFold(e.ObjKind, "Pod") {
+			if why := m.eventsPodTerm[e.Namespace+"/"+e.ObjName]; strings.Contains(why, "OOM") {
+				oom = " ⚠" + why
+			}
+		}
+		prefix := fmt.Sprintf("%s%-4s %s %-*s %s%s%s — ",
+			cursor, kube.Age(e.Time, now), eventBadge(e), objW, truncate(e.ObjKind+"/"+e.ObjName, objW), e.Reason, cnt, oom)
 		msgW := m.width - len([]rune(prefix))
 		if msgW < 20 {
 			msgW = 20
@@ -501,6 +554,17 @@ func (m *Model) renderEvents() {
 		head := fmt.Sprintf("  %s %s %s/%s — %s%s", kube.Age(e.Time, now), eventBadge(e),
 			e.ObjKind, e.ObjName, e.Reason, cnt)
 		b.WriteString(m.theme.Section.Render(truncate(head, m.width-2)) + "\n")
+		// Why the referenced pod last stopped — the OOM you came looking for.
+		if strings.EqualFold(e.ObjKind, "Pod") {
+			if why := m.eventsPodTerm[e.Namespace+"/"+e.ObjName]; why != "" {
+				line := "  last termination of this pod: " + why
+				if strings.Contains(why, "OOM") {
+					b.WriteString(m.theme.Error.Render(line) + "\n")
+				} else {
+					b.WriteString(m.theme.Warning.Render(line) + "\n")
+				}
+			}
+		}
 		for _, l := range wrapTo(e.Message, m.width-6) {
 			line := "  " + l
 			if e.Warning() {
