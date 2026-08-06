@@ -39,39 +39,24 @@ func oomPodModel(t *testing.T) Model {
 	return m
 }
 
-// TestRestartsColumnNamesTheReason: the pods list says WHY it restarted, so
-// an OOM is visible without opening anything.
-func TestRestartsColumnNamesTheReason(t *testing.T) {
+// TestRestartsColumnStaysAPlainCount (owner decision 2026-08-06: the
+// termination reason belongs to the events timeline and the containers
+// view, not to this column — it was too noisy in the pod lists).
+func TestRestartsColumnStaysAPlainCount(t *testing.T) {
 	m := oomPodModel(t)
 	row, ok := m.win.Selected()
 	if !ok {
 		t.Fatal("no row")
 	}
-	var restarts string
 	for i, c := range m.columnsForType() {
-		if c.title == "RESTARTS" {
-			restarts = row[i+1] // +1: the mark column
+		if c.title != "RESTARTS" {
+			continue
 		}
-	}
-	if !strings.Contains(restarts, "4") || !strings.Contains(restarts, "OOMKilled") {
-		t.Fatalf("RESTARTS must name the reason, got %q", restarts)
-	}
-	// Sorting stays numeric despite the suffix (the column keeps its own less).
-	for _, c := range m.columnsForType() {
-		if c.title == "RESTARTS" && c.less == nil {
-			t.Fatal("RESTARTS must keep a numeric comparator")
+		if got := row[i+1]; got != "4" { // +1: the mark column
+			t.Fatalf("RESTARTS must be a plain count, got %q", got)
 		}
-	}
-	// A pod that never restarted stays a plain "0".
-	m.objects[0].Raw["status"].(map[string]any)["containerStatuses"] = []any{
-		map[string]any{"name": "app", "ready": true, "restartCount": int64(0),
-			"state": map[string]any{"running": map[string]any{}}},
-	}
-	m.applyRows()
-	row, _ = m.win.Selected()
-	for i, c := range m.columnsForType() {
-		if c.title == "RESTARTS" && row[i+1] != "0" {
-			t.Fatalf("a pod with no restart must show a plain 0, got %q", row[i+1])
+		if c.less == nil {
+			t.Fatal("RESTARTS must keep its numeric comparator")
 		}
 	}
 }

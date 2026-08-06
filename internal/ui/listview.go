@@ -290,19 +290,13 @@ func (m *Model) columnsBase() []listColumn {
 		memPct.less = func(a, b model.ResourceObject) bool {
 			return usageFrac(m.podUsageMem[usageKey(a)], reqMem(a)) < usageFrac(m.podUsageMem[usageKey(b)], reqMem(b))
 		}
+		// RESTARTS stays a plain count, kubectl-style (owner decision
+		// 2026-08-06: the termination reason belongs to the events timeline
+		// and the containers view, not to this column). The reason is still
+		// available here as the opt-in LAST TERMINATION column below.
 		restarts := listColumn{title: "RESTARTS",
 			cell: func(_ *Model, o model.ResourceObject) string {
-				r := kube.PodRestarts(o.Raw)
-				if r == 0 {
-					return "0"
-				}
-				// Say WHY it restarted when the cluster knows: an OOMKill is
-				// otherwise invisible on a pod that is Running again (owner
-				// request 2026-08-05). Sorting stays numeric (own less).
-				if why := kube.PodLastTermination(o.Raw); why != "" {
-					return fmt.Sprintf("%d (%s)", r, why)
-				}
-				return fmt.Sprintf("%d", r)
+				return fmt.Sprintf("%d", kube.PodRestarts(o.Raw))
 			},
 			less: func(a, b model.ResourceObject) bool { return kube.PodRestarts(a.Raw) < kube.PodRestarts(b.Raw) }}
 		lastTerm := listColumn{title: "LAST TERMINATION", off: true,

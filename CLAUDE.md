@@ -149,11 +149,13 @@ opening the YAML detail.
 
 The current `state` says nothing about an OOM once the container is running
 again — the reason lives in `status.lastState.terminated`
-(`kube.PodLastTermination`, `Container.LastTerminated`). It surfaces in three
-places: inline in the pods list's RESTARTS cell (`4 (OOMKilled (exit 137))`,
-sorting stays numeric via the column's own `less`), as a LAST TERMINATION
+(`kube.PodLastTermination`, `Container.LastTerminated`). It surfaces in the
+EVENTS TIMELINE (⚠OOM on the row, the reason under the selected event —
+where the owner wanted it, decision 2026-08-06), as a LAST TERMINATION
 column in the containers view, and as an off-by-default column in the 'C'
-chooser. Never infer a reason the API did not give.
+chooser. It is deliberately NOT in the pods list's RESTARTS cell: that was
+tried on 2026-08-05 and removed as too noisy. Never infer a reason the API
+did not give.
 
 ## Events timeline scale (owner request 2026-08-05)
 
