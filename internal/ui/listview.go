@@ -245,6 +245,12 @@ func (m *Model) columnsBase() []listColumn {
 		if fa != fb {
 			return fa < fb
 		}
+		// Same health: order by size. With the name tiebreak alone, a list of
+		// fully-ready workloads (all frac 1.0) read as random — 1/1, 10/10,
+		// 2/2… (owner report 2026-08-21).
+		if da != db {
+			return da < db
+		}
 		return a.Name < b.Name
 	}
 
@@ -336,7 +342,15 @@ func (m *Model) columnsBase() []listColumn {
 			},
 			less: func(a, b model.ResourceObject) bool {
 				ca, cb := m.nodePods[a.Name], m.nodePods[b.Name]
-				return readyFrac(ca[0], ca[1]) < readyFrac(cb[0], cb[1])
+				fa, fb := readyFrac(ca[0], ca[1]), readyFrac(cb[0], cb[1])
+				if fa != fb {
+					return fa < fb
+				}
+				// Same health: order by pod count then name (same rule as READY).
+				if ca[1] != cb[1] {
+					return ca[1] < cb[1]
+				}
+				return a.Name < b.Name
 			}}
 		instance := listColumn{title: "INSTANCE",
 			cell: func(_ *Model, o model.ResourceObject) string {

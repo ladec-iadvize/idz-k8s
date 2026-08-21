@@ -101,3 +101,53 @@ func TestSortByAvailableIsNumeric(t *testing.T) {
 		t.Fatalf("AVAILABLE desc must put 10 first — got %v", m.rowObjs[0].Name)
 	}
 }
+
+// TestSortByReadyIsNumeric (owner bug 2026-08-21: READY on Deployments looked
+// random): fully-ready workloads all share fraction 1.0, so the sort fell back
+// to the name and the READY cells read 10/10, 1/1, 2/2… Same health must order
+// by size; degraded ones still come first ascending, no-replica ones last.
+func TestSortByReadyIsNumeric(t *testing.T) {
+	dep := model.ResourceType{Group: "apps", Version: "v1", Kind: "Deployment", Resource: "deployments", Namespaced: true}
+	m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "", WithInitialType(dep))
+	m.width, m.height = 160, 30
+	m.layout()
+	m.filter = textinput.New()
+	mk := func(name string, ready, desired int64) model.ResourceObject {
+		return model.ResourceObject{Type: dep, Namespace: "demo", Name: name,
+			Raw: map[string]any{
+				"metadata": map[string]any{"name": name, "namespace": "demo"},
+				"spec":     map[string]any{"replicas": desired},
+				"status":   map[string]any{"readyReplicas": ready},
+			}}
+	}
+	// Names chosen so alphabetical order differs from the expected one.
+	m.objects = []model.ResourceObject{
+		mk("alpha", 10, 10), // healthy, big
+		mk("bravo", 1, 1),   // healthy, small
+		mk("charlie", 2, 2), // healthy, medium
+		mk("delta", 1, 2),   // degraded → first ascending
+		mk("echo", 0, 0),    // scaled to zero → last ascending
+	}
+	cols := m.columnsForType()
+	m.sortCol = -1
+	for i, c := range cols {
+		if c.title == "READY" {
+			m.sortCol = i + 1
+		}
+	}
+	if m.sortCol < 1 {
+		t.Fatal("READY column not found")
+	}
+	m.sortAsc = true
+	m.applyRows()
+	var names []string
+	for _, o := range m.rowObjs {
+		names = append(names, o.Name)
+	}
+	want := []string{"delta", "bravo", "charlie", "alpha", "echo"}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("READY asc must order 1/2, 1/1, 2/2, 10/10, 0/0 — got %v", names)
+		}
+	}
+}
