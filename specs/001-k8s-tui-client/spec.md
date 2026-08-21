@@ -10,6 +10,10 @@
 
 ## Clarifications
 
+### Session 2026-08-21
+
+- Q: Should view customizations (custom columns included) be editable outside the TUI? → A: Yes — the config file is a supported editing surface, cohabiting with the in-app 'C' chooser: same file, either surface. External edits to the file are picked up at refresh-tick cadence without a restart; a file that does not parse keeps the current settings (FR-025 tolerance) and is reported. (Extends FR-025; see contracts/config-schema.md → Live reload.)
+
 ### Session 2026-07-02
 
 - Q: Data freshness / update mechanism for "near real time" (FR-006)? → A: Periodic refresh, configurable by the operator, default ~5 s.
@@ -431,7 +435,7 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **FR-022**: When the terminal lacks color or rich-rendering capability, the client MUST degrade gracefully and keep the same information available in readable text.
 - **FR-023**: The client MUST provide advisory app sizing recommendations derived from observed usage versus configured requests/limits (flagging over-provisioned and under-provisioned / at-risk workloads). Recommendations MUST be based only on real observed data, MUST display the data behind them, MUST NOT be shown when data is insufficient (no fabricated figures), and are advisory only (never applied automatically).
 - **FR-024**: Users MUST be able to customize resource views (which columns/fields are shown, their order, default sort and filter).
-- **FR-025**: The client MUST persist view customizations across sessions and restore them on the next launch, MUST allow saving/switching named views and resetting to defaults, and MUST tolerate missing/invalid/outdated customizations by falling back to defaults without failing to start.
+- **FR-025**: The client MUST persist view customizations across sessions and restore them on the next launch, MUST allow saving/switching named views and resetting to defaults, and MUST tolerate missing/invalid/outdated customizations by falling back to defaults without failing to start. The configuration file MUST be hand-editable: external changes are applied while the client runs (refresh-tick cadence, no restart), and a file that does not parse keeps the current in-memory settings rather than resetting anything (clarification 2026-08-21).
 - **FR-026**: The client MUST let the operator navigate object relationships (ownership and routing) — e.g. Deployment→ReplicaSet→Pods, Service→Endpoints→Pods, Ingress→Service — up and down the graph, and MUST make a broken link (e.g. a Service with zero endpoints) visible.
 - **FR-027**: The client MUST surface workload failure diagnostics: per-container restart counts, last termination reason (including OOMKilled and exit codes), and evicted pods with their eviction reason, with failure states visually distinguished.
 - **FR-028**: The client MUST provide a scheduling & capacity view showing the reason each Pending/unschedulable pod cannot be scheduled, and per-node bin-packing (allocatable vs requested vs used, with remaining headroom); "used" is sourced from Prometheus and degrades to "unavailable" when Prometheus is not reachable.

@@ -103,6 +103,7 @@ type Model struct {
 	cfg            config.Config
 	kubeconfigPath string
 	configPath     string
+	cfgMTime       time.Time // config file mtime at last load/save (hot reload)
 	initialTypeKey string
 
 	client  *kube.Client
@@ -481,6 +482,11 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 	for _, opt := range opts {
 		opt(&m)
 	}
+	// Hand edits to the config file are picked up while the app runs
+	// (maybeReloadConfig): remember what was on disk at startup.
+	if m.configPath != "" {
+		m.cfgMTime = config.ModTime(m.configPath)
+	}
 	// Help overlay: bubbles/help defaults are faint-on-dark and nearly
 	// invisible (owner report 2026-07-12) — style it from the theme AFTER
 	// the options so a WithTheme choice applies.
@@ -615,6 +621,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		// Hand edits to the config file take effect without a restart
+		// (owner request 2026-08-21: columns editable in a file).
+		m.maybeReloadConfig()
 		cmds := []tea.Cmd{m.tick()}
 		if m.screen == screenList {
 			cmds = append(cmds, m.listObjects())
@@ -2182,6 +2191,8 @@ func (m *Model) persist() {
 	m.cfg.LastNamespace = m.client.Namespace
 	m.cfg.LastType = m.curType.Key()
 	_ = config.Save(m.configPath, m.cfg)
+	// Our own write must not read as an external edit next tick.
+	m.cfgMTime = config.ModTime(m.configPath)
 }
 
 func hit(msg tea.KeyMsg, b key.Binding) bool { return key.Matches(msg, b) }

@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/iadvize/idz-k8s/internal/config"
 	"github.com/iadvize/idz-k8s/internal/kube"
@@ -28,6 +30,101 @@ func TestPersistSavesLastSelections(t *testing.T) {
 	if got.LastType != "apps/v1/deployments" {
 		t.Errorf("LastType=%q want apps/v1/deployments", got.LastType)
 	}
+}
+
+// TestConfigFileHotReload (owner request 2026-08-21): the config file is a
+// supported editing surface for view customizations — hand edits to
+// viewPrefs (including label:/field: custom columns) must take effect at the
+// next tick, without a restart, while the in-app 'C' chooser keeps working
+// against the same file.
+func TestConfigFileHotReload(t *testing.T) {
+	dep := model.ResourceType{Group: "apps", Version: "v1", Kind: "Deployment", Resource: "deployments", Namespaced: true}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.Defaults()
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	m := New(&kube.Client{Namespace: "demo"}, cfg, "",
+		WithConfigPath(path), WithInitialType(dep))
+	m.width, m.height = 160, 30
+	m.layout()
+
+	hasTitle := func(title string) bool {
+		for _, c := range m.columnsForType() {
+			if c.title == title {
+				return true
+			}
+		}
+		return false
+	}
+	if hasTitle("TEAM") {
+		t.Fatal("custom column must not exist before the file edit")
+	}
+
+	// Hand-edit the file: a custom label column for deployments. Bump the
+	// mtime past filesystem granularity so the change is unambiguous.
+	edited := cfg
+	edited.ViewPrefs = map[string]config.ViewPref{
+		dep.Key(): {Columns: []string{"NAME", "label:team"}},
+	}
+	if err := config.Save(path, edited); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+	mi, _ := m.Update(tickMsg{})
+	m = asModel(t, mi)
+	if !hasTitle("TEAM") {
+		t.Fatalf("file edit not picked up at tick — columns: %v", titlesOf(m.columnsForType()))
+	}
+	if m.columnsForType()[0].title != "NAME" {
+		t.Fatalf("file-defined order not applied — columns: %v", titlesOf(m.columnsForType()))
+	}
+
+	// A malformed file must keep the current settings (FR-025 tolerance) and
+	// say so, never crash or reset.
+	if err := os.WriteFile(path, []byte("viewPrefs: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	future = future.Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatal(err)
+	}
+	mi, _ = m.Update(tickMsg{})
+	m = asModel(t, mi)
+	if !hasTitle("TEAM") {
+		t.Fatal("malformed file must not drop the current arrangement")
+	}
+	if !strings.Contains(m.statusMsg, "does not parse") {
+		t.Fatalf("malformed file must be reported, statusMsg=%q", m.statusMsg)
+	}
+}
+
+// TestPersistIsNotAnExternalEdit: the app's own saves must not trigger the
+// hot-reload path (a reload notice on every in-app change would be noise).
+func TestPersistIsNotAnExternalEdit(t *testing.T) {
+	dep := model.ResourceType{Group: "apps", Version: "v1", Kind: "Deployment", Resource: "deployments", Namespaced: true}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	m := New(&kube.Client{Namespace: "demo"}, config.Defaults(), "",
+		WithConfigPath(path), WithInitialType(dep))
+	m.width, m.height = 160, 30
+	m.layout()
+	m.persist()
+	mi, _ := m.Update(tickMsg{})
+	m = asModel(t, mi)
+	if strings.Contains(m.statusMsg, "reloaded") {
+		t.Fatalf("own save read as external edit, statusMsg=%q", m.statusMsg)
+	}
+}
+
+func titlesOf(cols []listColumn) []string {
+	out := make([]string, len(cols))
+	for i, c := range cols {
+		out[i] = c.title
+	}
+	return out
 }
 
 func TestFindTypeByKey(t *testing.T) {
