@@ -199,7 +199,7 @@ show an explicit “unavailable” state; everything else keeps working.
 
 ## Configuration
 
-`~/.config/idz-k8s/config.yaml` (auto-managed, never contains credentials):
+`~/.config/idz-k8s/config.yaml` (never contains credentials):
 
 ```yaml
 schemaVersion: 1
@@ -224,6 +224,33 @@ savedViews:                # named views ('V')
 
 Invalid or stale entries (an unknown column, a type absent from the cluster)
 are ignored gracefully — they never break startup.
+
+### Editing the file by hand (columns included)
+
+The file is a first-class editing surface, not just a store: edit it in your
+editor — even while idz-k8s is running — and the change is picked up at the
+next refresh tick (a status message confirms the reload). The in-app 'C'
+chooser keeps working against the same file; whichever surface wrote last
+wins. A half-saved or malformed file never resets anything: idz-k8s keeps the
+current settings and tells you the file does not parse.
+
+`viewPrefs.<type>.columns` accepts, in display order:
+
+- a built-in column title (`NAME`, `STATUS`, `NODE`, … — as shown in 'C'),
+- `label:<key>` — the value of that label (`label:team`,
+  `label:app.kubernetes.io/version`),
+- `field:.<dot.path>` — any object field (`field:.spec.nodeName`,
+  `field:.status.podIP`).
+
+```yaml
+viewPrefs:
+  apps/v1/deployments:
+    columns: [NAMESPACE, NAME, READY, "label:team", "field:.spec.strategy.type", AGE]
+    hidden: [UP-TO-DATE]   # base columns explicitly turned off
+```
+
+Base columns in neither `columns` nor `hidden` are ones added by a newer
+version: they show up by default so an update never ships invisible features.
 
 ## Guarantees
 

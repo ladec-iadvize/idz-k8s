@@ -6,6 +6,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -129,6 +130,17 @@ func normalize(c Config) Config {
 		c.SavedViews = kept
 	}
 	return c
+}
+
+// ModTime returns the config file's modification time (zero when the file is
+// absent or unreadable). It is how the UI detects hand edits to the file while
+// the app runs — the file is a supported editing surface, not just a store.
+func ModTime(path string) time.Time {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
 }
 
 // Save writes the config atomically (write-temp-then-rename).

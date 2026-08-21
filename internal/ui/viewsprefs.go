@@ -13,6 +13,41 @@ import (
 	"github.com/iadvize/idz-k8s/internal/model"
 )
 
+// maybeReloadConfig picks up hand edits to the config file while the app runs
+// (owner request 2026-08-21: custom columns editable in a file, cohabiting
+// with the in-app 'C' chooser — same file, either editing surface). When the
+// file's mtime moved past what this session last loaded or wrote, the whole
+// config is reloaded and the current list's arrangement re-applied. In-app
+// changes persist immediately, so the two surfaces only race inside one
+// refresh interval — last writer wins. Called at tick cadence.
+func (m *Model) maybeReloadConfig() {
+	if m.configPath == "" {
+		return
+	}
+	mt := config.ModTime(m.configPath)
+	if mt.IsZero() || !mt.After(m.cfgMTime) {
+		return
+	}
+	m.cfgMTime = mt
+	cfg, err := config.Load(m.configPath)
+	if err != nil {
+		// Mid-edit or malformed file: keep the current settings and say so —
+		// the next successful save of the file triggers a fresh reload.
+		m.statusMsg = "config file changed but does not parse — keeping current settings"
+		return
+	}
+	// The session scope belongs to this run, not to the file.
+	cfg.LastContext, cfg.LastNamespace, cfg.LastType = m.cfg.LastContext, m.cfg.LastNamespace, m.cfg.LastType
+	m.cfg = cfg
+	// Re-resolve the visible arrangement — but never stomp live typing or a
+	// drilled level; those pick the new prefs up on their next switch.
+	if m.screen == screenList && !m.filtering && !m.drilling() {
+		m.applyViewPref()
+		m.applyRows()
+	}
+	m.statusMsg = "config file changed on disk — columns/views reloaded"
+}
+
 // applyViewPref restores the current type's saved customization: committed
 // filter and sort (resolved by column title; a title that no longer matches
 // any column is silently ignored — FR-025 tolerance).

@@ -392,3 +392,8 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 ### Phase v2.7: Internals
 
 - [x] T089 Shared informer cache replacing periodic LIST polling (carried ex-T010) in `internal/kube/informers.go`
+
+### Phase v3.10: US8 follow-up — config file as an editing surface (FR-025, clarification 2026-08-21)
+
+- [x] T090 [US8] Config hot reload: pick up external edits to the config file at tick cadence (`config.ModTime`, `maybeReloadConfig` in `internal/ui/viewsprefs.go`); malformed file keeps current settings, own saves are not external edits
+- [x] T091 [P] [US8] Tests (`TestConfigFileHotReload`, `TestPersistIsNotAnExternalEdit`) + README/config-schema contract documentation of `viewPrefs` (incl. `label:`/`field:` columns) and live reload
