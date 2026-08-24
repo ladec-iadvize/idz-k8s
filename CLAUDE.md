@@ -64,6 +64,10 @@ sitting unreleased):
 4. Wait for the workflow to complete, then `git pull` main (the formula
    commit landed there; the next branch must not fork behind it) and check
    the release page lists the archives + checksums.
+5. Update the local install too (`brew update && brew upgrade idz-k8s`,
+   then `idz-k8s --version` must print the new version) — the owner's
+   machine runs the brew build, not a local `go build`, so a release
+   isn't done until the local binary is on it.
 
 Users install/update via `brew` (see README) — never tell them to
 `go build`.
