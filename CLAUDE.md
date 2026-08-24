@@ -47,10 +47,26 @@ story directly to main. Small doc/bookkeeping commits may go straight to
 main. The merge is done by whoever runs the story (including Claude) once
 CI passes.
 
-Releases: tag `vX.Y.Z` on main → the Release workflow (goreleaser) builds
-the binaries, publishes the GitHub release, and commits the updated
-Homebrew formula (`Formula/idz-k8s.rb`) back to main. Users install/update
-via `brew` (see README) — never tell them to `go build`.
+Releases (owner reminder 2026-08-21: releasing IS part of shipping — once
+user-visible changes land on main, cut the release; don't leave them
+sitting unreleased):
+
+1. Version from the batch since the last tag: any `feat` → bump minor,
+   fixes only → patch (majors are an owner call).
+2. Check the CI run on main's HEAD is green (`gh run list --branch main`),
+   then tag that exact commit `vX.Y.Z` and push the tag (equivalent:
+   `gh api repos/<owner>/<repo>/git/refs -f ref=refs/tags/vX.Y.Z -f sha=…`).
+3. The tag push triggers the Release workflow (goreleaser): it builds the
+   binaries, publishes the GitHub release, and commits the updated Homebrew
+   formula (`Formula/idz-k8s.rb`, `docs(brew): formula vX.Y.Z` authored by
+   goreleaserbot) back to main. NEVER edit the formula by hand and never
+   create the GitHub release manually — the workflow owns both.
+4. Wait for the workflow to complete, then `git pull` main (the formula
+   commit landed there; the next branch must not fork behind it) and check
+   the release page lists the archives + checksums.
+
+Users install/update via `brew` (see README) — never tell them to
+`go build`.
 
 ## Definition of done (every change)
 
