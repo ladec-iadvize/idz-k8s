@@ -272,6 +272,11 @@ func (m *Model) markedActions() []actionEntry {
 	list := truncate(strings.Join(names, ", "), 60)
 
 	var out []actionEntry
+	if kindIs(kind, "Deployment", "StatefulSet", "ReplicaSet") {
+		out = append(out, actionEntry{"scale-marked", "set replicas of " + label, func(m *Model) (tea.Model, tea.Cmd) {
+			return m.openBulkScalePrompt(objs, label, list)
+		}})
+	}
 	if kindIs(kind, "Deployment", "StatefulSet", "DaemonSet") {
 		out = append(out, actionEntry{"restart-marked", "rolling restart of " + label, func(m *Model) (tea.Model, tea.Cmd) {
 			return m.requestConfirm("rolling restart of "+label+" — "+list,
@@ -459,6 +464,46 @@ func (m Model) openScalePrompt(obj model.ResourceObject) (tea.Model, tea.Cmd) {
 			func(ctx context.Context, cl *kube.Client) error {
 				return cl.ScaleWorkload(ctx, t, obj.Namespace, obj.Name, n)
 			})
+	}
+	return m, nil
+}
+
+// openBulkScalePrompt scales every marked workload to one replica count
+// (owner request 2026-08-27: scale several deployments at once, like the
+// bulk delete/restart). The prompt is pre-filled only when all targets
+// agree on their current replicas; the value then goes through the
+// confirmation modal listing the targets before any API call.
+func (m Model) openBulkScalePrompt(objs []model.ResourceObject, label, list string) (tea.Model, tea.Cmd) {
+	t := m.curType
+	cur := ""
+	for i, o := range objs {
+		v, found, _ := unstructured.NestedInt64(o.Raw, "spec", "replicas")
+		s := ""
+		if found {
+			s = strconv.FormatInt(v, 10)
+		}
+		if i == 0 {
+			cur = s
+		} else if s != cur {
+			cur = "" // mixed counts: no misleading prefill
+			break
+		}
+	}
+	m.promptKind = promptScale
+	m.promptTitle = "scale " + label + " — replicas"
+	m.promptInput = cur
+	m.promptHint = "Enter continue · Esc cancel"
+	m.promptAction = func(m *Model, value string) (tea.Model, tea.Cmd) {
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			m.errMsg = "replicas must be a non-negative integer, got " + strconv.Quote(value)
+			return m, nil
+		}
+		return m.requestConfirm(fmt.Sprintf("scale %s to %d — %s", label, n, list),
+			m.adminBulkCmd(fmt.Sprintf("%s scaled to %d", label, n), objs,
+				func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+					return cl.ScaleWorkload(ctx, t, o.Namespace, o.Name, n)
+				}))
 	}
 	return m, nil
 }
