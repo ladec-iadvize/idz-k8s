@@ -316,7 +316,7 @@ func TestBulkActionsMatchKind(t *testing.T) {
 	m = pressRune(t, m, ' ') // mark the deployment under the cursor
 	m = pressRune(t, m, 'a')
 	opts := pickerOptions(m)
-	for _, want := range []string{"restart-marked", "delete-marked", "scale", "edit"} {
+	for _, want := range []string{"scale-marked", "restart-marked", "delete-marked", "scale", "edit"} {
 		if !strings.Contains(opts, want) {
 			t.Fatalf("marked deployment palette missing %q:\n%s", want, opts)
 		}
@@ -553,5 +553,69 @@ func TestApplyEditOutcomes(t *testing.T) {
 	}
 	if _, err := os.Stat(msg.path); err != nil {
 		t.Fatalf("the file must be kept so a late save is not lost: %v", err)
+	}
+}
+
+// TestBulkScaleMarkedDeployments (owner request 2026-08-27): marked
+// deployments scale together — one replicas prompt (pre-filled only when
+// the targets agree), then the confirmation modal naming every target,
+// then one ScaleWorkload per target; success consumes the marks.
+func TestBulkScaleMarkedDeployments(t *testing.T) {
+	back, front := fakeDeployment("demo", "back", 3), fakeDeployment("demo", "front", 1)
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{
+			{Group: "apps", Version: "v1", Resource: "deployments"}: "DeploymentList",
+		}, &unstructured.Unstructured{Object: back}, &unstructured.Unstructured{Object: front})
+	m := New(&kube.Client{Namespace: "demo", Dynamic: dyn}, config.Defaults(), "",
+		WithInitialType(deploymentsType))
+	m.width, m.height = 120, 30
+	m.layout()
+	m.objects = []model.ResourceObject{
+		{Type: deploymentsType, Namespace: "demo", Name: "back", Raw: back},
+		{Type: deploymentsType, Namespace: "demo", Name: "front", Raw: front},
+	}
+	m.applyRows()
+	m = pressRune(t, m, ' ')
+	m.win.Move(1)
+	m = pressRune(t, m, ' ')
+	if len(m.marked) != 2 {
+		t.Fatalf("expected 2 marked deployments, got %d", len(m.marked))
+	}
+
+	m = selectAction(t, m, "scale-marked")
+	if m.promptKind != promptScale {
+		t.Fatalf("scale-marked must open the replicas prompt (kind=%v)", m.promptKind)
+	}
+	if m.promptInput != "" {
+		t.Fatalf("mixed replica counts (3 and 1) must not be pre-filled, got %q", m.promptInput)
+	}
+	m = pressRune(t, m, '4')
+	mi, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if cmd != nil {
+		t.Fatal("the prompt alone must not mutate — the confirmation modal comes first")
+	}
+	if !m.confirming || !strings.Contains(m.confirmTitle, "2 marked Deployment(s) to 4") ||
+		!strings.Contains(m.confirmTitle, "back") || !strings.Contains(m.confirmTitle, "front") {
+		t.Fatalf("bulk scale must confirm with count, target replicas and names, got %q", m.confirmTitle)
+	}
+	mi, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = asModel(t, mi)
+	if cmd == nil {
+		t.Fatal("Enter on the modal must run the bulk scale")
+	}
+	msg, ok := cmd().(adminMsg)
+	if !ok || msg.err != nil || !msg.clearMarks {
+		t.Fatalf("bulk scale result: %+v", msg)
+	}
+	for _, name := range []string{"back", "front"} {
+		obj, err := m.client.GetObject(t.Context(), deploymentsType, "demo", name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r, _, _ := unstructured.NestedInt64(obj.Raw, "spec", "replicas"); r != 4 {
+			t.Fatalf("%s replicas=%d, want 4", name, r)
+		}
 	}
 }
