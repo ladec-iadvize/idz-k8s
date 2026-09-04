@@ -1,16 +1,16 @@
-# Data Model: Kubernetes TUI Overview Client (read-only)
+# Data Model: Kubernetes TUI Overview & Admin Client
 
-**Feature**: 001-k8s-tui-client | **Date**: 2026-07-03
+**Feature**: 001-k8s-tui-client | **Date**: 2026-07-03 (v1 snapshot; v3 additions noted 2026-09-04)
 
-Covers the in-memory domain the UI consumes (read-only projections of API,
+Covers the in-memory domain the UI consumes (projections of API,
 Prometheus, and Helm data) and the small local preferences file. Concrete Go
 types live in `internal/model` and `internal/config`. This is the v1 (P1+P2)
-model; P3 entities (Saved View, Posture Finding, Sizing Recommendation) are
-deferred.
+model; P3 entities (Saved View, Posture Finding, Sizing Recommendation) shipped
+in v2, and v3 added admin-era entities (see "v3 additions" below).
 
 ---
 
-## In-memory domain (all read-only)
+## In-memory domain (projections — the UI never mutates them)
 
 ### ResourceType
 Discovered API resource type the operator can browse.
@@ -38,7 +38,7 @@ A single instance of a ResourceType.
 | raw | Unstructured | full object for detail |
 | createdAt | timestamp | age |
 
-**Lifecycle**: created → updated → deleted, reflected via informer cache (read-only observation).
+**Lifecycle**: created → updated → deleted, reflected via informer cache (the cache only observes; mutations go through the confirmed admin operations).
 
 ### StatusSummary
 Display health for color coding (FR-020).
@@ -168,6 +168,13 @@ yields "metrics unavailable" states, never a crash.
 - `DependencyEdge` connects two `ResourceObject`s (owns / routes-to).
 - `HelmRelease *—* ResourceObject` (a release manages workloads) via labels/annotations.
 - `AppConfig` is a single local document.
+
+## v3 additions (2026-09-04 realignment)
+
+- **Mark**: transient per-row selection (Space); the marked set scopes analysis views and is the target of bulk admin actions (FR-037); consumed by a fully successful bulk action. Lives in UI state, never persisted.
+- **Drill frame**: one entry of the drill stack (parent object + its type + the child-selection mode: bySelector/byOwner/byNode/byNamespace/byNames); Esc pops exactly one (FR-026 v3.5). Carries the parent for `parentActions()`.
+- **HelmReleaseDetail / HelmResource**: per-revision payload — each resource's own rendered manifest, chart/app versions, NOTES, hooks with last run (FR-029 v3.6).
+- **LastTermination**: why a container last stopped (reason + exit code from `status.lastState.terminated`), surfaced in RESTARTS cells, the containers view, and the events timeline (FR-027/FR-014) — never inferred.
 
 ## Validation rules (from requirements)
 

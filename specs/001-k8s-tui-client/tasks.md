@@ -1,9 +1,9 @@
 ---
 
-description: "Task list for Kubernetes TUI Overview Client (read-only) — v1 (P1+P2)"
+description: "Task list for Kubernetes TUI Overview & Admin Client — v1 (P1+P2), v2 (P3), v3 (administration)"
 ---
 
-# Tasks: Kubernetes TUI Overview Client (read-only)
+# Tasks: Kubernetes TUI Overview & Admin Client
 
 **Input**: Design documents from `specs/001-k8s-tui-client/`
 
@@ -68,7 +68,7 @@ Single Go project: `cmd/idz-k8s/`, `internal/…`, `tests/…` at repository roo
 
 **Goal**: Browse any resource type (incl. CRDs), read details/events, stream logs, switch namespace/context — with no way to mutate anything.
 
-**Independent Test**: Point at a cluster, browse a namespace, open a pod, read details and live logs; confirm no create/edit/delete/scale/exec affordance exists.
+**Independent Test**: Point at a cluster, browse a namespace, open a pod, read details and live logs. *(Historical v1 wording — the "no mutating affordance" check was superseded by the v3 confirmation contract, see the v3 Phases below.)*
 
 ### Tests for User Story 1
 
@@ -393,7 +393,46 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 - [x] T089 Shared informer cache replacing periodic LIST polling (carried ex-T010) in `internal/kube/informers.go`
 
+## v3 Phases (pivot 2026-07-24 — administration; recorded retroactively 2026-09-04)
+
+> Bookkeeping note: the v3.0–v3.9 work shipped PR-by-PR (one branch/PR per
+> story, squash-merged green) but was never recorded here. Task IDs T092+
+> follow recording order, not ship order; T090/T091 (v3.10) predate them.
+
+### Phase v3.0: Administration pivot (FR-012 v3, PRs #41–#49)
+
+- [x] T092 [v3] Admin operations (edit YAML as merge-capable apply, scale, rolling restart, delete, cordon/uncordon, suspend/resume) in `internal/kube/admin.go`, port-forward in `internal/kube/portforward.go`, Helm rollback/uninstall in `internal/helm` — all behind `requestConfirm`/value prompts, `idz-k8s` field manager, with operation tests (`tests/integration/admin_test.go`) and UI confirmation-gate tests (`internal/ui/admin_test.go`)
+- [x] T093 [v3] '>' views palette replaces per-view shortcuts; default columns mirror `kubectl get -o wide`; content-driven column widths filling the terminal (`fitColumns`); goreleaser + Homebrew formula on every tag
+- [x] T094 [v3] (v3.1) AWS SSO auto-login on expired credentials; an active '/' filter follows type switches
+- [x] T095 [v3] (v3.2) Marks (Space) + bulk admin actions on the marked selection — bulk delete and rolling restart under one confirmation naming every target (FR-037 groundwork)
+- [x] T096 [v3] (v3.3) Reset goes home; Space multi-selects namespaces in the picker
+
+### Phase v3.4: Shell & CronJob trigger (FR-012, owner request 2026-07-31)
+
+- [x] T097 [v3] Exec-into-pod ('shell' palette action, native SPDY + TTY, bash→sh fallback, first-ready-pod resolution) and CronJob manual trigger (Job from template with a non-controller ownerReference so it appears under its CronJob) — lifts the former out-of-scope note; node drain stays out
+
+### Phase v3.5: Drill chain (FR-026, owner request 2026-07-31)
+
+- [x] T098 [v3] `drillChain` table + `drillStack` in `internal/ui/drill.go` (bySelector/byOwner/byNode/byNamespace/byNames), Esc pops exactly one level, containers leaf view (`internal/ui/containers.go`), namespace-scoped selector queries, cells tests per level
+
+### Phase v3.6–v3.7: Logs & filtering (FR-005/FR-007, owner requests 2026-08-03)
+
+- [x] T099 [v3] Log wrap toggle ('w') and sideways scrolling (←/→) through `renderLogs()`; xansi-safe slicing
+- [x] T100 [v3] '/' matches identity + every visible column's rendered cell, space = AND (`internal/ui/rowfilter.go`, `TestFilterScaleGuard`); events timeline deliberately matches identity only
+- [x] T101 [v3] (v3.7.x) Empty child levels explain themselves (`emptyListNote()`); parent actions from drilled — even empty — lists (`parentActions()`); edit applies a MERGE of original→edited with an explanatory editor wait (`kube.ApplyEditedYAML`, `editorProcess`)
+
+### Phase v3.8–v3.9: Helm detail, events scale, log separators (FR-029/FR-014/FR-005, owner requests 2026-08-05)
+
+- [x] T102 [v3] `helm.ReleaseDetail`: per-resource rendered manifests (Enter), live object ('y', errors never faked), values ('v'), per-revision chart/app versions, NOTES, hooks with last run
+- [x] T103 [v3] Events time-scale cycling ('t': 5m/15m/1h/6h/24h/all) filtering AND rescaling with visible counts; OOM/last-termination annotated on the timeline (`eventsPodTerm`) and in RESTARTS/LAST TERMINATION columns
+- [x] T104 [v3] Log stream separators ('M', sentinel lines redrawn at current width) and clear-buffer (`ctrl+l`, never the stream)
+
 ### Phase v3.10: US8 follow-up — config file as an editing surface (FR-025, clarification 2026-08-21)
 
 - [x] T090 [US8] Config hot reload: pick up external edits to the config file at tick cadence (`config.ModTime`, `maybeReloadConfig` in `internal/ui/viewsprefs.go`); malformed file keeps current settings, own saves are not external edits
 - [x] T091 [P] [US8] Tests (`TestConfigFileHotReload`, `TestPersistIsNotAnExternalEdit`) + README/config-schema contract documentation of `viewPrefs` (incl. `label:`/`field:` columns) and live reload
+- [x] T105 [v3] (v3.10) Sort tiebreak: equally-healthy rows in READY-style columns order by size, biggest first (FR-024, PR #66)
+
+### Phase v3.11: Bulk scale on the marked selection (FR-037, owner request 2026-08-27)
+
+- [x] T106 [v3] scale-marked in the actions palette (`internal/ui/admin.go`): one replicas prompt pre-filled only when every target agrees, confirmation modal naming every target, one `ScaleWorkload` per object, partial failures reported per target, success consumes the marks — with UI confirmation-gate tests (PR #68)

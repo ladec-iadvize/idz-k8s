@@ -1,6 +1,13 @@
-# Research: Kubernetes TUI Overview Client (read-only)
+# Research: Kubernetes TUI Overview Client
 
 **Feature**: 001-k8s-tui-client | **Date**: 2026-07-03
+
+> **Errata (2026-09-04)**: this is the Phase-0 snapshot for v1 and is kept as a
+> historical record. Two decisions were later superseded: the read-only posture
+> (D2/D6 wording) was reversed by the v3 administration pivot (2026-07-24 —
+> admin verbs + Helm rollback/uninstall exist, every mutation confirmed,
+> FR-012 v3), and ntcharts (D5) was replaced by custom Unicode charts. See
+> plan.md and spec.md for the current state.
 
 This supersedes the pre-pivot research. Scope is the clarified v1: a strictly
 read-only overview/debug tool (P1+P2 stories), Prometheus as the single metrics

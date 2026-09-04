@@ -1,4 +1,4 @@
-# Quickstart & Validation Guide: Kubernetes TUI Overview Client (read-only)
+# Quickstart & Validation Guide: Kubernetes TUI Overview & Admin Client
 
 **Feature**: 001-k8s-tui-client | **Date**: 2026-07-03
 

@@ -39,17 +39,21 @@ usage/trend visual shows an explicit "unavailable" state — values are never
 estimated (FR-021, constitution data-integrity). Queries are bounded (1-hour
 window, capped resolution) to stay API-friendly (Principle I).
 
-## 3. Helm release storage (read-only, D6)
+## 3. Helm release storage (D6; mutations v3)
 
 | Operation | Helm v3 action | Purpose |
 |-----------|----------------|---------|
 | List releases | `action.NewList` | releases with name/namespace/chart/version/revision/status (FR-029) |
-| Release history | `action.NewHistory` | per-release revision history |
+| Release history | `action.NewHistory` | per-release revision history (chart/app versions per revision) |
+| Release detail | storage driver read | per-resource rendered manifests, NOTES, hooks with last run (FR-029 v3.6) |
+| Rollback *(v3)* | `action.NewRollback` | behind the FR-012 confirmation modal |
+| Uninstall *(v3)* | `action.NewUninstall` | behind the FR-012 confirmation modal |
 
 Configured with a `RESTClientGetter` from the active kubeconfig and the cluster's
-release storage (Secrets by default). **No** `install`/`upgrade`/`rollback`/
-`uninstall` action is ever constructed. Reading releases uses only read access to
-the storage objects.
+release storage (Secrets by default). **No** `install`/`upgrade` action is ever
+constructed (out of scope — deploys stay in the pipeline). Reads use only read
+access to the storage objects; rollback/uninstall run under the operator's RBAC
+after their confirmation step.
 
 ## Cross-source contract rules
 

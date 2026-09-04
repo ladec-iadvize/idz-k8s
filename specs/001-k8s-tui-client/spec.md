@@ -4,11 +4,19 @@
 
 **Created**: 2026-07-02
 
-**Status**: Draft
+**Status**: Living spec — realigned 2026-09-04 with everything shipped through v3.11.0
 
 **Input**: User description: "L'objectif du projet est d'avoir une TUI en tant que client Kubernetes. Il va servir à administrer le cluster Kubernetes au quotidien. Il faut que la TUI puisse être cliquable. Il faut aussi des raccourcis maniables non exotiques" (amended: visual elements / charts; amended: customizable views; **amended (pivot): the tool is READ-ONLY — an overview & debugging tool, no mutating administrative actions. Actions are performed elsewhere (e.g. k9s). New overview capabilities: a topology view (which pods run on which nodes), app sizing recommendations, and an events timeline.**)
 
 ## Clarifications
+
+### Session 2026-09-04 (realignment through v3.11)
+
+- Q: Should admin actions apply to several objects at once? → A: Yes — Space marks rows, and marked workloads get bulk actions in the actions palette: bulk delete, bulk rolling restart, and bulk scale (owner request 2026-08-27). One value prompt (pre-filled only when every target already agrees on the value — never a misleading default), then ONE confirmation naming every target, then one API call per object with partial failures reported individually. Success consumes the marks. Marks also scope the analysis views. (New FR-037.)
+- Q: Is exec-into-pod still out of scope? → A: No — shell-into-pod shipped in v3.4 (owner request 2026-07-31) and is listed in FR-012. Node drain is the only admin action still out of scope (a future spec change, not a patch).
+- Q: How does relationship navigation work in practice? → A: Enter walks DOWN exactly one level along the resource chain (workload/Service → Pods, CronJob → Jobs, Node → Pods, Namespace → its resources, Ingress → its backend Services); Esc pops exactly one level. Inside a drilled list the actions palette offers the selection's actions AND the parent's — including on an empty child level, where it matters most — and an empty child level explains WHY it is empty instead of showing a bare table. (Extends FR-026; owner requests 2026-07-31 and 2026-08-03.)
+- Q: What does '/' filtering match? → A: The row's identity plus EVERY visible column's rendered cell; a space in the query means AND. Deliberate exception: the events timeline matches object identity only, so typing "back" finds pods named *back* rather than every BackOff event. (Extends FR-007; owner request 2026-08-03.)
+- Q: How is an edit applied ('e')? → A: As a merge of original→edited — only the operator's changes are sent, never a whole-object replacement, so concurrent changes to other fields survive and a stale snapshot does not make the save fail spuriously. (Extends FR-012; owner report 2026-08-04.)
 
 ### Session 2026-08-21
 
@@ -47,15 +55,16 @@
 An operator opens the client to understand the current state of the cluster.
 They browse resource types (pods, deployments, services, nodes, and any CRD),
 drill into a resource to read its details and events, follow a pod's logs, and
-switch the active namespace or cluster context. The client never changes cluster
-state — it only reads.
+switch the active namespace or cluster context. *(v3)* Administration happens in
+the same tool, always behind an explicit confirmation (FR-012).
 
 **Why this priority**: Inspection is the foundation of the overview
 tool and the minimum viable product on its own.
 
 **Independent Test**: Point the client at a cluster with existing workloads,
 browse a namespace, open a pod, read its details and logs — and confirm that no
-action anywhere in the interface can modify the cluster.
+mutating action anywhere in the interface reaches the cluster without its
+confirmation step (v3, FR-012).
 
 **Acceptance Scenarios**:
 
@@ -158,6 +167,8 @@ and confirm events appear in time order and can be filtered to a single resource
 3. **Given** a selected resource, **When** the operator views its events, **Then** the timeline is scoped to that resource.
 4. **Given** warning/error events, **When** displayed, **Then** they are visually distinguishable from normal ones.
 5. **Given** the known retention limit of cluster events, **When** older events have expired, **Then** the timeline indicates the visible window rather than implying completeness.
+6. **Given** the timeline, **When** the operator cycles the time scale (5m/15m/1h/6h/24h/all), **Then** events are filtered AND the axis rescales, with visible per-window counts proving the scale changed.
+7. **Given** a pod that was OOM-killed, **When** its events appear on the timeline, **Then** the last-termination reason is annotated on the row and detailed under the selected event — never inferred beyond what the API reports.
 
 ---
 
@@ -237,7 +248,12 @@ confirm restore; then reset and confirm defaults return.
 
 An operator navigates the relationships between objects to debug routing and
 ownership: `Deployment → ReplicaSet → Pods`, `Service → Endpoints → Pods`,
-`Ingress → Service`, and up/down an object's owner chain.
+`Ingress → Service`, and up/down an object's owner chain. *(v3.5+)* The primary
+gesture is the drill chain: Enter walks down one level (workload/Service → Pods,
+CronJob → Jobs, Node → Pods, Namespace → its resources, Ingress → backend
+Services), Esc pops exactly one level back. A drilled list also exposes the
+PARENT's actions (e.g. trigger the CronJob whose Jobs are on screen), even when
+the child level is empty; an empty child level states why it is empty.
 
 **Why this priority**: Relationship navigation resolves frequent "why is my
 service not routing / what owns this pod" questions; high value.
@@ -250,6 +266,9 @@ shows it has zero endpoints and no backing pods.
 1. **Given** a Deployment, **When** the operator opens its dependency graph, **Then** its ReplicaSets and Pods are shown linked.
 2. **Given** a Service, **When** viewing its graph, **Then** its Endpoints and backing pods are shown, including when there are zero endpoints.
 3. **Given** a Pod, **When** navigating up, **Then** its owning controller chain is shown.
+4. **Given** a workload in a list, **When** the operator presses Enter, **Then** its children open (one level); Esc restores exactly the previous level.
+5. **Given** a drilled list — even an empty one — **When** the operator opens the actions palette, **Then** the parent's actions are offered alongside the selection's.
+6. **Given** a legitimately empty child level (e.g. a CronJob between two runs), **When** displayed, **Then** the empty state explains why instead of implying a broken link.
 
 ---
 
@@ -298,21 +317,26 @@ shows its unschedulable reason, and a node's allocatable vs requested capacity.
 Workloads are deployed via Helm charts. An operator reviews Helm releases: name,
 namespace, chart and version, current revision, status (deployed / failed /
 pending / superseded), and revision history — to debug bad or stuck deploys. The
-tool can also roll back or uninstall a release behind an explicit confirmation (v3); install/upgrade stay out of scope.
+tool can also roll back or uninstall a release behind an explicit confirmation (v3); install/upgrade stay out of scope. *(v3.6)* The release detail exposes what
+Helm actually stores per revision: each resource's own rendered manifest, the
+per-revision chart/app versions (so the history answers "what shipped at
+revision N"), the release NOTES, and the hooks with their last run — plus the
+LIVE state of each rendered resource on demand, with fetch errors shown, never
+faked.
 
 **Why this priority**: Since deployment is Helm-based, release state is the
-natural unit for debugging "what changed / why did this deploy fail". Reads come
-inspection complements doing the actual rollback elsewhere.
+natural unit for debugging "what changed / why did this deploy fail".
 
 **Independent Test**: On a Helm-managed workload, confirm its release, current
-revision, and history are shown, and that no upgrade/rollback/uninstall action
-exists anywhere.
+revision, and history are shown, and that rollback/uninstall exist only behind
+the FR-012 confirmation (no install/upgrade affordance anywhere).
 
 **Acceptance Scenarios**:
 
 1. **Given** Helm-managed workloads, **When** opening releases, **Then** installed releases are listed with name, namespace, chart, version, revision, and status.
 2. **Given** a release, **When** viewing its history, **Then** its revisions and per-revision status are shown.
 3. **Given** a failed or pending release, **When** displayed, **Then** it is flagged; rollback/uninstall (v3) go through the actions palette and its confirmation step.
+4. **Given** a release revision, **When** the operator opens a resource it shipped, **Then** that resource's own rendered manifest is shown, and its live cluster state is one interaction away (errors reported, never faked).
 
 ---
 
@@ -406,6 +430,8 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - What happens when saved customizations are missing/corrupted/outdated? Start on defaults; never fail to launch.
 - How is completeness of the events timeline handled given cluster event retention? Indicate the visible window; do not imply events beyond retention.
 - What if the operator lacks read permission on a resource type? Show it as inaccessible with a clear message, without erroring the whole app.
+- What happens when a bulk action succeeds on some marked targets and fails on others? Each failure is reported per target; the operator is never shown a blanket success.
+- What happens when marked workloads disagree on the value a bulk prompt would pre-fill (e.g. replicas)? The prompt starts empty rather than suggesting a misleading value.
 
 ## Requirements *(mandatory)*
 
@@ -415,16 +441,16 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **FR-002**: The client MUST dynamically discover all resource types exposed by the cluster's API — including Custom Resources (CRDs), not only built-in types — and MUST allow the operator to switch between any discovered type.
 - **FR-003**: The client MUST allow the operator to change the active namespace and the active cluster context from within the interface. Exactly one cluster context is active at a time, with fast switching; it does not display multiple clusters simultaneously.
 - **FR-004**: The client MUST display the detailed state of a selected resource, including status, metadata, and related events.
-- **FR-005**: The client MUST stream a pod/container's logs live, with the ability to pause, scroll, and filter.
+- **FR-005**: The client MUST stream a pod/container's logs live, with the ability to pause, scroll, and filter. Long lines can be wrapped or scrolled sideways; the operator can insert a visible separator into the stream (to mark "before/after my action") and clear the visible buffer without stopping the stream.
 - **FR-006**: The client MUST refresh displayed data on a periodic interval without a manual full refresh; the interval MUST be configurable and default to approximately 5 seconds.
-- **FR-007**: Users MUST be able to filter/search within any resource list and the events timeline by typing.
+- **FR-007**: Users MUST be able to filter/search within any resource list and the events timeline by typing. The query matches the row's identity plus every VISIBLE column's displayed value; a space between terms means AND. Deliberate exception: the events timeline matches object identity only, so a name query is not drowned by event reasons (e.g. "back" ≠ every BackOff).
 - **FR-008**: The client MUST be fully operable using only the keyboard, with no function reachable exclusively by mouse.
 - **FR-009**: Keyboard shortcuts MUST follow common, widely recognized conventions and avoid exotic or hard-to-reach combinations.
 - **FR-010**: The client MUST provide a discoverable, context-aware help overlay listing all shortcuts active in the current view.
 - **FR-011**: The client MUST support mouse interaction: clicking to select, clicking to activate on-screen controls/navigation, and wheel scrolling.
-- **FR-012** *(v3, 2026-07-24 — supersedes the read-only rule)*: The client provides administration actions (edit YAML, scale, rolling restart, delete, cordon/uncordon, suspend/resume/trigger CronJobs, port-forward, shell-into-pod, Helm rollback/uninstall). EVERY mutating action MUST be preceded by an explicit confirmation step — a confirmation modal or a value prompt — and MUST never run from a single keypress. Mutations run strictly under the operator's own RBAC and their outcome (success or error) MUST be reported explicitly.
+- **FR-012** *(v3, 2026-07-24 — supersedes the read-only rule)*: The client provides administration actions (edit YAML, scale, rolling restart, delete, cordon/uncordon, suspend/resume/trigger CronJobs, port-forward, shell-into-pod, Helm rollback/uninstall). EVERY mutating action MUST be preceded by an explicit confirmation step — a confirmation modal or a value prompt — and MUST never run from a single keypress. Mutations run strictly under the operator's own RBAC and their outcome (success or error) MUST be reported explicitly. The edit action applies only the operator's changes (a merge of original→edited), never a whole-object replacement — concurrent changes to other fields survive, and churn during the editing session does not spuriously fail the save. Bulk variants of admin actions over marked rows follow FR-037.
 - **FR-013**: The client MUST provide a topology view showing which pods are scheduled on which nodes, allowing selection from node→pods and pod→node, and visually distinguishing nodes under resource pressure.
-- **FR-014**: The client MUST provide an events timeline: cluster events ordered in time, filterable by namespace/resource/severity, scopable to a selected resource, with warning/error events visually distinguished, and it MUST indicate the visible window rather than implying completeness beyond event retention.
+- **FR-014**: The client MUST provide an events timeline: cluster events ordered in time, filterable by namespace/resource/severity, scopable to a selected resource, with warning/error events visually distinguished, and it MUST indicate the visible window rather than implying completeness beyond event retention. The operator can cycle the visible time window (5m/15m/1h/6h/24h/all, default all); changing it filters the events AND rescales the axis, with per-window counts visible so the change is provable on a busy cluster. Pods that were OOM-killed carry their last-termination reason on the timeline, taken verbatim from the API.
 - **FR-015**: The client MUST mask sensitive values (e.g. secret contents) by default and reveal them only on explicit operator request; revealing requires no authorization beyond the operator's existing cluster access, and the client MUST NOT gate or audit the reveal action.
 - **FR-016**: The client MUST show the current connection status and handle unreachable clusters, dropped connections, and expired credentials without crashing.
 - **FR-017**: The client MUST remain responsive when browsing namespaces, resource types, topology, or timelines containing large numbers of items.
@@ -434,12 +460,12 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **FR-021**: Visual elements MUST accurately reflect underlying data and MUST clearly indicate when the data source is unavailable or stale, rather than rendering an empty or misleading visual.
 - **FR-022**: When the terminal lacks color or rich-rendering capability, the client MUST degrade gracefully and keep the same information available in readable text.
 - **FR-023**: The client MUST provide advisory app sizing recommendations derived from observed usage versus configured requests/limits (flagging over-provisioned and under-provisioned / at-risk workloads). Recommendations MUST be based only on real observed data, MUST display the data behind them, MUST NOT be shown when data is insufficient (no fabricated figures), and are advisory only (never applied automatically).
-- **FR-024**: Users MUST be able to customize resource views (which columns/fields are shown, their order, default sort and filter).
+- **FR-024**: Users MUST be able to customize resource views (which columns/fields are shown, their order, default sort and filter). Sorting on a health-style column (e.g. READY) breaks ties by size, so among equally-healthy rows the biggest workloads surface first.
 - **FR-025**: The client MUST persist view customizations across sessions and restore them on the next launch, MUST allow saving/switching named views and resetting to defaults, and MUST tolerate missing/invalid/outdated customizations by falling back to defaults without failing to start. The configuration file MUST be hand-editable: external changes are applied while the client runs (refresh-tick cadence, no restart), and a file that does not parse keeps the current in-memory settings rather than resetting anything (clarification 2026-08-21).
-- **FR-026**: The client MUST let the operator navigate object relationships (ownership and routing) — e.g. Deployment→ReplicaSet→Pods, Service→Endpoints→Pods, Ingress→Service — up and down the graph, and MUST make a broken link (e.g. a Service with zero endpoints) visible.
+- **FR-026**: The client MUST let the operator navigate object relationships (ownership and routing) — e.g. Deployment→ReplicaSet→Pods, Service→Endpoints→Pods, Ingress→Service — up and down the graph, and MUST make a broken link (e.g. a Service with zero endpoints) visible. Drill semantics: one gesture walks DOWN exactly one level of the chain (workload/Service → Pods, CronJob → Jobs, Node → Pods, Namespace → its resources, Ingress → backend Services) and "back" pops exactly one level. A drilled level MUST offer the parent's admin actions alongside the selection's — including when the child level is empty — and an empty child level MUST explain why it is empty (unmatched filter, legitimately-empty relationship such as a CronJob between runs, or a possibly broken link) rather than showing a bare table.
 - **FR-027**: The client MUST surface workload failure diagnostics: per-container restart counts, last termination reason (including OOMKilled and exit codes), and evicted pods with their eviction reason, with failure states visually distinguished.
 - **FR-028**: The client MUST provide a scheduling & capacity view showing the reason each Pending/unschedulable pod cannot be scheduled, and per-node bin-packing (allocatable vs requested vs used, with remaining headroom); "used" is sourced from Prometheus and degrades to "unavailable" when Prometheus is not reachable.
-- **FR-029**: The client MUST provide a Helm release overview: installed releases (name, namespace, chart, version, current revision, status) and per-release revision history, flagging failed/pending/stuck releases. *(v3)* Rollback and uninstall are available under the FR-012 confirmation contract; install and upgrade remain out of scope.
+- **FR-029**: The client MUST provide a Helm release overview: installed releases (name, namespace, chart, version, current revision, status) and per-release revision history, flagging failed/pending/stuck releases. *(v3)* Rollback and uninstall are available under the FR-012 confirmation contract; install and upgrade remain out of scope. *(v3.6)* The release detail MUST expose what Helm stores per revision: each resource's own rendered manifest, per-revision chart/app versions, the release NOTES, and the hooks with their last run; each rendered resource's LIVE cluster state is reachable on demand, with fetch errors shown explicitly, never faked.
 - **FR-030**: The client MUST provide an advisory compliance/posture overview flagging common issues (missing requests/limits, privileged containers, running as root, missing liveness/readiness probes, images pinned to `latest`, namespaces without a NetworkPolicy, TLS secrets near/after expiry). Findings MUST be derived only from observed configuration, MUST reference the concrete object/field, MUST NOT fabricate data, and are advisory only (never enforced automatically).
 - **FR-031**: The client MUST provide a per-pod connectivity view listing the NetworkPolicies that select it and the ingress/egress they allow, and MUST indicate when a pod is unrestricted by any policy.
 - **FR-032**: The client MUST provide an access (RBAC) view summarizing what the operator's credentials can do (read AND write verbs, read verbs listed first), and MUST mark inaccessible resource types with the reason rather than erroring the application.
@@ -447,6 +473,7 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **FR-034**: The client MUST be able to tail logs merged across all pods of a selected workload in chronological order (in addition to single-pod logs per FR-005).
 - **FR-035**: The client MUST provide a "top consumers" view (top pods/nodes by CPU/memory), sourced from Prometheus; when Prometheus is not reachable, it shows an explicit "unavailable" state.
 - **FR-036**: The interface MUST be approachable by a general technical audience, not only Kubernetes experts: prefer graphical representations (charts, gauges, timelines, color) over raw text wherever they aid comprehension, keep every capability discoverable from the interface itself (visible menus/selectors, contextual shortcut help), and avoid jargon-only output. Prior kubectl/k9s experience MUST NOT be required to perform the core overview tasks.
+- **FR-037** *(v3.11, owner request 2026-08-27)*: The operator MUST be able to mark several rows and act on them at once. Marks scope the analysis views, and marked workloads get bulk admin actions (delete, rolling restart, scale) in the actions palette under the FR-012 contract: at most one value prompt for the whole batch — pre-filled only when every target already agrees on the value, otherwise empty — then ONE confirmation step naming every target, then one API call per object. Partial failures MUST be reported per target (never a blanket success), and a fully successful bulk action consumes the marks.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -463,6 +490,7 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **Dependency Edge**: A relationship between two objects — owns (owner→owned), routes-to (Service→Endpoints/Pods, Ingress→Service), or selects (policy→pod) — used to build the ownership/connectivity graphs.
 - **Posture Finding**: An advisory assessment against a best-practice rule, with rule id, severity, a reference to the concrete object/field, and an advisory message. Never fabricated; never enforced automatically.
 - **Scheduling Reason**: For a Pending/unschedulable pod, the reason it cannot be scheduled (e.g. insufficient cpu/memory), surfaced in the scheduling & capacity view.
+- **Mark**: A transient per-row selection the operator toggles; the set of marked objects scopes analysis views and is the target of bulk admin actions (FR-037). Marks are consumed by a fully successful bulk action.
 
 ## Success Criteria *(mandatory)*
 
@@ -487,12 +515,14 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **SC-017**: For a Helm-managed workload, its release status and current revision are discoverable in ≤ 2 interactions, and Helm rollback/uninstall always go through the FR-012 confirmation step (install/upgrade are not offered).
 - **SC-018**: 100% of posture findings reference a concrete object/field; none are fabricated, and none are shown when the underlying configuration cannot be observed.
 - **SC-019**: For a Pending pod, its scheduling reason is visible in the scheduling view within 2 interactions.
+- **SC-020** *(v3.11)*: A bulk action over N marked workloads asks for exactly ONE confirmation naming all N targets, issues no unconfirmed call, and in 100% of partial-failure cases reports each failed target individually.
+- **SC-021** *(v3.5)*: From any workload list, the operator reaches the workload's pods in one interaction and returns to the exact previous level in one interaction.
 
 ## Assumptions
 
 - The audience is broader than SRE/platform experts: the tool targets a general technical audience (developers, support, anyone operating around the cluster). The interface therefore prioritizes **graphical, self-explanatory presentation** — visual cues, charts, discoverable menus and contextual help — over terse expert-only output; knowing kubectl/k9s must not be a prerequisite.
 - The client reuses the operator's existing Kubernetes credentials and configuration and inherits the operator's permissions — it never elevates privileges (consistent with the constitution's least-privilege principle).
-- *(v3)* The tool administers the cluster directly; exec-into-pod and node drain are the remaining out-of-scope actions (still done via kubectl when needed).
+- *(v3, updated 2026-09-04)* The tool administers the cluster directly; shell-into-pod shipped in v3.4, so node drain is the single remaining out-of-scope action (still done via kubectl when needed — a future spec change, not a patch).
 - Multi-context support relies on contexts already present in the operator's configuration; the client does not create or manage credentials.
 - The primary environment is a standard terminal emulator supporting mouse reporting; graceful degradation is expected where it does not.
 - Localization is out of scope for the first version; the interface default language is English.
@@ -504,4 +534,4 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - Ownership, routing, and connectivity graphs are derived from live API objects; relations that depend on annotations (e.g. the diff's last-applied configuration) are shown as unavailable when the annotation is absent.
 - Posture rules cover a common baseline (requests/limits, privileged, run-as-root, probes, `latest` image, NetworkPolicy presence, TLS expiry); the specific rule set can grow later and is intentionally advisory, not enforced.
 - **v1 scope**: the first version delivers the P1 and P2 user stories (US1 inspection, US2 graphical debug views, US3 keyboard, US4 topology, US5 events timeline, US7 mouse, US9 dependency graph, US10 failure diagnostics, US11 scheduling & capacity, US12 Helm overview). The P3 stories — US6 sizing recommendations, US8 customizable views, US13 posture, US14 connectivity/NetworkPolicy, US15 access/RBAC view, US16 drift diff — are deferred to a later version (backlog), along with their FRs (FR-023, FR-024/FR-025, FR-030, FR-031, FR-032, FR-033) and success criteria (SC-013, SC-014, SC-018).
-- **v3 (owner decision, 2026-07-24)**: the administration mode is IN — not as an opt-in flag but as the product itself (see the 2026-07-24 clarification). Every mutating action carries a mandatory confirmation step and is bounded by the operator's RBAC; exec-into-pod and node drain are deferred. The former enforcement tests (zero-mutating-verb sweep, Helm mutating-action grep) are replaced by admin-operation tests plus the UI confirmation-gate tests.
+- **v3 (owner decision, 2026-07-24)**: the administration mode is IN — not as an opt-in flag but as the product itself (see the 2026-07-24 clarification). Every mutating action carries a mandatory confirmation step and is bounded by the operator's RBAC; exec-into-pod shipped in v3.4 and only node drain remains deferred. The former enforcement tests (zero-mutating-verb sweep, Helm mutating-action grep) are replaced by admin-operation tests plus the UI confirmation-gate tests.
