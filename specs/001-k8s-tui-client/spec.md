@@ -4,11 +4,18 @@
 
 **Created**: 2026-07-02
 
-**Status**: Living spec — realigned 2026-09-04 with everything shipped through v3.11.0
+**Status**: Living spec — realigned 2026-09-04 with everything shipped through v3.11.0; vNext batch specified 2026-09-04 (vim mode, topology rework, Datadog deep-link — FR-038/FR-039, US17)
 
 **Input**: User description: "L'objectif du projet est d'avoir une TUI en tant que client Kubernetes. Il va servir à administrer le cluster Kubernetes au quotidien. Il faut que la TUI puisse être cliquable. Il faut aussi des raccourcis maniables non exotiques" (amended: visual elements / charts; amended: customizable views; **amended (pivot): the tool is READ-ONLY — an overview & debugging tool, no mutating administrative actions. Actions are performed elsewhere (e.g. k9s). New overview capabilities: a topology view (which pods run on which nodes), app sizing recommendations, and an events timeline.**)
 
 ## Clarifications
+
+### Session 2026-09-04 (vNext batch: vim, topology rework, Datadog link, cleanup)
+
+- Q: Scope of vim support? → A: Owner decision — a FULL vim keymap (hjkl including l=open/right and h=back, gg/G, half/full-page motions), available ONLY when the tool is launched with a dedicated option (launch flag; default bindings are untouched without it). Conflicting defaults (e.g. 'l' = logs) get explicit vim-mode alternatives; the help overlay always shows the ACTIVE keymap. `EDITOR=vim` in the edit flow must also be verified. (New FR-038.)
+- Q: Direction for the topology rework? → A: Owner picked ALL THREE proposed directions combined: (a) nodes collapsed by default — header + capacity gauges only, the selected/expanded node shows its pods; (b) real observed usage from Prometheus displayed next to reserved requests (never estimated — FR-021 applies); (c) a heatmap/grid overview of all nodes colored by pressure, with the selected node's detail. Must stay readable and interactive at 100+ nodes. (Extends FR-013/US4.)
+- Q: Datadog logs deep-link? → A: Owner request — a shortcut + actions-palette entry that opens the operator's browser on Datadog Logs scoped to the current selection (namespace/pod or workload). Site and query template are configurable (default site: datadoghq.eu); this is purely a URL handed to the OS browser — the tool never sends any data to Datadog. Unconfigured/unresolvable → explicit message, never a guessed link. (New FR-039.)
+- Q: "Clean pass" on code and features? → A: Recorded as TASKS, not requirements: a code-cleanup audit (dead code, duplication, oversized files, guard-test gaps — like the 2026-07-12 audit) and a feature-consistency audit against the consistency invariant plus a groomed proposal for the next feature batch, reported to the owner.
 
 ### Session 2026-09-04 (realignment through v3.11)
 
@@ -120,6 +127,8 @@ and conventional.
 3. **Given** a resource list, **When** the operator filters and types, **Then** the list narrows in real time.
 4. **Given** a nested view, **When** the operator presses "back", **Then** the previous view is restored.
 5. **Given** the shortcut set, **When** reviewed, **Then** it uses common conventions, not exotic combinations.
+6. *(vNext)* **Given** the tool launched with the vim option, **When** the operator uses vim motions (hjkl, gg/G, half/full-page), **Then** they navigate as in vim, every capability of the default keymap stays reachable, and the help overlay lists the vim bindings.
+7. *(vNext)* **Given** the tool launched WITHOUT the vim option, **When** the operator uses the keyboard, **Then** the default bindings are exactly unchanged.
 
 ---
 
@@ -128,7 +137,12 @@ and conventional.
 An operator opens a topology view to see how workloads are placed across the
 cluster: which pods run on which nodes, how pods distribute across nodes, and
 where a node is hot or unbalanced. Selecting a node shows its pods; selecting a
-pod highlights its node.
+pod highlights its node. *(vNext rework, owner decision 2026-09-04 — all three
+directions combined)*: the view opens on a heatmap/grid of all nodes colored by
+pressure; nodes are collapsed by default (header + capacity gauges), and the
+selected node expands to its pods; observed usage (from the metrics source) is
+shown next to reserved requests — "unavailable", never estimated, without it.
+The whole view stays readable and interactive at 100+ nodes.
 
 **Why this priority**: Placement is a frequent debugging question ("why is this
 node saturated / where does this pod run"). It is a headline overview capability
@@ -145,6 +159,9 @@ host node.
 3. **Given** the topology view, **When** the operator selects a pod, **Then** its host node is highlighted and its details are reachable.
 4. **Given** a node under resource pressure, **When** shown in topology, **Then** its state is visually distinguishable (color/indicator).
 5. **Given** a large cluster, **When** the topology view opens, **Then** it stays readable and navigable (grouping/scrolling), not an unreadable wall.
+6. *(vNext)* **Given** the topology view opens, **Then** all nodes appear as a pressure-colored overview with collapsed entries (header + gauges), not one giant pod wall.
+7. *(vNext)* **Given** a selected node, **When** expanded, **Then** its pods are listed with reserved AND observed usage side by side; without a metrics source, observed shows "unavailable" — never an estimate.
+8. *(vNext)* **Given** 100+ nodes, **When** navigating the topology, **Then** selection, expand/collapse, and drill stay responsive with no perceptible freeze.
 
 ---
 
@@ -420,6 +437,33 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 
 ---
 
+### User Story 17 - Datadog logs deep-link (Priority: P2) *(vNext, owner request 2026-09-04)*
+
+Application logs are centralized in Datadog. From the resource under
+inspection, an operator jumps straight to the matching Datadog Logs view in
+their browser — scoped to the selected pod (or workload/namespace) — instead of
+rebuilding the query by hand. The tool only OPENS a link: it never sends
+anything to Datadog and never proxies its data.
+
+**Why this priority**: The in-TUI logs cover live tailing; historical/indexed
+log analysis lives in Datadog, and hand-building the scope query is the daily
+friction this removes.
+
+**Independent Test**: With a configured Datadog site, select a pod, trigger the
+deep-link, and confirm the browser opens Datadog Logs filtered to exactly that
+pod; with no configuration, confirm an explicit message and no browser launch
+with a guessed URL.
+
+**Acceptance Scenarios**:
+
+1. **Given** a selected pod and a configured Datadog link, **When** the operator triggers the deep-link (shortcut or actions palette), **Then** the OS browser opens Datadog Logs scoped to that pod (its namespace/identity in the query).
+2. **Given** a selected workload or namespace, **When** triggering the deep-link, **Then** the query is scoped to that level (all its pods).
+3. **Given** the query template or site is customized in the config file, **When** the link opens, **Then** it honors the customization.
+4. **Given** no Datadog configuration can produce a link for the selection, **When** triggered, **Then** the tool says so explicitly — it never opens a guessed or partial URL.
+5. **Given** any use of the feature, **Then** no request is ever made by the tool to Datadog — the URL is handed to the operator's browser and nothing else leaves the tool.
+
+---
+
 ### Edge Cases
 
 - What happens when the cluster is unreachable or the connection drops mid-session? Clear connection status; recover/reconnect without crashing.
@@ -432,6 +476,9 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - What if the operator lacks read permission on a resource type? Show it as inaccessible with a clear message, without erroring the whole app.
 - What happens when a bulk action succeeds on some marked targets and fails on others? Each failure is reported per target; the operator is never shown a blanket success.
 - What happens when marked workloads disagree on the value a bulk prompt would pre-fill (e.g. replicas)? The prompt starts empty rather than suggesting a misleading value.
+- What happens when the OS cannot open a browser (headless/SSH session)? The Datadog URL is shown so the operator can copy it; the failure is explicit.
+- What happens in vim mode to the keys vim motions displace (e.g. 'l' = logs)? Each displaced action keeps an explicit, help-listed alternative — no capability is lost in either keymap.
+- What happens on the topology heatmap when a node's pressure cannot be computed (no metrics)? The node is shown with its requests-based state and an explicit "usage unavailable" — never an estimated color.
 
 ## Requirements *(mandatory)*
 
@@ -449,7 +496,7 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **FR-010**: The client MUST provide a discoverable, context-aware help overlay listing all shortcuts active in the current view.
 - **FR-011**: The client MUST support mouse interaction: clicking to select, clicking to activate on-screen controls/navigation, and wheel scrolling.
 - **FR-012** *(v3, 2026-07-24 — supersedes the read-only rule)*: The client provides administration actions (edit YAML, scale, rolling restart, delete, cordon/uncordon, suspend/resume/trigger CronJobs, port-forward, shell-into-pod, Helm rollback/uninstall). EVERY mutating action MUST be preceded by an explicit confirmation step — a confirmation modal or a value prompt — and MUST never run from a single keypress. Mutations run strictly under the operator's own RBAC and their outcome (success or error) MUST be reported explicitly. The edit action applies only the operator's changes (a merge of original→edited), never a whole-object replacement — concurrent changes to other fields survive, and churn during the editing session does not spuriously fail the save. Bulk variants of admin actions over marked rows follow FR-037.
-- **FR-013**: The client MUST provide a topology view showing which pods are scheduled on which nodes, allowing selection from node→pods and pod→node, and visually distinguishing nodes under resource pressure.
+- **FR-013**: The client MUST provide a topology view showing which pods are scheduled on which nodes, allowing selection from node→pods and pod→node, and visually distinguishing nodes under resource pressure. *(vNext rework, 2026-09-04)*: the view MUST open on a pressure-colored overview (heatmap/grid) of all nodes with each node collapsed to its header + capacity gauges; the selected node expands to its pods; observed usage from the metrics source is displayed next to reserved requests and degrades to an explicit "unavailable" (FR-021) — and the view MUST stay readable and interactive at 100+ nodes (SC-005).
 - **FR-014**: The client MUST provide an events timeline: cluster events ordered in time, filterable by namespace/resource/severity, scopable to a selected resource, with warning/error events visually distinguished, and it MUST indicate the visible window rather than implying completeness beyond event retention. The operator can cycle the visible time window (5m/15m/1h/6h/24h/all, default all); changing it filters the events AND rescales the axis, with per-window counts visible so the change is provable on a busy cluster. Pods that were OOM-killed carry their last-termination reason on the timeline, taken verbatim from the API.
 - **FR-015**: The client MUST mask sensitive values (e.g. secret contents) by default and reveal them only on explicit operator request; revealing requires no authorization beyond the operator's existing cluster access, and the client MUST NOT gate or audit the reveal action.
 - **FR-016**: The client MUST show the current connection status and handle unreachable clusters, dropped connections, and expired credentials without crashing.
@@ -474,6 +521,8 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **FR-035**: The client MUST provide a "top consumers" view (top pods/nodes by CPU/memory), sourced from Prometheus; when Prometheus is not reachable, it shows an explicit "unavailable" state.
 - **FR-036**: The interface MUST be approachable by a general technical audience, not only Kubernetes experts: prefer graphical representations (charts, gauges, timelines, color) over raw text wherever they aid comprehension, keep every capability discoverable from the interface itself (visible menus/selectors, contextual shortcut help), and avoid jargon-only output. Prior kubectl/k9s experience MUST NOT be required to perform the core overview tasks.
 - **FR-037** *(v3.11, owner request 2026-08-27)*: The operator MUST be able to mark several rows and act on them at once. Marks scope the analysis views, and marked workloads get bulk admin actions (delete, rolling restart, scale) in the actions palette under the FR-012 contract: at most one value prompt for the whole batch — pre-filled only when every target already agrees on the value, otherwise empty — then ONE confirmation step naming every target, then one API call per object. Partial failures MUST be reported per target (never a blanket success), and a fully successful bulk action consumes the marks.
+- **FR-038** *(vNext, owner request 2026-09-04)*: The client MUST offer a full vim keymap — hjkl navigation (including l = open/right and h = back), gg/G top/bottom, half- and full-page motions — active ONLY when the tool is launched with a dedicated option; without it, the default bindings are exactly unchanged. Every action displaced by a vim motion keeps an explicit alternative in vim mode (no capability lost in either keymap), the help overlay always reflects the ACTIVE keymap (FR-010), and every binding in both keymaps carries help text. Using vim as the external editor for the edit flow MUST work (suspend/resume of the interface).
+- **FR-039** *(vNext, owner request 2026-09-04)*: The client MUST provide a deep-link to the operator's external log platform (Datadog): a shortcut and an actions-palette entry that open the OS browser on the platform's log view scoped to the current selection (pod, or workload/namespace level). The destination site and the query template MUST be configurable in the config file (sensible defaults provided). The tool only hands a URL to the browser — it MUST NOT send any data to the platform or proxy its content. When no valid link can be built (unset config, unresolvable selection), the client states it explicitly and never opens a guessed URL.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -517,6 +566,9 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - **SC-019**: For a Pending pod, its scheduling reason is visible in the scheduling view within 2 interactions.
 - **SC-020** *(v3.11)*: A bulk action over N marked workloads asks for exactly ONE confirmation naming all N targets, issues no unconfirmed call, and in 100% of partial-failure cases reports each failed target individually.
 - **SC-021** *(v3.5)*: From any workload list, the operator reaches the workload's pods in one interaction and returns to the exact previous level in one interaction.
+- **SC-022** *(vNext)*: With the vim option, 100% of the capabilities reachable in the default keymap remain reachable, and every binding of the active keymap appears in the help overlay; without the option, the default keymap is byte-for-byte unchanged (regression-tested).
+- **SC-023** *(vNext)*: On a 100+ node cluster, the topology overview fits the screen without scrolling through pod walls, and the operator reaches any node's pod detail in ≤ 2 interactions with no perceptible freeze (SC-005 scale).
+- **SC-024** *(vNext)*: From a selected pod, the operator reaches the correctly-scoped external log view in 1 interaction; in 100% of unconfigured/unresolvable cases the tool states why instead of opening a wrong URL; the tool itself performs zero network calls to the log platform.
 
 ## Assumptions
 
@@ -533,5 +585,6 @@ diff between live and last-applied is shown and no apply/edit affordance exists.
 - Workloads are deployed via Helm charts; the tool reads Helm release state (releases, revisions, history, status) and *(v3)* can roll back or uninstall a release behind an explicit confirmation. Install/upgrade stay in the deployment pipeline.
 - Ownership, routing, and connectivity graphs are derived from live API objects; relations that depend on annotations (e.g. the diff's last-applied configuration) are shown as unavailable when the annotation is absent.
 - Posture rules cover a common baseline (requests/limits, privileged, run-as-root, probes, `latest` image, NetworkPolicy presence, TLS expiry); the specific rule set can grow later and is intentionally advisory, not enforced.
+- *(vNext)* The external log platform is Datadog on the EU site (`datadoghq.eu`) by default; the deep-link is a plain URL opened by the OS browser — the operator's existing Datadog session handles authentication, and the tool holds no Datadog credentials. The code-cleanup and feature-consistency audits requested on 2026-09-04 are engineering tasks (see tasks.md), not product requirements.
 - **v1 scope**: the first version delivers the P1 and P2 user stories (US1 inspection, US2 graphical debug views, US3 keyboard, US4 topology, US5 events timeline, US7 mouse, US9 dependency graph, US10 failure diagnostics, US11 scheduling & capacity, US12 Helm overview). The P3 stories — US6 sizing recommendations, US8 customizable views, US13 posture, US14 connectivity/NetworkPolicy, US15 access/RBAC view, US16 drift diff — are deferred to a later version (backlog), along with their FRs (FR-023, FR-024/FR-025, FR-030, FR-031, FR-032, FR-033) and success criteria (SC-013, SC-014, SC-018).
 - **v3 (owner decision, 2026-07-24)**: the administration mode is IN — not as an opt-in flag but as the product itself (see the 2026-07-24 clarification). Every mutating action carries a mandatory confirmation step and is bounded by the operator's RBAC; exec-into-pod shipped in v3.4 and only node drain remains deferred. The former enforcement tests (zero-mutating-verb sweep, Helm mutating-action grep) are replaced by admin-operation tests plus the UI confirmation-gate tests.

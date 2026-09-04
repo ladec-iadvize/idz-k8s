@@ -158,6 +158,22 @@ isolates the three data sources — `kube` (API), `metrics` (Prometheus),
 with fakes/stubs without a terminal or a live cluster (Principle II/III). The `ui`
 layer never talks to a data source directly; it consumes `model`.
 
+## vNext batch (specified 2026-09-04 — open, see tasks.md Phases N1–N5)
+
+- **Vim mode (FR-038)**: a second keymap in `internal/ui/keys/` selected by a
+  launch flag; no new dependency. The default keymap must stay byte-identical
+  without the flag; `TestEveryBindingHasHelp` extends to both maps.
+- **Topology rework (FR-013 vNext)**: pressure heatmap/grid + collapsed nodes +
+  observed usage. Adds per-node/per-pod usage to the topology fetch (existing
+  Prometheus layer, D5 constraints apply — bounded queries, explicit
+  unavailable). Mouse geometry of the new layout ships with its tests.
+- **Datadog deep-link (FR-039)**: config fields (`datadogSite` default
+  `datadoghq.eu`, query template) + a URL builder + OS browser open
+  (`open`/`xdg-open`). Zero network calls from the tool; headless fallback
+  prints the URL. No credentials stored (FR-015/invariant 3 unchanged).
+- **N4/N5 audits**: engineering passes (code cleanup à la 2026-07-12;
+  view-consistency sweep + backlog grooming) — tracked as tasks, no FR.
+
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |

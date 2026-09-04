@@ -436,3 +436,33 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 ### Phase v3.11: Bulk scale on the marked selection (FR-037, owner request 2026-08-27)
 
 - [x] T106 [v3] scale-marked in the actions palette (`internal/ui/admin.go`): one replicas prompt pre-filled only when every target agrees, confirmation modal naming every target, one `ScaleWorkload` per object, partial failures reported per target, success consumes the marks — with UI confirmation-gate tests (PR #68)
+
+---
+
+## vNext Phases (owner batch 2026-09-04 — OPEN; one branch/PR per phase, version numbers picked at release time)
+
+### Phase N1: Vim mode behind a launch option (FR-038, US3)
+
+- [ ] T107 [US3] Launch option (e.g. `--vim` cobra flag, optionally mirrored in the config file) selecting a full vim keymap in `internal/ui/keys/`: hjkl (l = open/right, h = back), gg/G top/bottom, ctrl+d/ctrl+u half-page, ctrl+f/ctrl+b page; every displaced default (starting with 'l' = logs) gets an explicit vim-mode alternative; `screenKeymap()` and the help overlay follow the ACTIVE keymap
+- [ ] T108 [P] [US3] Tests: `TestEveryBindingHasHelp` covers BOTH keymaps; a regression test proving the default keymap is unchanged without the option (SC-022); typing modes still swallow keys before global shortcuts in vim mode; manual check that `EDITOR=vim` suspends/resumes cleanly in the 'e' flow
+
+### Phase N2: Topology rework (FR-013 vNext, US4 — all three directions)
+
+- [ ] T109 [US4] Data: per-node and per-pod OBSERVED usage from Prometheus alongside reserved requests (`internal/metrics`, extend `model.TopologyNode`/`TopologyPod` with used values + an explicit unavailable state — FR-021, never estimated)
+- [ ] T110 [US4] UI: topology opens on a pressure-colored heatmap/grid of all nodes; node entries collapsed to header + gauges (reserved AND used); the selected node expands to its pod table; Enter keeps drilling to the node's pods; `handleMouse` mapping + geometry tests updated TOGETHER (geometry is sacred)
+- [ ] T111 [P] [US4] Tests: expand/collapse + selection cells tests, no-Prometheus → "unavailable" (never a color guess), scale guard at 100 nodes / 5,000 pods (SC-023, extend `TestScaleListAndTopology`)
+
+### Phase N3: Datadog logs deep-link (FR-039, US17)
+
+- [ ] T112 [US17] Config + URL builder: `datadogSite` (default `datadoghq.eu`) and a query template in the config file; build the Logs URL scoped to the selection (pod → namespace+pod, workload/namespace → their pods) — a pure URL, the tool performs ZERO calls to Datadog; nothing sensitive written to the config (invariant 3)
+- [ ] T113 [US17] UI: dedicated shortcut + actions-palette entry ("open logs in Datadog"); OS browser open (`open`/`xdg-open`); when the browser cannot launch, print the URL; when no valid link can be built, an explicit message and no guessed URL
+- [ ] T114 [P] [US17] Tests: URL construction per scope level, template/site overrides honored, unconfigured → message (SC-024), and a guard that the feature makes no network request
+
+### Phase N4: Code-cleanup audit (engineering task, not an FR)
+
+- [ ] T115 Audit à la 2026-07-12 (#33–#38): dead code, duplicated logic, oversized files, guard-test gaps, golangci-lint debt — produce the findings list, then fix in small reviewable PRs (definition of done applies to each)
+
+### Phase N5: Feature-consistency audit + roadmap grooming (engineering task, not an FR)
+
+- [ ] T116 Sweep every view against the consistency invariant (owner directive 2026-07-09): '/' filter/search semantics, s/S + header-click sort, marks scoping, Esc clear-then-back, empty states, gauges/verdict language, palette-only analysis views — REPORT inconsistencies to the owner (fixes are follow-up PRs)
+- [ ] T117 Groom the feature backlog: review shipped stories vs. daily usage, propose the next feature batch to the owner (spec candidates only — commitments go through /speckit-specify)
