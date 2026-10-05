@@ -166,6 +166,9 @@ func (m *Model) listActions() ([]actionEntry, string) {
 				}))
 		}})
 	}
+	if dd := datadogAction("datadog", kind, obj, m.siblingsOf(obj)); dd != nil {
+		out = append(out, *dd)
+	}
 	out = append(out,
 		actionEntry{"edit", "edit " + label + " in $EDITOR", func(m *Model) (tea.Model, tea.Cmd) {
 			return m, m.startEdit()
@@ -240,6 +243,9 @@ func (m *Model) parentActions() []actionEntry {
 					return mm, cmd
 				}})
 		}
+	}
+	if dd := datadogAction("datadog-parent", pt.Kind, parent, m.drillParentSiblings); dd != nil {
+		out = append(out, *dd)
 	}
 	return out
 }

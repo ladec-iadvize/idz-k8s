@@ -148,6 +148,8 @@ func (m Model) handleContainersKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openContainerLogs()
 	case hit(msg, m.keys.Actions):
 		return m.openActions()
+	case hit(msg, m.keys.Datadog):
+		return m.openDatadogPod()
 	case hit(msg, m.keys.Sort):
 		m.containerSortCol++
 		if m.containerSortCol >= len(m.containerColumns()) {
@@ -207,5 +209,6 @@ func (m *Model) containerActions() ([]actionEntry, string) {
 		{"logs", "stream the logs of " + label, func(m *Model) (tea.Model, tea.Cmd) {
 			return m.openContainerLogs()
 		}},
+		*datadogAction("datadog", "Pod", pod, nil),
 	}, label
 }

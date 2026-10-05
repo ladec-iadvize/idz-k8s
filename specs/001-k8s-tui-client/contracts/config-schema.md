@@ -24,6 +24,11 @@ viewPrefs:                       # per-type view customization (US8, FR-024/FR-0
     sortCol: READY               # column title; "" = none
     sortAsc: true
     filter: api
+datadog:                         # logs deep-link (FR-039); every field optional, unset = built-in default
+  site: datadoghq.eu             # Datadog site; "off" disables the link
+  podQuery: "@namespace:{namespace} @container_name:{pod}"
+  workloadQuery: "@cluster_name:{context} @namespace:{namespace} @pod_owner:{owner}"
+  namespaceQuery: "@cluster_name:{context} @namespace:{namespace}"
 savedViews:                      # named arrangements (US8)
   - name: crashwatch
     type: v1/pods
@@ -44,6 +49,8 @@ savedViews:                      # named arrangements (US8)
 | `prometheusURL` | valid URL | absent/invalid → all usage/trend visuals show "unavailable" (never a crash) |
 | `theme` | one of enum | unknown → `auto` |
 | `lastContext` | string | unresolved at runtime → fall back to kubeconfig current-context |
+| `datadog.site` | Datadog site host (`datadoghq.eu`, `us5.datadoghq.com`…) or `off` | not a site → explicit message on use, no link |
+| `datadog.*Query` | template; placeholders `{namespace}` `{pod}` `{name}` `{kind}` `{context}` `{owner}` | unknown/empty placeholder → explicit message on use, no link. Defaults stay in code (not written to the file) |
 
 ## Load/save contract
 

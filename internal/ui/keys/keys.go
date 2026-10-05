@@ -26,6 +26,7 @@ type KeyMap struct {
 	Palette     key.Binding // one entry point for every analysis view
 	Actions     key.Binding // one entry point for every admin action (v3)
 	Edit        key.Binding
+	Datadog     key.Binding // open the selection's logs in Datadog (browser)
 	SearchNext  key.Binding
 	SearchPrev  key.Binding
 	Mark        key.Binding
@@ -72,6 +73,7 @@ func Default() KeyMap {
 		Palette:    key.NewBinding(key.WithKeys(">"), key.WithHelp(">", "views palette")),
 		Actions:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "actions (admin)")),
 		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit yaml")),
+		Datadog:    key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "logs in Datadog")),
 		SearchNext: key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "next match")),
 		SearchPrev: key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "previous match")),
 		Mark:       key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "mark")),
@@ -114,7 +116,7 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Home, k.End},
 		{k.Open, k.Back, k.Filter, k.Jump, k.Mark, k.SearchNext, k.SearchPrev},
-		{k.Logs, k.Yaml, k.Describe, k.Owner, k.Palette, k.Actions, k.Edit},
+		{k.Logs, k.Datadog, k.Yaml, k.Describe, k.Owner, k.Palette, k.Actions, k.Edit},
 		{k.Sort, k.SortDir, k.Columns, k.Views, k.ResetView},
 		{k.Kind, k.Namespace, k.Context, k.Values, k.Reveal, k.Pause, k.WarnOnly},
 		{k.Scale, k.Wrap, k.ScrollLeft, k.ScrollRight, k.ClearLogs, k.Separator},
