@@ -101,6 +101,7 @@ const activeContextSuffix = "  (active)"
 // Model is the root Bubble Tea model.
 type Model struct {
 	cfg            config.Config
+	openURL        func(string) error // browser launcher (Datadog link); nil = OS default
 	kubeconfigPath string
 	configPath     string
 	cfgMTime       time.Time // config file mtime at last load/save (hot reload)
@@ -189,6 +190,8 @@ type Model struct {
 	// actions palette offers ITS actions from inside the child list.
 	drillParent     model.ResourceObject
 	drillParentType model.ResourceType
+	// drillParentSiblings: see drillFrame.parentSiblings.
+	drillParentSiblings []string
 	// drillStack holds the levels above the current one — Esc pops exactly
 	// one (Deployment → Pods → Containers, CronJob → Jobs → Pods…).
 	drillStack []drillFrame
@@ -823,6 +826,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.containerRows = kube.PodContainers(msg.pod.Raw)
 			m.applyContainerRows()
 		}
+		return m, nil
+
+	case datadogOpenedMsg:
+		m.handleDatadogOpened(msg)
 		return m, nil
 
 	case adminMsg:
@@ -2066,7 +2073,7 @@ func (m Model) screenKeymap() keymapView {
 			short: []key.Binding{k.Open, k.Mark, k.Yaml, k.Describe, k.Actions, k.Filter, k.Sort, k.Logs, k.Palette, k.Namespace, k.Context, k.Help, k.Quit},
 			full: [][]key.Binding{
 				nav,
-				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs},
+				{k.Open, k.Mark, k.Yaml, k.Describe, k.Filter, k.Jump, k.Logs, k.Datadog},
 				{k.Actions, k.Edit, k.Sort, k.SortDir, k.Palette, k.Columns, k.Views, k.ResetView},
 				{k.Namespace, k.Context, k.Help, k.Quit},
 			},
@@ -2117,7 +2124,7 @@ func (m Model) screenKeymap() keymapView {
 	case screenContainers:
 		return keymapView{
 			short: []key.Binding{k.Up, k.Down, k.Open, k.Logs, k.Actions, k.Sort, k.Back, k.Quit},
-			full:  [][]key.Binding{nav, {k.Open, k.Logs, k.Actions, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
+			full:  [][]key.Binding{nav, {k.Open, k.Logs, k.Datadog, k.Actions, k.Sort, k.SortDir, k.Back, k.Help, k.Quit}},
 		}
 	case screenHelmHist:
 		return keymapView{

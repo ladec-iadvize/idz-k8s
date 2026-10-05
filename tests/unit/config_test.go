@@ -111,6 +111,10 @@ func TestConfigSchemaIsAllowlisted(t *testing.T) {
 		// login …) — the credentials it produces live in the AWS cache,
 		// never in this file.
 		"LoginCommand": true,
+		// Datadog holds a site name and query templates for the logs
+		// deep-link (FR-039) — the browser's own session authenticates,
+		// no API/app key is ever needed or stored.
+		"Datadog": true,
 	}
 	tp := reflect.TypeOf(config.Config{})
 	for i := 0; i < tp.NumField(); i++ {
@@ -120,6 +124,32 @@ func TestConfigSchemaIsAllowlisted(t *testing.T) {
 	}
 	if tp.NumField() != len(allowed) {
 		t.Errorf("Config has %d fields, allowlist has %d — remove stale entries", tp.NumField(), len(allowed))
+	}
+}
+
+// TestDatadogSettingsRoundTrip: the deep-link block persists as written, and
+// an untouched block stays out of the file (defaults live in code so they
+// can evolve without stale copies on disk).
+func TestDatadogSettingsRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := config.Save(path, config.Defaults()); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.Contains(string(data), "datadog") {
+		t.Errorf("an unset datadog block must not be written:\n%s", data)
+	}
+	cfg := config.Defaults()
+	cfg.Datadog = config.Datadog{Site: "us5.datadoghq.com", PodQuery: "pod_name:{pod}"}
+	if err := config.Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Datadog != cfg.Datadog {
+		t.Errorf("datadog block = %+v, want %+v", got.Datadog, cfg.Datadog)
 	}
 }
 

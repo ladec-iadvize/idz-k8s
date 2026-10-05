@@ -71,6 +71,9 @@ type drillFrame struct {
 	// in CronJob → Jobs could not trigger the CronJob).
 	parent     model.ResourceObject
 	parentType model.ResourceType
+	// parentSiblings are the parent's same-kind neighbours in its namespace,
+	// snapshotted at drill time (the Datadog link excludes prefix siblings).
+	parentSiblings []string
 }
 
 // drilling reports whether the list is showing a drilled level.
@@ -112,7 +115,7 @@ func (m *Model) drillInto() (tea.Cmd, bool) {
 	// A fresh level starts unfiltered and unscoped by the previous one, and
 	// remembers the object it was opened from as its parent.
 	next := drillFrame{typ: child, label: label, namespace: obj.Namespace,
-		parent: obj, parentType: m.curType}
+		parent: obj, parentType: m.curType, parentSiblings: m.siblingsOf(obj)}
 
 	switch step.by {
 	case bySelector:
@@ -165,6 +168,7 @@ func (m *Model) applyDrillFrame(f drillFrame) {
 	m.drillOwnerUID, m.drillNames = f.ownerUID, f.names
 	m.drillFor, m.drillNamespace = f.label, f.namespace
 	m.drillParent, m.drillParentType = f.parent, f.parentType
+	m.drillParentSiblings = f.parentSiblings
 }
 
 // exitDrill pops one level (Esc). The list returns to the parent exactly as
@@ -191,5 +195,6 @@ func (m *Model) resetDrill() {
 	m.drillSelector, m.drillNode, m.drillFor, m.drillNamespace = "", "", "", ""
 	m.drillOwnerUID, m.drillNames = "", nil
 	m.drillParent, m.drillParentType = model.ResourceObject{}, model.ResourceType{}
+	m.drillParentSiblings = nil
 	m.drillStack = nil
 }

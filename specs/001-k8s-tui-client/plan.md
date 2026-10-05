@@ -167,8 +167,9 @@ layer never talks to a data source directly; it consumes `model`.
   observed usage. Adds per-node/per-pod usage to the topology fetch (existing
   Prometheus layer, D5 constraints apply — bounded queries, explicit
   unavailable). Mouse geometry of the new layout ships with its tests.
-- **Datadog deep-link (FR-039)**: config fields (`datadogSite` default
-  `datadoghq.eu`, query template) + a URL builder + OS browser open
+- **Datadog deep-link (FR-039)**: config block (`datadog.site` default
+  `datadoghq.eu`, one query template per scope level — shipped in
+  `internal/datadog`) + a URL builder + OS browser open
   (`open`/`xdg-open`). Zero network calls from the tool; headless fallback
   prints the URL. No credentials stored (FR-015/invariant 3 unchanged).
 - **N4/N5 audits**: engineering passes (code cleanup à la 2026-07-12;

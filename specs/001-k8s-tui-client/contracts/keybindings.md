@@ -29,6 +29,7 @@ records the interaction rules and the stable core bindings, not every key.
 | `Space` | Mark/unmark the row — marks scope analysis views and are the target of bulk actions (FR-037) | click mark cell |
 | `l` | Logs (single pod) | click "logs" |
 | `L` | Merged logs across a workload's pods (FR-034) | click "all logs" |
+| `D` | Open the selection's logs in Datadog (browser) — pod, workload or namespace scope; list and containers view; also `datadog`/`datadog-parent` in the `a` palette (FR-039). Read-only: a URL, zero calls to Datadog | — |
 
 ## Admin (v3 — every action confirmed, FR-012)
 

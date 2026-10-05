@@ -454,9 +454,9 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 ### Phase N3: Datadog logs deep-link (FR-039, US17)
 
-- [ ] T112 [US17] Config + URL builder: `datadogSite` (default `datadoghq.eu`) and a query template in the config file; build the Logs URL scoped to the selection (pod → namespace+pod, workload/namespace → their pods) — a pure URL, the tool performs ZERO calls to Datadog; nothing sensitive written to the config (invariant 3)
-- [ ] T113 [US17] UI: dedicated shortcut + actions-palette entry ("open logs in Datadog"); OS browser open (`open`/`xdg-open`); when the browser cannot launch, print the URL; when no valid link can be built, an explicit message and no guessed URL
-- [ ] T114 [P] [US17] Tests: URL construction per scope level, template/site overrides honored, unconfigured → message (SC-024), and a guard that the feature makes no network request
+- [x] T112 [US17] Config + URL builder: `datadogSite` (default `datadoghq.eu`) and a query template in the config file; build the Logs URL scoped to the selection (pod → namespace+pod, workload/namespace → their pods) — a pure URL, the tool performs ZERO calls to Datadog; nothing sensitive written to the config (invariant 3)
+- [x] T113 [US17] UI: dedicated shortcut + actions-palette entry ("open logs in Datadog"); OS browser open (`open`/`xdg-open`); when the browser cannot launch, print the URL; when no valid link can be built, an explicit message and no guessed URL
+- [x] T114 [P] [US17] Tests: URL construction per scope level, template/site overrides honored, unconfigured → message (SC-024), and a guard that the feature makes no network request
 
 ### Phase N4: Code-cleanup audit (engineering task, not an FR)
 

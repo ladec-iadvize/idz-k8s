@@ -64,6 +64,8 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.startEdit()
 	case hit(msg, m.keys.Logs):
 		return m.openLogs()
+	case hit(msg, m.keys.Datadog):
+		return m.openDatadogSelection()
 	case hit(msg, m.keys.Mark):
 		m.toggleMark()
 		return m, nil

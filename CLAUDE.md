@@ -90,6 +90,7 @@ internal/kube     client-go (discovery incl. CRDs, lists via shared-informer cac
                   admin ops + port-forward — see invariant 1)
 internal/metrics  Prometheus — the ONLY metrics source (instant + 1h range, API-proxy autodiscovery)
 internal/helm     Helm release storage reader + rollback/uninstall actions (UI-confirmed)
+internal/datadog  Datadog Logs deep-link URL builder — pure, NEVER imports net/http
 internal/model    toolkit-agnostic domain types — no client-go, no Bubble Tea imports
 internal/ui       Bubble Tea (app.go state machine, listview.go type-aware lists, theme/, keys/)
 tests/            unit + integration (fakes only) + tui (teatest) — NEVER require a live cluster
@@ -251,6 +252,22 @@ AND. Cells are rendered BEFORE the keep/drop decision — guarded by
 before matching (styled cells would otherwise swallow a match). The events
 timeline is the deliberate exception: it matches object identity only, so
 typing "back" finds pods named *back* instead of every BackOff event.
+
+## Datadog logs link ('D') — owner request 2026-09-04 (FR-039)
+
+`D` (list + containers view) and `datadog`/`datadog-parent` in the 'a'
+palette open the browser on Datadog Logs scoped to the selection. The tool
+only builds a URL (`internal/datadog`, guarded by `TestNoNetworkImports`);
+no link → `errMsg` says why and nothing launches; a failed launch shows the
+URL full-screen to copy. The defaults follow the iAdvize pipeline as
+observed on 2026-10-05: logs arrive via Alloy/OTLP, so there are NO
+`kube_*` agent tags. Use `@namespace`, `@cluster_name`, `@pod_owner`
+(`ReplicaSet/<rs>`), and `@container_name`, which holds the POD name.
+kube-system logs carry no `@cluster_name`, which is why the pod query omits
+it. Deployment/CronJob owners are prefix-matched (`ReplicaSet/<name>-*`),
+so same-prefix siblings (prod: `back` vs `back-traceability-kafka-connect`)
+are excluded explicitly. The drill frame snapshots them (`parentSiblings`)
+for `datadog-parent`.
 
 ## Testing conventions
 

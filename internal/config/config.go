@@ -56,6 +56,19 @@ type Config struct {
 	// from the kubeconfig's exec plugin + AWS config (aws sso login …).
 	// A command, never a credential — nothing secret is stored (FR-015).
 	LoginCommand string `yaml:"loginCommand,omitempty"`
+	// Datadog tunes the logs deep-link (FR-039). Empty fields = built-in
+	// defaults, which stay out of the file so they can evolve.
+	Datadog Datadog `yaml:"datadog,omitempty"`
+}
+
+// Datadog is the logs deep-link setup: the site and one query template per
+// scope level. Placeholders: {namespace} {pod} {owner} {name} {kind}
+// {context}. A URL setting, never a credential (FR-015).
+type Datadog struct {
+	Site           string `yaml:"site,omitempty"` // default datadoghq.eu; "off" disables
+	PodQuery       string `yaml:"podQuery,omitempty"`
+	WorkloadQuery  string `yaml:"workloadQuery,omitempty"`
+	NamespaceQuery string `yaml:"namespaceQuery,omitempty"`
 }
 
 // Defaults returns the built-in defaults (FR-006: refresh default ~5s).

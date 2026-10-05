@@ -75,6 +75,7 @@ when you see it 💚).
 | `y` / `d` | YAML view / describe (conditions + the object's events, messages in full; Services show their backends). Secret values are **masked**; `x` on a Secret's detail reveals/hides them |
 | `l` | Live logs — on a workload: **merged logs of all its pods**, color-coded per pod; in the containers view: that container's logs |
 | in logs: `w` / `←` `→` / `ctrl+l` / `M` | `w` folds long lines onto the next line (wrap); `←`/`→` shift the view sideways 20 columns at a time when wrapping is off; **`ctrl+l` clears what is buffered** (the stream keeps running); **`M` inserts a timestamped separator** — mark the stream, trigger something, read only what came after. `Space` pauses the follow, `End` resumes at the tail |
+| `D` | **Open the selection's logs in Datadog** (browser): a pod → that pod; a Deployment/StatefulSet/DaemonSet/Job/CronJob → all its pods; a namespace → the whole namespace. Also in the `a` palette (`datadog`, and `datadog-parent` inside a drilled list). idz-k8s only builds the URL — it never calls Datadog; your browser session does the login. No browser (SSH)? The URL is shown to copy |
 | `a` | **Actions palette** (admin): the actions the selection supports — scale, rolling restart, port-forward, **shell into the pod** (bash, sh fallback), cordon/uncordon, suspend/resume, **trigger a CronJob now**, edit, delete; Helm releases get rollback/uninstall. Mark several rows with `Space` and the palette adds **bulk actions** on the whole marked set — scale to one replica count, rolling restart, cordon/uncordon, suspend/resume, delete. Every mutation asks for confirmation (`Enter` confirm · `Esc` cancel) |
 | `e` | Edit the selection's YAML in `$KUBE_EDITOR`/`$EDITOR`. **Save, then close the file/tab** — the edit is applied when the editor releases it, as a patch of what you changed (concurrent changes to other fields survive). GUI editors get `--wait` added automatically; an unchanged file sends nothing |
 | `> topology` | Topology: pods per node, reserved vs allocatable CPU/RAM, free room, biggest pods first |
@@ -222,6 +223,28 @@ savedViews:                # named views ('V')
     filter: api
 ```
 
+### Datadog logs link (`D`)
+
+Works out of the box on the iAdvize log pipeline (Datadog EU, logs shipped by
+Alloy with `@namespace`, `@cluster_name`, `@pod_owner` and `@container_name` =
+pod name). To point it elsewhere, add a `datadog:` block — every field is
+optional:
+
+```yaml
+datadog:
+  site: datadoghq.eu       # us5.datadoghq.com, datadoghq.com… — "off" disables the link
+  podQuery: "@namespace:{namespace} @container_name:{pod}"
+  workloadQuery: "@cluster_name:{context} @namespace:{namespace} @pod_owner:{owner}"
+  namespaceQuery: "@cluster_name:{context} @namespace:{namespace}"
+```
+
+Placeholders: `{namespace}`, `{pod}`, `{name}`, `{kind}` (lowercase kind),
+`{context}` (the kube context — named like the Datadog cluster here) and
+`{owner}` (the pods' owner: `ReplicaSet/<deployment>-*` minus same-prefix
+sibling deployments, `Job/<cronjob>-*`, `StatefulSet/<name>`…). A template
+that cannot be filled for the selection gives an explicit message, never a
+half-built link.
+
 Invalid or stale entries (an unknown column, a type absent from the cluster)
 are ignored gracefully — they never break startup.
 
@@ -259,6 +282,8 @@ version: they show up by default so an update never ships invisible features.
   `idz-k8s` field manager, and runs under your own RBAC.
 - Secrets are **masked by default** (explicit reveal only); nothing sensitive
   is ever persisted or logged.
+- The Datadog link is a URL handed to your browser — idz-k8s makes no call to
+  Datadog and holds no Datadog key.
 - Graceful degradation: no color (`NO_COLOR`), no mouse, unreachable
   Prometheus, lost cluster connection (auto-retry with status).
 - Responsive at ≥5,000 pods / 100 nodes (windowed rendering; validated in tests).
@@ -273,6 +298,7 @@ go build ./... && go vet ./... && go test ./...
   topology, diagnostics, endpoints, admin operations, port-forward)
 - `internal/metrics` — Prometheus (instant + range queries, autodiscovery proxy)
 - `internal/helm` — Helm release storage reader + rollback/uninstall actions
+- `internal/datadog` — Datadog Logs deep-link URL builder (pure, no network)
 - `internal/ui` — Bubble Tea interface (views, theme, keymap, mouse)
 - `specs/001-k8s-tui-client/` — the full spec-kit lifecycle: spec, plan,
   research, contracts, quickstart, tasks
