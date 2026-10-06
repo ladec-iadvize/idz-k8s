@@ -65,7 +65,8 @@ type Config struct {
 // scope level. Placeholders: {namespace} {pod} {owner} {name} {kind}
 // {context}. A URL setting, never a credential (FR-015).
 type Datadog struct {
-	Site           string `yaml:"site,omitempty"` // default datadoghq.eu; "off" disables
+	Site           string `yaml:"site,omitempty"`   // default datadoghq.eu; "off" disables
+	Window         string `yaml:"window,omitempty"` // how far back the link looks; default 1h
 	PodQuery       string `yaml:"podQuery,omitempty"`
 	WorkloadQuery  string `yaml:"workloadQuery,omitempty"`
 	NamespaceQuery string `yaml:"namespaceQuery,omitempty"`

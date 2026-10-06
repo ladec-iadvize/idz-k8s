@@ -7,8 +7,10 @@ package ui
 import (
 	"errors"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -94,6 +96,14 @@ func TestDatadogKeyOpensScopedLink(t *testing.T) {
 	if got := ddQuery(t, rec.urls[0]); got != want {
 		t.Errorf("query = %q, want %q", got, want)
 	}
+	// Live on the last hour by default — Datadog's own 15 minutes shows a
+	// blank page for a quiet pod (owner decision 2026-10-06).
+	u, _ := url.Parse(rec.urls[0])
+	from, _ := strconv.ParseInt(u.Query().Get("from_ts"), 10, 64)
+	to, _ := strconv.ParseInt(u.Query().Get("to_ts"), 10, 64)
+	if to-from != time.Hour.Milliseconds() || u.Query().Get("live") != "true" {
+		t.Errorf("default window must be a live last hour, got from=%d to=%d live=%q", from, to, u.Query().Get("live"))
+	}
 	if m.screen != screenList || !strings.Contains(m.statusMsg, "✓") {
 		t.Errorf("a successful launch stays on the list and confirms (screen=%v status=%q)", m.screen, m.statusMsg)
 	}
@@ -117,6 +127,7 @@ func TestDatadogNeverOpensAGuessedLink(t *testing.T) {
 		"no kube context":  func(m *Model) { m.cfg.Datadog.WorkloadQuery = "" }, // default needs {context}
 		"bad placeholder":  func(m *Model) { m.cfg.Datadog.WorkloadQuery = "service:{service}" },
 		"unsupported kind": func(m *Model) { m.curType.Kind = "ConfigMap" },
+		"bogus window":     func(m *Model) { m.cfg.Datadog.Window = "soon" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {

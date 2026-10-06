@@ -233,6 +233,7 @@ optional:
 ```yaml
 datadog:
   site: datadoghq.eu       # us5.datadoghq.com, datadoghq.com… — "off" disables the link
+  window: 1h               # how far back the link looks (live): 30m, 6h, 2d…
   podQuery: "@namespace:{namespace} @container_name:{pod}"
   workloadQuery: "@cluster_name:{context} @namespace:{namespace} @pod_owner:{owner}"
   namespaceQuery: "@cluster_name:{context} @namespace:{namespace}"
@@ -243,7 +244,9 @@ Placeholders: `{namespace}`, `{pod}`, `{name}`, `{kind}` (lowercase kind),
 `{owner}` (the pods' owner: `ReplicaSet/<deployment>-*` minus same-prefix
 sibling deployments, `Job/<cronjob>-*`, `StatefulSet/<name>`…). A template
 that cannot be filled for the selection gives an explicit message, never a
-half-built link.
+half-built link. The link searches every index: `@cluster_name` already
+separates dev from prod, and some prod logs (Kubernetes events, a few batch
+services) live outside `main`.
 
 Invalid or stale entries (an unknown column, a type absent from the cluster)
 are ignored gracefully — they never break startup.

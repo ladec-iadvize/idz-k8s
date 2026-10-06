@@ -11,7 +11,9 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Defaults match the iAdvize log pipeline (Grafana Alloy → OTLP ingestion):
@@ -28,12 +30,18 @@ const (
 
 	// Off disables the link (site: off in the config file).
 	Off = "off"
+
+	// DefaultWindow is how far back the link looks (owner decision
+	// 2026-10-06). Datadog's own default is 15 minutes, which shows an
+	// empty page for any quiet pod — verified on prod `back` at night.
+	DefaultWindow = time.Hour
 )
 
 // Settings are the user-tunable parts of the link (config file, `datadog:`).
 // Empty fields fall back to the defaults above.
 type Settings struct {
 	Site           string
+	Window         string // "1h", "30m", "2d"… ("" = DefaultWindow)
 	PodQuery       string
 	WorkloadQuery  string
 	NamespaceQuery string
@@ -82,9 +90,18 @@ func levelOf(kind string) (level, bool) {
 }
 
 // LogsURL returns the Datadog Logs URL for the scope, or an error that says
-// why no valid link can be built — never a guessed or partial URL.
-func LogsURL(s Settings, sc Scope) (string, error) {
+// why no valid link can be built — never a guessed or partial URL. The
+// explorer opens live on the window ending at now (from_ts/to_ts in ms with
+// live=true is Datadog's "Past <window>" span). No index is set: the
+// explorer searches them all, and @cluster_name already separates dev from
+// prod. Restricting to `main` would hide the ~1.6 % of prod logs (events,
+// batch services) indexed elsewhere (owner decision 2026-10-06).
+func LogsURL(s Settings, sc Scope, now time.Time) (string, error) {
 	host, err := appHost(s.Site)
+	if err != nil {
+		return "", err
+	}
+	window, err := parseWindow(s.Window)
 	if err != nil {
 		return "", err
 	}
@@ -94,8 +111,32 @@ func LogsURL(s Settings, sc Scope) (string, error) {
 	}
 	v := url.Values{}
 	v.Set("query", q)
+	v.Set("from_ts", strconv.FormatInt(now.Add(-window).UnixMilli(), 10))
+	v.Set("to_ts", strconv.FormatInt(now.UnixMilli(), 10))
 	v.Set("live", "true")
 	return "https://" + host + "/logs?" + v.Encode(), nil
+}
+
+// parseWindow reads a Go duration, plus a day suffix ("2d") since days are
+// the natural unit for log history.
+func parseWindow(w string) (time.Duration, error) {
+	w = strings.TrimSpace(w)
+	if w == "" {
+		return DefaultWindow, nil
+	}
+	var d time.Duration
+	var err error
+	if n, ok := strings.CutSuffix(w, "d"); ok {
+		var days int
+		days, err = strconv.Atoi(n)
+		d = time.Duration(days) * 24 * time.Hour
+	} else {
+		d, err = time.ParseDuration(w)
+	}
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("datadog.window %q is not a duration (e.g. 1h, 30m, 2d)", w)
+	}
+	return d, nil
 }
 
 // Query renders the Datadog search query for the scope.

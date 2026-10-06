@@ -31,7 +31,7 @@ type datadogOpenedMsg struct {
 // time, so a live config reload applies immediately).
 func (m Model) datadogSettings() datadog.Settings {
 	d := m.cfg.Datadog
-	return datadog.Settings{Site: d.Site, PodQuery: d.PodQuery,
+	return datadog.Settings{Site: d.Site, Window: d.Window, PodQuery: d.PodQuery,
 		WorkloadQuery: d.WorkloadQuery, NamespaceQuery: d.NamespaceQuery}
 }
 
@@ -94,7 +94,7 @@ func datadogAction(id, kind string, obj model.ResourceObject, siblings []string)
 // launch: the reason goes to the status line instead of a guessed URL.
 func (m *Model) openDatadog(sc datadog.Scope) (tea.Model, tea.Cmd) {
 	label := sc.Kind + "/" + sc.Name
-	u, err := datadog.LogsURL(m.datadogSettings(), sc)
+	u, err := datadog.LogsURL(m.datadogSettings(), sc, time.Now())
 	if err != nil {
 		m.errMsg = "Datadog link: " + err.Error()
 		return m, nil

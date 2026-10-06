@@ -10,7 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+var testNow = time.Date(2026, 10, 6, 6, 33, 0, 0, time.UTC)
 
 // queryOf decodes the query parameter of a built link.
 func queryOf(t *testing.T, link string) string {
@@ -46,7 +49,7 @@ func TestLogsURLPerScopeLevel(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			link, err := LogsURL(Settings{}, c.sc)
+			link, err := LogsURL(Settings{}, c.sc, testNow)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -57,6 +60,36 @@ func TestLogsURLPerScopeLevel(t *testing.T) {
 				t.Errorf("query = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// The link opens live on the last hour by default (owner decision
+// 2026-10-06: Datadog's 15-minute default shows a blank page for a quiet
+// pod); the window is configurable, and a bogus one gives no link.
+func TestLogsURLTimeWindow(t *testing.T) {
+	pod := Scope{Kind: "Pod", Namespace: "ns", Name: "p"}
+	for window, span := range map[string]time.Duration{
+		"": time.Hour, "30m": 30 * time.Minute, "2d": 48 * time.Hour, " 6h ": 6 * time.Hour,
+	} {
+		link, err := LogsURL(Settings{Window: window}, pod, testNow)
+		if err != nil {
+			t.Fatalf("window %q: %v", window, err)
+		}
+		u, _ := url.Parse(link)
+		q := u.Query()
+		from, _ := strconv.ParseInt(q.Get("from_ts"), 10, 64)
+		to, _ := strconv.ParseInt(q.Get("to_ts"), 10, 64)
+		if to != testNow.UnixMilli() || to-from != span.Milliseconds() || q.Get("live") != "true" {
+			t.Errorf("window %q: from=%d to=%d live=%s, want a live %s span ending now", window, from, to, q.Get("live"), span)
+		}
+		if strings.Contains(link, "index") {
+			t.Errorf("no index restriction (all indexes, owner decision 2026-10-06): %s", link)
+		}
+	}
+	for _, bad := range []string{"soon", "-1h", "0", "xd"} {
+		if link, err := LogsURL(Settings{Window: bad}, pod, testNow); err == nil || link != "" {
+			t.Errorf("window %q must give an explicit error and no link, got %q / %v", bad, link, err)
+		}
 	}
 }
 
@@ -85,7 +118,7 @@ func TestSiteAndTemplateOverrides(t *testing.T) {
 		WorkloadQuery:  "kube_{kind}:{name}",
 		NamespaceQuery: "kube_namespace:{namespace}",
 	}
-	link, err := LogsURL(s, Scope{Kind: "Pod", Namespace: "ns", Name: "p", Context: "dev"})
+	link, err := LogsURL(s, Scope{Kind: "Pod", Namespace: "ns", Name: "p", Context: "dev"}, testNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +136,7 @@ func TestSiteAndTemplateOverrides(t *testing.T) {
 		"datadoghq.com": "app.datadoghq.com", "https://datadoghq.eu/": "app.datadoghq.eu",
 		" DatadogHQ.eu ": "app.datadoghq.eu", "ap1.datadoghq.com": "ap1.datadoghq.com",
 	} {
-		link, err := LogsURL(Settings{Site: site}, Scope{Kind: "Pod", Namespace: "n", Name: "p"})
+		link, err := LogsURL(Settings{Site: site}, Scope{Kind: "Pod", Namespace: "n", Name: "p"}, testNow)
 		if err != nil || !strings.HasPrefix(link, "https://"+host+"/logs?") {
 			t.Errorf("site %q → %q (%v), want host %s", site, link, err, host)
 		}
@@ -129,7 +162,7 @@ func TestNoGuessedLink(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			link, err := LogsURL(c.s, c.sc)
+			link, err := LogsURL(c.s, c.sc, testNow)
 			if err == nil {
 				t.Fatalf("expected an explicit error, got link %q", link)
 			}
@@ -141,7 +174,7 @@ func TestNoGuessedLink(t *testing.T) {
 			}
 		})
 	}
-	if _, err := LogsURL(Settings{Site: "off"}, pod); !errors.Is(err, ErrDisabled) {
+	if _, err := LogsURL(Settings{Site: "off"}, pod, testNow); !errors.Is(err, ErrDisabled) {
 		t.Errorf("site off must return ErrDisabled, got %v", err)
 	}
 }

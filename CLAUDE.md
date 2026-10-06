@@ -269,6 +269,13 @@ so same-prefix siblings (prod: `back` vs `back-traceability-kafka-connect`)
 are excluded explicitly. The drill frame snapshots them (`parentSiblings`)
 for `datadog-parent`.
 
+Owner decisions 2026-10-06, after a check on prod: the link opens live on
+the last **1h** (`datadog.window`). Datadog's default 15 minutes showed a
+blank page for `back` at night. The link also searches **all indexes**:
+indexes are `main` (prod) and `dev`, but about 1.6 % of prod logs (k8s
+events, some batch services) sit in another index, so `index:main` would
+hide them.
+
 ## Testing conventions
 
 - Fakes only: `tests/integration/harness.go` (fake dynamic/clientset —
