@@ -26,6 +26,7 @@ viewPrefs:                       # per-type view customization (US8, FR-024/FR-0
     filter: api
 datadog:                         # logs deep-link (FR-039); every field optional, unset = built-in default
   site: datadoghq.eu             # Datadog site; "off" disables the link
+  window: 1h                     # live time span of the link (Go duration or Nd)
   podQuery: "@namespace:{namespace} @container_name:{pod}"
   workloadQuery: "@cluster_name:{context} @namespace:{namespace} @pod_owner:{owner}"
   namespaceQuery: "@cluster_name:{context} @namespace:{namespace}"
@@ -50,6 +51,7 @@ savedViews:                      # named arrangements (US8)
 | `theme` | one of enum | unknown → `auto` |
 | `lastContext` | string | unresolved at runtime → fall back to kubeconfig current-context |
 | `datadog.site` | Datadog site host (`datadoghq.eu`, `us5.datadoghq.com`…) or `off` | not a site → explicit message on use, no link |
+| `datadog.window` | Go duration or `Nd`, > 0 | invalid → explicit message on use, no link; unset → 1h |
 | `datadog.*Query` | template; placeholders `{namespace}` `{pod}` `{name}` `{kind}` `{context}` `{owner}` | unknown/empty placeholder → explicit message on use, no link. Defaults stay in code (not written to the file) |
 
 ## Load/save contract
