@@ -59,6 +59,9 @@ type Config struct {
 	// Datadog tunes the logs deep-link (FR-039). Empty fields = built-in
 	// defaults, which stay out of the file so they can evolve.
 	Datadog Datadog `yaml:"datadog,omitempty"`
+	// Animations: "off" freezes the loaders, spinners and progress bars on
+	// a static frame (FR-040). Empty = on.
+	Animations string `yaml:"animations,omitempty"`
 }
 
 // Datadog is the logs deep-link setup: the site and one query template per

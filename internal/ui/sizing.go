@@ -82,6 +82,7 @@ func (m *Model) openSizingFor(obj model.ResourceObject, selector string, from sc
 	m.screen = screenSizing
 	m.sizingFrom = from
 	m.setContent(screenSizing, "observing "+m.curType.Kind+"/"+obj.Name+" over the last hour…")
+	m.startLoading(screenSizing, "observing "+m.curType.Kind+"/"+obj.Name+" over the last hour")
 	m.layout()
 	return m, m.fetchSizing(obj, selector)
 }

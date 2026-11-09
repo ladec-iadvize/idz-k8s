@@ -149,7 +149,7 @@ func TestDeleteGoesThroughConfirmation(t *testing.T) {
 	if m.confirming || cmd == nil {
 		t.Fatal("Enter must disarm the modal and run the mutation")
 	}
-	msg, ok := cmd().(adminMsg)
+	msg, ok := adminResult(cmd)
 	if !ok || msg.err != nil {
 		t.Fatalf("mutation result: %+v", msg)
 	}
@@ -180,7 +180,7 @@ func TestScalePromptAppliesReplicas(t *testing.T) {
 	if m.promptKind != promptNone || cmd == nil {
 		t.Fatal("Enter must commit the prompt and run the scale")
 	}
-	if msg, ok := cmd().(adminMsg); !ok || msg.err != nil {
+	if msg, ok := adminResult(cmd); !ok || msg.err != nil {
 		t.Fatalf("scale result: %+v", msg)
 	}
 	obj, err := m.client.GetObject(t.Context(), deploymentsType, "demo", "back")
@@ -291,7 +291,7 @@ func TestBulkDeleteOnMarkedPods(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Enter must run the bulk mutation")
 	}
-	msg, ok := cmd().(adminMsg)
+	msg, ok := adminResult(cmd)
 	if !ok || msg.err != nil || !msg.clearMarks {
 		t.Fatalf("bulk result: %+v", msg)
 	}
@@ -407,7 +407,7 @@ func TestParentActionsInDrilledList(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Enter must run the trigger")
 	}
-	msg, ok := cmd().(adminMsg)
+	msg, ok := adminResult(cmd)
 	if !ok || msg.err != nil {
 		t.Fatalf("trigger result: %+v", msg)
 	}
@@ -605,7 +605,7 @@ func TestBulkScaleMarkedDeployments(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("Enter on the modal must run the bulk scale")
 	}
-	msg, ok := cmd().(adminMsg)
+	msg, ok := adminResult(cmd)
 	if !ok || msg.err != nil || !msg.clearMarks {
 		t.Fatalf("bulk scale result: %+v", msg)
 	}
@@ -618,4 +618,23 @@ func TestBulkScaleMarkedDeployments(t *testing.T) {
 			t.Fatalf("%s replicas=%d, want 4", name, r)
 		}
 	}
+}
+
+// adminResult runs a command and returns the adminMsg it carries — the
+// mutation may come batched with the animation tick that started with it.
+func adminResult(cmd tea.Cmd) (adminMsg, bool) {
+	if cmd == nil {
+		return adminMsg{}, false
+	}
+	switch msg := cmd().(type) {
+	case adminMsg:
+		return msg, true
+	case tea.BatchMsg:
+		for _, c := range msg {
+			if am, ok := adminResult(c); ok {
+				return am, true
+			}
+		}
+	}
+	return adminMsg{}, false
 }

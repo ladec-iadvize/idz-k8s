@@ -143,6 +143,8 @@ type adminMsg struct {
 	// clearMarks: the mutation consumed the marked set (bulk action) — the
 	// marks are dropped on success so stale dots never linger.
 	clearMarks bool
+	// track: the rollouts this mutation started, followed live (FR-040).
+	track []rolloutTarget
 }
 
 // editOpenMsg: the object's YAML was written to a temp file — hand the

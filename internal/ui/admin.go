@@ -106,9 +106,9 @@ func (m *Model) listActions() ([]actionEntry, string) {
 	if kindIs(kind, "Deployment", "StatefulSet", "DaemonSet") {
 		out = append(out, actionEntry{"restart", "rolling restart of " + label, func(m *Model) (tea.Model, tea.Cmd) {
 			return m.requestConfirm("rolling restart of "+label,
-				m.adminCmd(label+" restarted", func(ctx context.Context, cl *kube.Client) error {
+				trackRollouts(m.adminCmd(label+" restarted", func(ctx context.Context, cl *kube.Client) error {
 					return cl.RolloutRestart(ctx, t, obj.Namespace, obj.Name, time.Now())
-				}))
+				}), t, obj))
 		}})
 	}
 	if kindIs(kind, "Pod", "Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Service") {
@@ -227,9 +227,9 @@ func (m *Model) parentActions() []actionEntry {
 		out = append(out, actionEntry{"restart-parent", "rolling restart of " + label,
 			func(m *Model) (tea.Model, tea.Cmd) {
 				return m.requestConfirm("rolling restart of "+label,
-					m.adminCmd(label+" restarted", func(ctx context.Context, cl *kube.Client) error {
+					trackRollouts(m.adminCmd(label+" restarted", func(ctx context.Context, cl *kube.Client) error {
 						return cl.RolloutRestart(ctx, pt, parent.Namespace, parent.Name, time.Now())
-					}))
+					}), pt, parent))
 			}})
 		if kindIs(pt.Kind, "Deployment", "StatefulSet", "ReplicaSet") {
 			out = append(out, actionEntry{"scale-parent", "set replicas of " + label,
@@ -286,9 +286,9 @@ func (m *Model) markedActions() []actionEntry {
 	if kindIs(kind, "Deployment", "StatefulSet", "DaemonSet") {
 		out = append(out, actionEntry{"restart-marked", "rolling restart of " + label, func(m *Model) (tea.Model, tea.Cmd) {
 			return m.requestConfirm("rolling restart of "+label+" — "+list,
-				m.adminBulkCmd(label+" restarted", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
+				trackRollouts(m.adminBulkCmd(label+" restarted", objs, func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
 					return cl.RolloutRestart(ctx, t, o.Namespace, o.Name, time.Now())
-				}))
+				}), t, objs...))
 		}})
 	}
 	if kindIs(kind, "Node") {
@@ -436,7 +436,7 @@ func (m Model) handleConfirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEnter:
 		cmd := m.confirmCmd
 		m.confirming, m.confirmCmd = false, nil
-		m.statusMsg = "⏳ " + m.confirmTitle
+		m.startBusy(m.confirmTitle)
 		return m, cmd
 	case tea.KeyEscape:
 		m.confirming, m.confirmCmd = false, nil
@@ -465,11 +465,11 @@ func (m Model) openScalePrompt(obj model.ResourceObject) (tea.Model, tea.Cmd) {
 			m.errMsg = "replicas must be a non-negative integer, got " + strconv.Quote(value)
 			return m, nil
 		}
-		m.statusMsg = fmt.Sprintf("⏳ scaling %s to %d", label, n)
-		return m, m.adminCmd(fmt.Sprintf("%s scaled to %d", label, n),
+		m.startBusy(fmt.Sprintf("scaling %s to %d", label, n))
+		return m, trackRollouts(m.adminCmd(fmt.Sprintf("%s scaled to %d", label, n),
 			func(ctx context.Context, cl *kube.Client) error {
 				return cl.ScaleWorkload(ctx, t, obj.Namespace, obj.Name, n)
-			})
+			}), t, obj)
 	}
 	return m, nil
 }
@@ -506,10 +506,10 @@ func (m Model) openBulkScalePrompt(objs []model.ResourceObject, label, list stri
 			return m, nil
 		}
 		return m.requestConfirm(fmt.Sprintf("scale %s to %d — %s", label, n, list),
-			m.adminBulkCmd(fmt.Sprintf("%s scaled to %d", label, n), objs,
+			trackRollouts(m.adminBulkCmd(fmt.Sprintf("%s scaled to %d", label, n), objs,
 				func(ctx context.Context, cl *kube.Client, o model.ResourceObject) error {
 					return cl.ScaleWorkload(ctx, t, o.Namespace, o.Name, n)
-				}))
+				}), t, objs...))
 	}
 	return m, nil
 }
@@ -527,7 +527,7 @@ func (m Model) openForwardPrompt(obj model.ResourceObject) (tea.Model, tea.Cmd) 
 			m.errMsg = err.Error()
 			return m, nil
 		}
-		m.statusMsg = fmt.Sprintf("⏳ port-forward %s → %s:%d", value, label, remote)
+		m.startBusy(fmt.Sprintf("port-forward %s → %s:%d", value, label, remote))
 		return m, m.startForward(obj, local, remote)
 	}
 	return m, nil

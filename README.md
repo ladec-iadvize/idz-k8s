@@ -207,8 +207,9 @@ schemaVersion: 1
 refreshIntervalSeconds: 5
 prometheusURL: ""          # optional override
 theme: auto
-lastContext: dev-main      # restored on startup
-lastNamespace: ""          # "" = all namespaces (the default scope)
+animations: "" # "off" freezes loaders, spinners and rollout bars
+lastContext: dev-main # restored on startup
+lastNamespace: "" # "" = all namespaces (the default scope)
 lastType: apps/v1/deployments
 viewPrefs:                 # per-type customization ('C', 's', '/')
   v1/pods:

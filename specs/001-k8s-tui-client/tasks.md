@@ -466,3 +466,9 @@ Task: "TUI launch→list→detail→logs + secret masking in tests/tui/inspect_t
 
 - [ ] T116 Sweep every view against the consistency invariant (owner directive 2026-07-09): '/' filter/search semantics, s/S + header-click sort, marks scoping, Esc clear-then-back, empty states, gauges/verdict language, palette-only analysis views — REPORT inconsistencies to the owner (fixes are follow-up PRs)
 - [ ] T117 Groom the feature backlog: review shipped stories vs. daily usage, propose the next feature batch to the owner (spec candidates only — commitments go through /speckit-specify)
+
+### Phase N6: Loading & rollout feedback (FR-040, owner request 2026-11-09)
+
+- [x] T118 `kube.RolloutStatus`: pure `kubectl rollout status` evaluation for Deployment/StatefulSet/DaemonSet/ReplicaSet (observedGeneration gate, ProgressDeadlineExceeded, StatefulSet partition, OnDelete → not trackable) + table tests
+- [x] T119 UI (`internal/ui/anim.go`, primitives in `theme/anim.go`): on-demand frame tick, body loader on every fetching view, status-line spinner for in-flight mutations, live rollout bar after restart/scale (single, parent and bulk), `animations: off` config switch
+- [x] T120 [P] Tests: loader keeps the frame height and clears on result, tick stops when idle, animations off → static text, busy → result, rollout tracked/progress/done/stalled/unavailable/give-up, primitives keep a constant width and move without color

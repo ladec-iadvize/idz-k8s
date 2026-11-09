@@ -44,6 +44,7 @@ func (m *Model) openEvents() (tea.Model, tea.Cmd) {
 		m.eventsScopeFor = m.drillFor
 	}
 	m.events.SetContent("loading events…")
+	m.startLoading(screenEvents, "loading events")
 	m.layout()
 	// One extra pods LIST (informer-cached) feeds the "why did it stop"
 	// annotations — events themselves rarely carry the OOM.

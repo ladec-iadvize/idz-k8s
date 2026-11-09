@@ -6,6 +6,7 @@
 package theme
 
 import (
+	"image/color"
 	"os"
 
 	"charm.land/lipgloss/v2"
@@ -47,6 +48,9 @@ type Theme struct {
 
 	// Modals (picker, help): rounded border tinted like the app badge.
 	ModalBorder lipgloss.Style
+
+	// Glow: gradient stops of the animations (spinner, comet, progress bar).
+	Glow []color.Color
 }
 
 // Default returns the default theme. lipgloss automatically drops color on
@@ -78,6 +82,8 @@ func Default() Theme {
 		Position: lipgloss.NewStyle().Foreground(lipgloss.Color("81")),
 
 		ModalBorder: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("62")).Padding(0, 1),
+
+		Glow: glowDark,
 	}
 }
 
@@ -110,6 +116,8 @@ func light() Theme {
 		Position: lipgloss.NewStyle().Foreground(lipgloss.Color("25")),
 
 		ModalBorder: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("61")).Padding(0, 1),
+
+		Glow: glowLight,
 	}
 }
 

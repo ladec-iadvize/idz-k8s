@@ -381,6 +381,16 @@ type Model struct {
 	actionList   []actionEntry
 	actionFor    string // palette title, e.g. "Deployment/back"
 	forwards     map[string]*kube.PortForward
+
+	// Animations (FR-040, anim.go): loaders of the views still fetching,
+	// the in-flight mutation, the rollouts tracked after a restart/scale,
+	// and the on-demand frame tick driving them.
+	loading   map[screen]loadingState
+	busyMsg   string
+	busySince time.Time
+	rollouts  map[string]rolloutTrack
+	animFrame int
+	animOn    bool
 }
 
 // colItem is one entry of the column chooser.
@@ -468,6 +478,8 @@ func New(client *kube.Client, cfg config.Config, kubeconfigPath string, opts ...
 		screen:           screenList,
 		marked:           map[string]model.ResourceObject{},
 		forwards:         map[string]*kube.PortForward{},
+		loading:          map[screen]loadingState{},
+		rollouts:         map[string]rolloutTrack{},
 		sortCol:          -1,
 		sizingSortCol:    -1,
 		usageSortCol:     -1,
@@ -516,6 +528,11 @@ func (m Model) Init() tea.Cmd {
 // ---- Update ----
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.loadDone(msg)
+	return withAnim(m.update(msg))
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -834,6 +851,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case adminMsg:
+		m.busyMsg = ""
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			return m, nil
@@ -844,13 +862,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// The bulk action consumed the marked set.
 			m.marked = map[string]model.ResourceObject{}
 		}
+		var track tea.Cmd
+		if len(msg.track) > 0 {
+			track = m.beginRollouts(msg.track)
+		}
 		// Refresh whatever the mutation touched.
 		switch m.screen {
 		case screenHelm, screenHelmHist:
-			return m, m.fetchHelmRows()
+			return m, tea.Batch(m.fetchHelmRows(), track)
 		default:
-			return m, m.listObjects()
+			return m, tea.Batch(m.listObjects(), track)
 		}
+
+	case rolloutMsg:
+		return m.handleRollout(msg)
+
+	case animTickMsg:
+		return m.handleAnimTick()
 
 	case editOpenMsg:
 		if msg.err != nil {
@@ -874,10 +902,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errMsg = "editor: " + msg.err.Error()
 			return m, nil
 		}
-		m.statusMsg = "⏳ applying " + msg.t.Kind + "/" + msg.name
+		m.startBusy("applying " + msg.t.Kind + "/" + msg.name)
 		return m, m.applyEdit(msg)
 
 	case forwardMsg:
+		m.busyMsg = ""
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
 			return m, nil
@@ -1678,6 +1707,9 @@ func (m *Model) layout() {
 // bodyView renders the body of a given screen (used both for the active
 // screen and as the background behind modal overlays).
 func (m Model) bodyView(sc screen) string {
+	if ls, ok := m.loading[sc]; ok && m.animEnabled() {
+		return m.loaderView(ls)
+	}
 	switch sc {
 	case screenDetail:
 		return m.detail.View()
@@ -2084,6 +2116,10 @@ func (m Model) statusLine() string {
 	switch {
 	case m.errMsg != "":
 		line = m.theme.Error.Render("⚠ " + m.errMsg)
+	case m.busy():
+		line = m.busyLine()
+	case len(m.rollouts) > 0:
+		line = m.rolloutLine()
 	case m.statusMsg != "":
 		line = m.theme.StatusBar.Render(m.statusMsg)
 	default:

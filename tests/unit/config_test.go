@@ -115,6 +115,8 @@ func TestConfigSchemaIsAllowlisted(t *testing.T) {
 		// deep-link (FR-039) — the browser's own session authenticates,
 		// no API/app key is ever needed or stored.
 		"Datadog": true,
+		// Animations is an on/off switch (FR-040).
+		"Animations": true,
 	}
 	tp := reflect.TypeOf(config.Config{})
 	for i := 0; i < tp.NumField(); i++ {

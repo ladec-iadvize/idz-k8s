@@ -41,6 +41,7 @@ func (m *Model) openHelm() (tea.Model, tea.Cmd) {
 	m.screen = screenHelm
 	m.updateHelmColumns()
 	m.helmWin.SetRows([]table.Row{{"", "loading helm releases…", "", "", "", "", ""}})
+	m.startLoading(screenHelm, "loading helm releases")
 	m.helmWin.Sync(&m.helmTable)
 	m.layout()
 	hc, ns := m.helm, m.client.Namespace
@@ -196,6 +197,7 @@ func (m Model) openHelmDetail(valuesOnly bool) (tea.Model, tea.Cmd) {
 	ns, name := row[0], row[1]
 	m.helmValuesOnly = valuesOnly
 	m.setHelmHistContent("loading release " + ns + "/" + name + "…")
+	m.startLoading(screenHelmHist, "loading release "+ns+"/"+name)
 	m.screen = screenHelmHist
 	m.layout()
 	hc, kc, types := m.helm, m.client, m.types
@@ -327,6 +329,7 @@ func (m Model) openHelmResource(live bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.setContent(screenHelmRes, "loading "+ns+"/"+label+" from the cluster…")
+	m.startLoading(screenHelmRes, "loading "+ns+"/"+label+" from the cluster")
 	cl := m.client
 	return m, func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

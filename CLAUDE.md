@@ -293,6 +293,19 @@ indexes are `main` (prod) and `dev`, but about 1.6 % of prod logs (k8s
 events, some batch services) sit in another index, so `index:main` would
 hide them.
 
+## Animations (owner request 2026-11-09, FR-040)
+
+`internal/ui/anim.go`: loaders on fetching views (`startLoading` at the
+open site; `loadDone` clears it from the view's result message, error
+included), a spinner for the in-flight mutation (`startBusy`, cleared by
+`adminMsg`/`forwardMsg`), and the live rollout bar after a restart/scale
+(`trackRollouts` wraps the admin cmd; counts come only from
+`kube.RolloutStatus` on a fresh GET — never interpolate a value). The frame
+tick (`withAnim` around `Update`) runs ONLY while something animates; an
+idle app must not re-render on a timer. Primitives live in
+`theme/anim.go` and keep a constant width per frame (geometry is sacred).
+`animations: off` must keep every view on its plain static text.
+
 ## Testing conventions
 
 - Fakes only: `tests/integration/harness.go` (fake dynamic/clientset —

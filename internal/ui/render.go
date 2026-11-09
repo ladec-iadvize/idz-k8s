@@ -160,6 +160,7 @@ func (m *Model) renderDetail() {
 func (m *Model) openTopology() (tea.Model, tea.Cmd) {
 	m.screen = screenTopology
 	m.setContent(screenTopology, "loading topology…")
+	m.startLoading(screenTopology, "loading topology")
 	m.layout()
 	return m, m.fetchTopology()
 }
@@ -310,6 +311,7 @@ func countRealNodes(nodes []model.TopologyNode) int {
 func (m *Model) openDiag() (tea.Model, tea.Cmd) {
 	m.screen = screenDiag
 	m.setContent(screenDiag, "scanning for failing workloads…")
+	m.startLoading(screenDiag, "scanning for failing workloads")
 	m.layout()
 	return m, m.fetchDiag()
 }

@@ -369,6 +369,7 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			m.resetDrill()
 			m.screen = screenEvents
 			m.events.SetContent("loading events…")
+			m.startLoading(screenEvents, "loading events")
 			return m, m.fetchEvents()
 		}
 		// Changing namespace from the list leaves any drill (its workload
@@ -439,8 +440,9 @@ func (m Model) pickerSelect() (tea.Model, tea.Cmd) {
 			m.errMsg = err.Error()
 			return m.goBack()
 		}
-		m.stopAllForwards() // tunnels belong to the old cluster
-		m.client.Close()    // stop the old context's informer watches
+		m.stopAllForwards()                    // tunnels belong to the old cluster
+		m.rollouts = map[string]rolloutTrack{} // so do the tracked rollouts
+		m.client.Close()                       // stop the old context's informer watches
 		m.client = nc
 		m.helm = helm.New(m.kubeconfigPath, choice) // helm reads the new cluster too
 		m.marked = map[string]model.ResourceObject{}

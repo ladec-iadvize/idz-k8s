@@ -64,6 +64,7 @@ func (m *Model) openDrift() (tea.Model, tea.Cmd) {
 func (m *Model) openAccess() (tea.Model, tea.Cmd) {
 	m.screen = screenAccess
 	m.setContent(screenAccess, "asking the API server what you can read…")
+	m.startLoading(screenAccess, "asking the API server what you can read")
 	m.layout()
 	cl, ns, types := m.client, m.client.Namespace, m.types
 	return m, func() tea.Msg {
@@ -150,6 +151,7 @@ func (m *Model) openConnectivity() (tea.Model, tea.Cmd) {
 	}
 	m.screen = screenConnectivity
 	m.setContent(screenConnectivity, "evaluating NetworkPolicies for "+subject+"…")
+	m.startLoading(screenConnectivity, "evaluating NetworkPolicies for "+subject)
 	m.layout()
 	cl, ns := m.client, obj.Namespace
 	return m, func() tea.Msg {
@@ -266,6 +268,7 @@ type describeRefMsg struct {
 func (m *Model) openPosture() (tea.Model, tea.Cmd) {
 	m.screen = screenPosture
 	m.setContent(screenPosture, "checking posture rules…")
+	m.startLoading(screenPosture, "checking posture rules")
 	m.layout()
 	return m, m.fetchPosture()
 }
