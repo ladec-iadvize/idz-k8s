@@ -42,3 +42,34 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+  # A green main releases itself: the tag comes from the commits since the
+  # last one, then the Release workflow builds it and updates the formula.
+  release:
+    name: tag and release
+    needs: quality
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency: release
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: next version
+        id: next
+        run: echo "tag=$(.github/scripts/next-version.sh)" >> "$GITHUB_OUTPUT"
+
+      # A tag pushed with GITHUB_TOKEN triggers no workflow: dispatch it.
+      - name: tag and dispatch the release
+        if: steps.next.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.next.outputs.tag }}
+        run: |
+          git tag "$TAG"
+          git push origin "$TAG"
+          gh workflow run release.yml --ref "$TAG"

@@ -306,5 +306,14 @@ go build ./... && go vet ./... && go test ./...
 - `specs/001-k8s-tui-client/` — the full spec-kit lifecycle: spec, plan,
   research, contracts, quickstart, tasks
 
+### Contributing and releases
+
+Open a pull request against `main` and give it a conventional title
+(`feat(list): …`, `fix(ui): …`): it becomes the commit subject on merge.
+Once CI is green on `main`, the merge releases itself — a `feat` bumps the
+minor version, a `fix` or `perf` the patch, anything else releases nothing.
+The Homebrew formula follows, so `brew upgrade idz-k8s` picks the change up
+a few minutes after the merge.
+
 The manual validation scenarios live in
 [`specs/001-k8s-tui-client/quickstart.md`](specs/001-k8s-tui-client/quickstart.md).
