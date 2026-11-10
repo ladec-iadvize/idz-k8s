@@ -51,14 +51,19 @@ Releases (owner reminder 2026-08-21: releasing IS part of shipping — once
 user-visible changes land on main, cut the release; don't leave them
 sitting unreleased):
 
-1. Version from the batch since the last tag: any `feat` → bump minor,
-   fixes only → patch (majors are an owner call).
-2. Check the CI run on main's HEAD is green (`gh run list --branch main`),
-   then tag that exact commit `vX.Y.Z` and push the tag (equivalent:
-   `gh api repos/<owner>/<repo>/git/refs -f ref=refs/tags/vX.Y.Z -f sha=…`).
-3. The tag push triggers the Release workflow (goreleaser): it builds the
-   binaries, publishes the GitHub release, and commits the updated Homebrew
-   formula (`Formula/idz-k8s.rb`, `docs(brew): formula vX.Y.Z` authored by
+1. CI picks the version from the commit subjects since the last tag
+   (`.github/scripts/next-version.sh`): any `feat` → bump minor, `fix`/`perf`
+   only → patch, anything else (`docs`, `ci`, `chore`…) → no release. The
+   subject of a squash-merge is the PR title, so the PR title carries the
+   conventional prefix.
+2. Once the CI run on main is green, its `release` job tags that exact
+   commit `vX.Y.Z` and dispatches the Release workflow — nobody tags by
+   hand. The exception is a major: a breaking change (`feat!:`,
+   `BREAKING CHANGE:`) releases nothing and leaves a warning on the run;
+   the owner pushes the `vX.0.0` tag, which triggers the same workflow.
+3. The Release workflow (goreleaser) builds the binaries, publishes the
+   GitHub release, and commits the updated Homebrew formula
+   (`Formula/idz-k8s.rb`, `docs(brew): formula vX.Y.Z` authored by
    goreleaserbot) back to main. NEVER edit the formula by hand and never
    create the GitHub release manually — the workflow owns both.
 4. Wait for the workflow to complete, then `git pull` main (the formula
